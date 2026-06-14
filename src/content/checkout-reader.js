@@ -1,4 +1,4 @@
-const { PLATFORM, MSG, platformFromUrl, browser } = require('../shared/constants');
+const { PLATFORM, MSG, platformFromUrl } = require('../shared/constants');
 
 function parsePrice(text) {
   return parseFloat((text ?? '').replace(/[^0-9.]/g, '')) || 0;
@@ -66,15 +66,13 @@ function extractOrder(platform, doc) {
 }
 
 // Browser entry point — not reached during Jest tests
+// Note: action.* and storage.session are background-only; content script only sends a message
 if (typeof window !== 'undefined' && typeof chrome !== 'undefined') {
   const platform = platformFromUrl(window.location.href);
   if (platform) {
     const order = extractOrder(platform, document);
     if (order.items.length > 0) {
-      browser.storage.session.set({ currentOrder: order });
-      browser.runtime.sendMessage({ type: MSG.ORDER_DETECTED, order });
-      browser.action.setBadgeText({ text: '✓' });
-      browser.action.setBadgeBackgroundColor({ color: '#22c55e' });
+      chrome.runtime.sendMessage({ type: MSG.ORDER_DETECTED, order });
     }
   }
 }

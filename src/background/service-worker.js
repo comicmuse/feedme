@@ -4,9 +4,10 @@ const { matchItems, computeTotal } = require('../shared/matcher');
 // Keyed by source tabId — tracks in-flight comparisons
 const comparisons = new Map();
 
-// Set badge when checkout-reader detects an order
+// Store order and set badge when checkout-reader detects an order
 browser.runtime.onMessage.addListener((msg, sender) => {
   if (msg.type !== MSG.ORDER_DETECTED) return;
+  browser.storage.session.set({ currentOrder: msg.order });
   browser.action.setBadgeText({ text: '✓', tabId: sender.tab?.id });
   browser.action.setBadgeBackgroundColor({ color: '#22c55e', tabId: sender.tab?.id });
 });

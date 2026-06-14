@@ -1,0 +1,24 @@
+{
+  "restaurant": {
+    "id": "dr-12345",
+    "name": "Burger King - Victoria",
+    "postcode": "SW1E 5JE",
+    "menu": {
+      "categories": [
+        {
+          "name": "Burgers",
+          "items": [
+            { "id": "dr-1", "name": "Whopper", "description": "Flame-grilled beef burger", "price": 589 },
+            { "id": "dr-2", "name": "Double Whopper", "description": "Two flame-grilled patties", "price": 789 },
+            { "id": "dr-3", "name": "Large Fries", "description": "Seasoned shoestring fries", "price": 319 }
+          ]
+        }
+      ]
+    },
+    "deliveryFee": 299,
+    "serviceFee": 172,
+    "offers": [
+      { "description": "Free delivery on orders over £20" }
+    ]
+  }
+}

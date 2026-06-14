@@ -1,0 +1,13 @@
+{
+  "restaurantId": "je-99999",
+  "name": "Burger King - Victoria",
+  "address": { "postCode": "SW1E 5JE" },
+  "menuItems": [
+    { "id": "je-1", "name": "Whopper", "description": "Flame-grilled beef burger", "price": 569 },
+    { "id": "je-2", "name": "Double Whopper", "description": "Two flame-grilled patties", "price": 759 },
+    { "id": "je-3", "name": "Large Fries", "description": "Seasoned shoestring fries", "price": 309 }
+  ],
+  "deliveryFee": 299,
+  "serviceFeePercent": 9,
+  "promotions": []
+}

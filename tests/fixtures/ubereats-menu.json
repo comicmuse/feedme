@@ -1,0 +1,32 @@
+{
+  "data": {
+    "catalogSectionsMap": {
+      "items": [
+        {
+          "uuid": "ue-1",
+          "title": "Whopper",
+          "itemDescription": "Flame-grilled beef burger with lettuce and tomato",
+          "price": 549
+        },
+        {
+          "uuid": "ue-2",
+          "title": "Double Whopper",
+          "itemDescription": "Two flame-grilled patties",
+          "price": 729
+        },
+        {
+          "uuid": "ue-3",
+          "title": "Large Fries",
+          "itemDescription": "Seasoned shoestring fries",
+          "price": 299
+        }
+      ]
+    },
+    "storeInfo": {
+      "title": "Burger King - Victoria",
+      "location": { "address": { "postalCode": "SW1E 5JE" } },
+      "deliveryFee": { "price": 0 },
+      "serviceFeePct": 10
+    }
+  }
+}

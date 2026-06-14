@@ -1,4 +1,10 @@
-const browser = require('webextension-polyfill');
+let browser;
+try {
+  browser = require('webextension-polyfill');
+} catch (_) {
+  // webextension-polyfill only available in browser context
+  browser = null;
+}
 
 const PLATFORM = {
   UBER_EATS: 'uber-eats',

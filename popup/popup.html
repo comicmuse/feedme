@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="logo">feed<span>me</span></div>
+  <div id="state-ready" class="hidden">
+    <p class="restaurant" id="restaurant-name"></p>
+    <p class="sub" id="item-count"></p>
+    <button id="compare-btn">Compare prices</button>
+  </div>
+  <div id="state-idle">
+    <p>Go to the checkout page on a supported platform, then click here to compare prices.</p>
+    <ul>
+      <li>Uber Eats checkout</li>
+      <li>Deliveroo checkout</li>
+      <li>Just Eat order page</li>
+    </ul>
+  </div>
+  <script src="../dist/popup.js"></script>
+</body>
+</html>

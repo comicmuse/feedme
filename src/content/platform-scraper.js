@@ -1,0 +1,1 @@
+// Platform scraper content script

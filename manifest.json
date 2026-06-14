@@ -20,7 +20,7 @@
   "content_scripts": [
     {
       "matches": [
-        "*://www.ubereats.com/gb/store/*/checkout*",
+        "*://www.ubereats.com/gb/checkout*",
         "*://www.deliveroo.co.uk/*/checkout*",
         "*://www.just-eat.co.uk/*/order*"
       ],

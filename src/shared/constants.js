@@ -13,7 +13,7 @@ const PLATFORM = {
 };
 
 const CHECKOUT_PATTERNS = {
-  [PLATFORM.UBER_EATS]: /ubereats\.com\/gb\/store\/[^/]+\/checkout/,
+  [PLATFORM.UBER_EATS]: /ubereats\.com\/gb\/checkout/,
   [PLATFORM.DELIVEROO]: /deliveroo\.co\.uk\/[^/]+\/checkout/,
   [PLATFORM.JUST_EAT]: /just-eat\.co\.uk\/[^/]+\/order/,
 };

@@ -222,12 +222,17 @@ function buildCard(platform, result, order, isCurrent, isWinner) {
   addRow(`Total${caveated ? ` (${total.matchedCount}/${total.totalCount})` : ''}`, fmt(total.total));
   card.appendChild(cbody);
 
-  // Offer tags — text from platform API, use textContent
+  // Offer tags — text from platform API, use textContent. Applicable offers (free
+  // delivery / percentage whose spend threshold the order meets) are reflected in
+  // the total above, so mark them as applied.
   if (offers.length > 0) {
     offers.forEach((o) => {
+      const applied =
+        (o.type === 'free-delivery' || o.type === 'percent') &&
+        (!o.minSpend || total.itemsTotal >= o.minSpend);
       const offEl = document.createElement('div');
       offEl.className = 'off';
-      offEl.textContent = `🏷 ${o.description}`;
+      offEl.textContent = `${applied ? '✅' : '🏷'} ${o.description}${applied ? ' (applied)' : ''}`;
       card.appendChild(offEl);
     });
   } else {

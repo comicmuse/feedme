@@ -57,9 +57,40 @@ describe('parseMenuResponse - Deliveroo', () => {
   test('service fee is 0 (basket-dependent, not on the menu page)', () => {
     expect(result.serviceFee).toBe(0);
   });
-  test('extracts offers with a readable description', () => {
-    expect(result.offers).toHaveLength(1);
-    expect(result.offers[0].description).toContain('£20.00');
+  test('collects offers including a structured free-delivery threshold', () => {
+    const freeDel = result.offers.find((o) => o.type === 'free-delivery');
+    expect(freeDel).toBeTruthy();
+    expect(freeDel.minSpend).toBeCloseTo(10);
+    expect(result.offers.some((o) => /£20\.00/.test(o.description))).toBe(true);
+  });
+});
+
+describe('parseMenuResponse - Just Eat deferred (large menu) catalogue', () => {
+  // Large menus ship empty cdn.items + a PascalCase CDN catalogue the scraper attaches.
+  const data = {
+    props: { appProps: { preloadedState: { menu: { restaurant: { cdn: {
+      restaurant: { restaurantInfo: { name: 'Pizza Hut', location: { postCode: 'E14 7LG' } } },
+      items: {},
+    } } } } } },
+    _feedmeItems: [
+      { Id: 'p1', Name: 'Pepperoni Feast', Description: '', Type: 'menuitem',
+        Variations: [{ BasePrice: 14.99, ModifierGroupsIds: ['mg1'] }] },
+    ],
+    _feedmeItemDetails: {
+      ModifierGroups: [{ Id: 'mg1', Name: 'Extras', Modifiers: ['s1'] }],
+      ModifierSets: [{ Id: 's1', Modifier: { Id: 'm1', Name: 'Extra Cheese', AdditionPrice: 1.50 } }],
+    },
+  };
+  let result;
+  beforeAll(() => { result = parseMenuResponse(PLATFORM.JUST_EAT, data); });
+
+  test('falls back to the deferred CDN catalogue and normalises PascalCase', () => {
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].name).toBe('Pepperoni Feast');
+    expect(result.items[0].unitPrice).toBeCloseTo(14.99);
+  });
+  test('resolves modifiers from the deferred item details', () => {
+    expect(result.items[0].modifiers).toEqual([{ name: 'Extra Cheese', price: 1.50 }]);
   });
 });
 
@@ -85,8 +116,18 @@ describe('parseMenuResponse - Just Eat', () => {
     expect(result.serviceFeeMax).toBeCloseTo(2.99);
     expect(result.serviceFeeEstimated).toBe(false);
   });
-  test('extracts offers from notifications', () => {
-    expect(result.offers).toHaveLength(1);
-    expect(result.offers[0].description).toBe('20% off when you spend £20 before 23:00');
+  test('parses structured free-delivery and percent offers from notifications', () => {
+    const freeDel = result.offers.find((o) => o.type === 'free-delivery');
+    expect(freeDel).toBeTruthy();
+    expect(freeDel.minSpend).toBeCloseTo(15);
+    const percent = result.offers.find((o) => o.type === 'percent');
+    expect(percent.minSpend).toBeCloseTo(15);
+    expect(percent.percent).toBeCloseTo(0.20);
+    expect(percent.cap).toBeCloseTo(10);
+  });
+  test('does not treat item-level discounts as order-level percent offers', () => {
+    const itemLevel = result.offers.find((o) => /Meal Deal/.test(o.description));
+    expect(itemLevel.type).toBe('other');
+    expect(result.offers.filter((o) => o.type === 'percent')).toHaveLength(1);
   });
 });

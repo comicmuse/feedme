@@ -69,7 +69,13 @@
                     "typeName": "FreeItemOffer",
                     "minimumOrderValue": { "code": "GBP", "fractional": 2000, "formatted": "£20.00" }
                   }
-                ]
+                ],
+                "progressBar": {
+                  "offer": {
+                    "typeName": "FreeDeliveryOffer",
+                    "minimumOrderValue": { "code": "GBP", "fractional": 1000, "formatted": "£10.00" }
+                  }
+                }
               }
             }
           }

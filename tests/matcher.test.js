@@ -47,6 +47,25 @@ describe('matchItems', () => {
     expect(result.platformItem.unitPrice).toBeCloseTo(8.29);
   });
 
+  test('prefers the plain item over a meal/combo of the same words', () => {
+    const ref = [{ name: 'Chicken Sandwich', quantity: 1, unitPrice: 6.99 }];
+    const platform = [
+      { name: 'Chicken Sandwich Meal for 2', description: '', unitPrice: 26.99 },
+      { name: 'Chicken Sandwich', description: '', unitPrice: 6.99 },
+    ];
+    const [result] = matchItems(ref, platform);
+    expect(result.matched).toBe(true);
+    expect(result.platformItem.name).toBe('Chicken Sandwich');
+  });
+
+  test('still matches a combo when the reference item is itself a combo', () => {
+    const ref = [{ name: 'Family Bundle Box', quantity: 1, unitPrice: 20 }];
+    const platform = [{ name: 'Family Bundle Box', description: '', unitPrice: 19.99 }];
+    const [result] = matchItems(ref, platform);
+    expect(result.matched).toBe(true);
+    expect(result.platformItem.unitPrice).toBeCloseTo(19.99);
+  });
+
   test('prices an option at the platform\'s own modifier price (exact, not estimated)', () => {
     const ref = [{
       name: 'Honey BBQ Sandwich', quantity: 1, unitPrice: 12.68,
@@ -116,6 +135,37 @@ describe('computeTotal', () => {
     expect(result.discountTotal).toBeCloseTo(2.00);
     expect(result.matchedCount).toBe(2);
     expect(result.totalCount).toBe(2);
+  });
+
+  test('applies a free-delivery offer when the spend threshold is met', () => {
+    const matches = [{ referenceItem: { quantity: 1 }, platformItem: { unitPrice: 16.00 }, matched: true }];
+    const offers = [{ type: 'free-delivery', minSpend: 15 }];
+    const result = computeTotal(matches, 1.29, 0, offers);
+    expect(result.deliveryFee).toBe(0);
+    expect(result.total).toBeCloseTo(16.00);
+  });
+
+  test('does not apply an offer below its spend threshold', () => {
+    const matches = [{ referenceItem: { quantity: 1 }, platformItem: { unitPrice: 10.00 }, matched: true }];
+    const offers = [{ type: 'free-delivery', minSpend: 15 }];
+    const result = computeTotal(matches, 1.29, 0, offers);
+    expect(result.deliveryFee).toBeCloseTo(1.29);
+  });
+
+  test('applies a capped percentage offer as a discount', () => {
+    const matches = [{ referenceItem: { quantity: 1 }, platformItem: { unitPrice: 22.87 }, matched: true }];
+    // 20% of 22.87 = 4.57, capped at 10 -> 4.57 discount
+    const offers = [{ type: 'percent', minSpend: 15, percent: 0.20, cap: 10 }];
+    const result = computeTotal(matches, 0, 0, offers);
+    expect(result.discountTotal).toBeCloseTo(4.574);
+    expect(result.total).toBeCloseTo(18.296);
+  });
+
+  test('caps a large percentage discount', () => {
+    const matches = [{ referenceItem: { quantity: 1 }, platformItem: { unitPrice: 80.00 }, matched: true }];
+    const offers = [{ type: 'percent', minSpend: 15, percent: 0.20, cap: 10 }];
+    const result = computeTotal(matches, 0, 0, offers);
+    expect(result.discountTotal).toBeCloseTo(10);
   });
 
   test('excludes unmatched items from total', () => {

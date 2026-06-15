@@ -15,7 +15,8 @@
     "*://www.deliveroo.co.uk/*",
     "*://deliveroo.co.uk/*",
     "*://www.just-eat.co.uk/*",
-    "*://uk.api.just-eat.io/*"
+    "*://uk.api.just-eat.io/*",
+    "*://menu-globalmenucdn.je-apis.com/*"
   ],
   "background": {
     "service_worker": "dist/service-worker.js"

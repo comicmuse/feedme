@@ -82,6 +82,42 @@ function deliverooOfferDescription(offer) {
   return mov ? `Spend ${mov} for ${kind}` : kind;
 }
 
+// Offers are scattered through root.offer (offers[], the progress-bar node, etc.),
+// so collect every "*Offer" object with a minimum-order value and de-dupe.
+function collectDeliverooOffers(offerNode) {
+  const found = [];
+  const seen = new Set();
+  const keys = new Set();
+  const walk = (o) => {
+    if (!o || typeof o !== 'object' || seen.has(o)) return;
+    seen.add(o);
+    if (typeof o.typeName === 'string' && /Offer$/.test(o.typeName) && o.minimumOrderValue) {
+      const key = `${o.typeName}|${o.minimumOrderValue.fractional}`;
+      if (!keys.has(key)) {
+        keys.add(key);
+        found.push(o);
+      }
+    }
+    for (const k of Object.keys(o)) walk(o[k]);
+  };
+  walk(offerNode);
+  return found;
+}
+
+// Turn a platform offer into a structured, applicable form. computeTotal applies
+// free-delivery and percentage offers whose minimum spend the order meets.
+function deliverooOffers(root) {
+  return collectDeliverooOffers(root.offer).map((o) => {
+    const minSpend = (o.minimumOrderValue?.fractional ?? 0) / 100;
+    const description = deliverooOfferDescription(o);
+    if (o.typeName === 'FreeDeliveryOffer') return { type: 'free-delivery', minSpend, description };
+    if (o.typeName === 'PercentageOffer') {
+      return { type: 'percent', minSpend, percent: (o.percentage ?? 0) / 100, description };
+    }
+    return { type: 'other', minSpend, description };
+  });
+}
+
 // Paid options available for a Deliveroo item: its modifier groups' options each
 // carry their own price inline. Returned as [{name, price}] so the same option a
 // user picked elsewhere can be priced here.
@@ -125,10 +161,7 @@ function parseDeliveroo(data) {
     serviceFeeMin: 0,
     serviceFeeMax: DELIVEROO_SERVICE_FEE_CAP,
     serviceFeeEstimated: true,
-    offers: (root.offer?.offers ?? []).map((o) => ({
-      description: deliverooOfferDescription(o),
-      amount: 0,
-    })),
+    offers: deliverooOffers(root),
   };
 }
 
@@ -174,18 +207,48 @@ function justEatItemModifiers(item, groupsById, modifierBySetId) {
     .filter((o) => o.name && o.price > 0);
 }
 
+// Recursively lower-case the first letter of every object key. Large Just Eat
+// menus defer the catalogue to a CDN file that uses PascalCase keys; this maps it
+// onto the camelCase shape the SSR (and this parser) use.
+function camelizeKeys(value) {
+  if (Array.isArray(value)) return value.map(camelizeKeys);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const k of Object.keys(value)) out[k.charAt(0).toLowerCase() + k.slice(1)] = camelizeKeys(value[k]);
+    return out;
+  }
+  return value;
+}
+
 function parseJustEat(data) {
   const cdn = justEatCdn(data);
   if (!cdn) throw new Error('Just Eat: no menu cdn in __NEXT_DATA__');
 
+  // Large menus ship an empty cdn.items in the page and defer the full catalogue +
+  // modifier details to CDN files (PascalCase), which the scraper fetches and
+  // attaches. Fall back to those, then to the truncated preview as a last resort.
+  let itemSource = cdn.items;
+  let modifierGroups = cdn.modifierGroups ?? [];
+  let modifierSets = cdn.modifierSets ?? [];
+  if (!Object.keys(itemSource ?? {}).length) {
+    if (data._feedmeItems) {
+      itemSource = camelizeKeys(data._feedmeItems);
+      const details = camelizeKeys(data._feedmeItemDetails ?? {});
+      modifierGroups = details.modifierGroups ?? [];
+      modifierSets = details.modifierSets ?? [];
+    } else if (Object.keys(cdn.truncatedItems ?? {}).length) {
+      itemSource = cdn.truncatedItems;
+    }
+  }
+
   const groupsById = {};
-  for (const g of cdn.modifierGroups ?? []) groupsById[g.id] = g;
+  for (const g of modifierGroups) groupsById[g.id] = g;
   const modifierBySetId = {};
-  for (const s of cdn.modifierSets ?? []) if (s.modifier) modifierBySetId[s.id] = s.modifier;
+  for (const s of modifierSets) if (s.modifier) modifierBySetId[s.id] = s.modifier;
 
   // items is a map keyed by id; sizes are separate items, but guard for any with
   // multiple variations by taking the cheapest base price (pounds).
-  const items = Object.values(cdn.items ?? {})
+  const items = Object.values(itemSource ?? {})
     .filter((i) => i && i.type === 'menuitem' && i.name)
     .map((i) => {
       const prices = (i.variations ?? [])
@@ -213,10 +276,32 @@ function parseJustEat(data) {
     serviceFeeMin: svc.serviceFeeMin,
     serviceFeeMax: svc.serviceFeeMax,
     serviceFeeEstimated: false,
-    offers: (data._feedmeOffers ?? [])
-      .filter((o) => o && o.description)
-      .map((o) => ({ description: o.description, amount: 0 })),
+    offers: justEatOffers(data._feedmeOffers),
   };
+}
+
+// Structured offers from Just Eat's notifications. Percent offers carry the
+// minimum spend; the rate and cap are only in the description text. Free-delivery
+// notifications keep the threshold in the text too.
+function justEatOffers(notifications) {
+  return (notifications ?? [])
+    .filter((o) => o && o.description)
+    .map((o) => {
+      const desc = o.description;
+      const minSpend = o.minimumSpendValue
+        ? o.minimumSpendValue.value / 100
+        : parseFloat((desc.match(/spend £(\d+(?:\.\d+)?)/i) ?? [])[1]) || 0;
+      if (/free deliver/i.test(desc)) return { type: 'free-delivery', minSpend, description: desc };
+      // Only an order-level percentage offer (offerType "Percent") is applied to the
+      // whole subtotal. "ItemLevelDiscount" offers ("31% off X Meal") are tied to a
+      // specific item we can't assume is ordered, so they're display-only.
+      if (o.offerType === 'Percent') {
+        const percent = (parseFloat((desc.match(/(\d+(?:\.\d+)?)%/) ?? [])[1]) || 0) / 100;
+        const cap = parseFloat((desc.match(/up to £(\d+(?:\.\d+)?)/i) ?? [])[1]) || Infinity;
+        return { type: 'percent', minSpend, percent, cap, description: desc };
+      }
+      return { type: 'other', minSpend, description: desc };
+    });
 }
 
 module.exports = { classifyResponse, parseMenuResponse };

@@ -127,7 +127,33 @@ const { parseMenuResponse } = require('../shared/parsers');
           data._feedmeOffers = d?.offerNotifications ?? [];
         })
         .catch(() => {});
-      await Promise.all([dynamicReq, offersReq]);
+
+      // Large menus ship an empty cdn.items and defer the full catalogue + modifier
+      // details to a CDN (PascalCase). Fetch them so the order can still be priced.
+      const cdn = data.props.appProps.preloadedState.menu.restaurant.cdn;
+      const reqs = [dynamicReq, offersReq];
+      if (!Object.keys(cdn.items ?? {}).length && cdn.restaurant?.itemsUrl) {
+        const base = 'https://menu-globalmenucdn.je-apis.com/';
+        reqs.push(
+          fetch(base + cdn.restaurant.itemsUrl)
+            .then((r) => r.json())
+            .then((d) => {
+              data._feedmeItems = d?.Items ?? [];
+            })
+            .catch(() => {})
+        );
+        if (cdn.restaurant.itemDetailsUrl) {
+          reqs.push(
+            fetch(base + cdn.restaurant.itemDetailsUrl)
+              .then((r) => r.json())
+              .then((d) => {
+                data._feedmeItemDetails = d;
+              })
+              .catch(() => {})
+          );
+        }
+      }
+      await Promise.all(reqs);
     }
 
     let parsed;

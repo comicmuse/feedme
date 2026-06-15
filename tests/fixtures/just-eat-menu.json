@@ -50,10 +50,21 @@
   },
   "_feedmeOffers": [
     {
-      "offerId": "12aa26c0-f60c-4d20-84df-a7f778b507de",
-      "description": "20% off when you spend £20 before 23:00",
+      "offerId": "aaa",
+      "description": "Free Delivery when you spend £15* T&Cs apply.",
+      "offerType": "Notification"
+    },
+    {
+      "offerId": "bbb",
+      "description": "20% off (up to £10) when you spend £15",
       "offerType": "Percent",
-      "minimumSpendValue": { "value": 2000 }
+      "minimumSpendValue": { "value": 1500 }
+    },
+    {
+      "offerId": "ccc",
+      "description": "32% off Honey BBQ Wrap Meal Deal",
+      "offerType": "ItemLevelDiscount",
+      "offerMenuItems": [{ "discount": { "discountPercentage": 32 } }]
     }
   ],
   "_feedmeDynamic": {

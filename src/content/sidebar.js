@@ -11,7 +11,7 @@ const LABEL = {
 
 const host = document.createElement('div');
 host.id = 'feedme-root';
-host.style.cssText = 'position:fixed;top:0;right:0;width:400px;height:100vh;z-index:2147483647;pointer-events:auto;';
+host.style.cssText = 'position:fixed;left:0;right:0;bottom:0;width:100%;z-index:2147483647;pointer-events:auto;';
 document.body.appendChild(host);
 
 const shadow = host.attachShadow({ mode: 'open' });
@@ -19,49 +19,52 @@ const shadow = host.attachShadow({ mode: 'open' });
 const styleEl = document.createElement('style');
 styleEl.textContent = `
 * { box-sizing: border-box; margin: 0; padding: 0; }
-#bar { width:400px; height:100vh; background:#fff; border-left:1px solid #e5e7eb;
+#bar { width:100%; max-height:80vh; background:#fff; border-top:1px solid #e5e7eb;
   display:flex; flex-direction:column;
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  box-shadow:-4px 0 20px rgba(0,0,0,.08); }
-.hd { padding:12px 14px; border-bottom:1px solid #e5e7eb; display:flex; align-items:center; gap:10px; }
+  box-shadow:0 -4px 24px rgba(0,0,0,.12); }
+.hd { padding:12px 14px; border-bottom:1px solid #e5e7eb; display:flex; align-items:center; gap:10px; flex-shrink:0; }
 .logo { font-size:15px; font-weight:800; color:#111; }
 .logo .accent { color:#f97316; }
 .meta { flex:1; font-size:11px; color:#6b7280; }
 .meta .mname { display:block; font-size:12px; font-weight:600; color:#374151; }
 .cls { color:#9ca3af; font-size:16px; cursor:pointer; background:none; border:none; padding:2px 6px; }
-/* min-height:0 lets this flex child shrink below its content height so its own
-   overflow-y scrolls, instead of growing the column and pushing the footer and
-   lower cards off-screen. */
-.bd { flex:1; min-height:0; overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:10px; }
-.loading { display:flex; align-items:center; justify-content:center; flex:1; gap:8px;
-  color:#9ca3af; font-size:13px; flex-direction:column; }
+/* Cards sit side by side, sharing the width; the row scrolls (x if too many to
+   fit, y if a single card is taller than the bar) rather than squashing cards. */
+.bd { min-height:0; overflow:auto; padding:14px; display:flex; flex-direction:row;
+  align-items:flex-start; gap:14px; }
+.loading { display:flex; align-items:center; justify-content:center; width:100%; gap:8px;
+  color:#9ca3af; font-size:13px; padding:30px; }
 .spin { width:24px; height:24px; border:2px solid #e5e7eb; border-top-color:#f97316;
   border-radius:50%; animation:sp .8s linear infinite; }
 @keyframes sp { to { transform:rotate(360deg); } }
-.card { border:1px solid #e5e7eb; border-radius:10px; overflow:hidden; }
+/* Each card is an equal-width column in the row, with a sensible minimum so they
+   stay readable (the row scrolls horizontally if they can't all fit). */
+.card { border:1px solid #e5e7eb; border-radius:10px; overflow:hidden;
+  flex:1 1 0; min-width:280px; }
 .card.win { border:2px solid #22c55e; }
 .card.cur { background:#fafafa; }
 .ch { padding:10px 12px; display:flex; align-items:center; gap:8px; background:#fafafa;
   border-bottom:1px solid #e5e7eb; }
 .card.win .ch { background:#f0fdf4; }
-.pname { font-size:12px; font-weight:700; flex:1; display:flex; align-items:center; gap:6px; }
-.wb { background:#22c55e; color:#fff; font-size:8px; font-weight:800; padding:2px 6px; border-radius:8px; }
-.cb { background:#f3f4f6; color:#6b7280; font-size:8px; font-weight:700; padding:2px 6px; border-radius:8px; }
-.ptotal { font-size:18px; font-weight:800; color:#111; }
+.pname { font-size:14px; font-weight:700; flex:1; display:flex; align-items:center; gap:6px; }
+.wb { background:#22c55e; color:#fff; font-size:9px; font-weight:800; padding:2px 6px; border-radius:8px; }
+.cb { background:#f3f4f6; color:#6b7280; font-size:9px; font-weight:700; padding:2px 6px; border-radius:8px; }
+.ptotal { font-size:22px; font-weight:800; color:#111; }
 .card.win .ptotal { color:#16a34a; }
-.cbody { padding:8px 12px; display:flex; flex-direction:column; gap:3px; }
-.row { display:flex; justify-content:space-between; font-size:11px; color:#6b7280; padding:2px 0; }
+.cbody { padding:10px 14px; display:flex; flex-direction:column; gap:4px; }
+.row { display:flex; justify-content:space-between; font-size:13px; color:#6b7280; padding:3px 0; gap:10px; }
 .row.b { color:#374151; font-weight:600; border-top:1px solid #e5e7eb; padding-top:4px; margin-top:2px; }
 .row.g { color:#16a34a; }
 .row.r { color:#ef4444; }
-.off { margin:0 12px 10px; background:#f0fdf4; border:1px solid #bbf7d0;
-  border-radius:6px; padding:5px 8px; font-size:10px; color:#15803d; }
+.off { margin:0 14px 10px; background:#f0fdf4; border:1px solid #bbf7d0;
+  border-radius:6px; padding:6px 9px; font-size:11px; color:#15803d; }
 .off.n { background:#fafafa; border-color:#e5e7eb; color:#9ca3af; }
 .obtn { margin:0 12px 12px; background:#f3f4f6; color:#374151; border:none;
   border-radius:7px; padding:9px; font-size:11px; font-weight:700; cursor:pointer;
   width:calc(100% - 24px); }
 .obtn:hover { background:#e5e7eb; }
-.ft { border-top:2px solid #dcfce7; background:#f0fdf4; padding:10px 14px; font-size:12px; color:#15803d; }
+.ft { border-top:2px solid #dcfce7; background:#f0fdf4; padding:10px 14px; font-size:12px; color:#15803d; flex-shrink:0; }
 .ft .save { font-weight:700; color:#166534; }
 .ft.sw { background:#fff7ed; border-top-color:#fed7aa; color:#c2410c; }
 .ft.sw .save { color:#7c2d12; }

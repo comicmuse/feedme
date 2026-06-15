@@ -1,19 +1,43 @@
-<div data-testid="checkout-cart">
-  <div data-testid="restaurant-name">Burger King - Victoria</div>
-  <div data-testid="delivery-postcode">SW1E 5JE</div>
-  <ul data-testid="cart-item-list">
-    <li data-testid="cart-item">
-      <span data-testid="item-quantity">1</span>
-      <span data-testid="item-name">Whopper</span>
-      <span data-testid="item-price">5.49</span>
+<!DOCTYPE html>
+<html>
+<head><title>Checkout | Uber Eats</title></head>
+<body>
+<a href="/gb/store/burger-king-victoria/abc123">Back to store</a>
+<div data-testid="checkout-delivery-address-section">
+  Delivery bag SW1E 5JE, 123 Victoria St, London Edit
+</div>
+<li data-testid="cart-summary-panel">
+  <div aria-expanded="true" role="button">
+    <div>Basket summary (2 items)</div>
+  </div>
+  <div data-testid="cart_summary_toggle"></div>
+  <ul data-testid="cart-items-list">
+    <li data-test="cart-row-uuid-1">
+      <a data-testid="cart-item-uuid-1" href="#">
+        <div><img alt="Whopper" src=""></div>
+        <div>Whopper</div>
+        <span data-testid="rich-text">Add: Cheese (£1.00)</span>
+        <span>£10.38</span>
+      </a>
     </li>
-    <li data-testid="cart-item">
-      <span data-testid="item-quantity">2</span>
-      <span data-testid="item-name">Large Fries</span>
-      <span data-testid="item-price">2.99</span>
+    <li data-test="cart-row-uuid-2">
+      <a data-testid="cart-item-uuid-2" href="#">
+        <div><img alt="Large Fries" src=""></div>
+        <div>Large Fries</div>
+        <span>£2.50</span>
+      </a>
     </li>
   </ul>
-  <div data-testid="delivery-fee">0.00</div>
-  <div data-testid="service-fee">1.50</div>
-  <div data-testid="promo-discount" data-amount="1.80">20% off saving 1.80</div>
-</div>
+</li>
+<!-- Restaurant link with the name as its first child div -->
+<a href="/gb/store/burger-king-victoria/abc123">
+  <div>Burger King - Victoria</div>
+  <p>123 Victoria St, London</p>
+</a>
+<div data-testid="fare-breakdown-charge-badge-delivery-fee">£0.00</div>
+<div data-testid="fare-breakdown-charge-badge-fees">£1.50</div>
+<div data-testid="fare-breakdown-charge-badge-membership-benefit">-£1.80</div>
+<div data-testid="fare-breakdown-charge-badge-subtotal">£12.88</div>
+<div data-testid="fare-breakdown-charge-badge-total">£12.58</div>
+</body>
+</html>

@@ -1,24 +1,80 @@
 {
-  "restaurant": {
-    "id": "dr-12345",
-    "name": "Burger King - Victoria",
-    "postcode": "SW1E 5JE",
-    "menu": {
-      "categories": [
-        {
-          "name": "Burgers",
-          "items": [
-            { "id": "dr-1", "name": "Whopper", "description": "Flame-grilled beef burger", "price": 589 },
-            { "id": "dr-2", "name": "Double Whopper", "description": "Two flame-grilled patties", "price": 789 },
-            { "id": "dr-3", "name": "Large Fries", "description": "Seasoned shoestring fries", "price": 319 }
-          ]
+  "props": {
+    "initialState": {
+      "menuPage": {
+        "menu": {
+          "header": {
+            "uiRows": [
+              { "typeName": "MenuHeaderRow", "data": { "text-1.content": "Nando's" } },
+              {
+                "typeName": "MenuHeaderRow",
+                "data": {
+                  "delivery-fee.content": "£1.29 delivery fee",
+                  "free-delivery.content": "Free delivery",
+                  "small-order-fee.content": "£15.00 minimum",
+                  "strikethrough-delivery-fee.content": "£0.00",
+                  "props.free-delivery-visible": false,
+                  "props.strikethrough-delivery-fee-visible": false
+                }
+              }
+            ]
+          },
+          "metas": {
+            "root": {
+              "restaurant": {
+                "id": "445883",
+                "name": "Burger King - Victoria",
+                "location": {
+                  "address": {
+                    "address1": "123 Victoria Street, London, SW1E 5JE",
+                    "neighborhood": "Victoria",
+                    "city": "london"
+                  }
+                }
+              },
+              "modifierGroups": [
+                {
+                  "id": "mg-1",
+                  "name": "Add a side?",
+                  "modifierOptions": [
+                    { "id": "opt-1", "name": "Regular Fries", "price": { "fractional": 250, "formatted": "£2.50" } },
+                    { "id": "opt-2", "name": "No thanks", "price": { "fractional": 0, "formatted": "£0.00" } }
+                  ]
+                }
+              ],
+              "items": {
+                "dr-1": {
+                  "id": "dr-1",
+                  "name": "Whopper",
+                  "description": "Flame-grilled beef burger",
+                  "price": { "code": "GBP", "fractional": 589, "formatted": "£5.89" },
+                  "modifierGroupIds": ["mg-1"]
+                },
+                "dr-2": {
+                  "id": "dr-2",
+                  "name": "Double Whopper",
+                  "description": "Two flame-grilled patties",
+                  "price": { "code": "GBP", "fractional": 789, "formatted": "£7.89" }
+                },
+                "dr-3": {
+                  "id": "dr-3",
+                  "name": "Large Fries",
+                  "description": "Seasoned shoestring fries",
+                  "price": { "code": "GBP", "fractional": 319, "formatted": "£3.19" }
+                }
+              },
+              "offer": {
+                "offers": [
+                  {
+                    "typeName": "FreeItemOffer",
+                    "minimumOrderValue": { "code": "GBP", "fractional": 2000, "formatted": "£20.00" }
+                  }
+                ]
+              }
+            }
+          }
         }
-      ]
-    },
-    "deliveryFee": 299,
-    "serviceFee": 172,
-    "offers": [
-      { "description": "Free delivery on orders over £20" }
-    ]
+      }
+    }
   }
 }

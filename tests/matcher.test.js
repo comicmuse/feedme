@@ -29,6 +29,65 @@ describe('matchItems', () => {
     expect(result.platformItem).toBeNull();
   });
 
+  test('treats a name match with no usable price as unmatched', () => {
+    const ref = [{ name: 'Whopper', quantity: 1, unitPrice: 5.49 }];
+    const [result] = matchItems(ref, [{ name: 'Whopper', description: 'combo builder', unitPrice: 0 }]);
+    expect(result.matched).toBe(false);
+    expect(result.platformItem).toBeNull();
+  });
+
+  test('prefers a priced duplicate over a £0 entry of the same name', () => {
+    const ref = [{ name: 'Honey BBQ Wrap', quantity: 1, unitPrice: 8.29 }];
+    const platform = [
+      { name: 'Honey BBQ Wrap', description: 'combo builder', unitPrice: 0 },
+      { name: 'Honey BBQ Wrap', description: '', unitPrice: 8.29 },
+    ];
+    const [result] = matchItems(ref, platform);
+    expect(result.matched).toBe(true);
+    expect(result.platformItem.unitPrice).toBeCloseTo(8.29);
+  });
+
+  test('prices an option at the platform\'s own modifier price (exact, not estimated)', () => {
+    const ref = [{
+      name: 'Honey BBQ Sandwich', quantity: 1, unitPrice: 12.68,
+      options: [{ name: 'Regular Fries', price: 2.69 }], optionsTotal: 2.69,
+    }];
+    const platform = [{
+      name: 'Honey BBQ Sandwich', description: '', unitPrice: 9.99,
+      modifiers: [{ name: 'Regular Fries', price: 2.50 }, { name: 'Large Fries', price: 3.59 }],
+    }];
+    const [result] = matchItems(ref, platform);
+    expect(result.platformItem.unitPrice).toBeCloseTo(12.49); // 9.99 + platform's own 2.50
+    expect(result.platformItem.optionsEstimated).toBe(false);
+  });
+
+  test('falls back to the source option price (flagged) when the platform lacks the option', () => {
+    const ref = [{
+      name: 'Honey BBQ Sandwich', quantity: 1, unitPrice: 12.68,
+      options: [{ name: 'Regular Fries', price: 2.69 }], optionsTotal: 2.69,
+    }];
+    const platform = [{ name: 'Honey BBQ Sandwich', description: '', unitPrice: 9.99, modifiers: [] }];
+    const [result] = matchItems(ref, platform);
+    expect(result.platformItem.unitPrice).toBeCloseTo(12.68); // 9.99 + source 2.69
+    expect(result.platformItem.optionsEstimated).toBe(true);
+  });
+
+  test('falls back to the options sum when no option names were captured', () => {
+    const ref = [{ name: 'Honey BBQ Sandwich', quantity: 1, unitPrice: 12.68, optionsTotal: 2.69 }];
+    const platform = [{ name: 'Honey BBQ Sandwich', description: '', unitPrice: 9.99 }];
+    const [result] = matchItems(ref, platform);
+    expect(result.platformItem.unitPrice).toBeCloseTo(12.68);
+    expect(result.platformItem.optionsEstimated).toBe(true);
+  });
+
+  test('leaves the matched price unchanged when there are no options', () => {
+    const ref = [{ name: 'Large Fries', quantity: 1, unitPrice: 4.59, optionsTotal: 0 }];
+    const platform = [{ name: 'Large Fries', description: '', unitPrice: 4.59 }];
+    const [result] = matchItems(ref, platform);
+    expect(result.platformItem.unitPrice).toBeCloseTo(4.59);
+    expect(result.platformItem.optionsEstimated).toBeUndefined();
+  });
+
   test('returns one result per reference item', () => {
     const ref = [
       { name: 'Whopper', quantity: 1, unitPrice: 5.49 },
@@ -77,5 +136,43 @@ describe('computeTotal', () => {
     const result = computeTotal(matches, 0, 0, []);
     expect(result.total).toBeCloseTo(10.00);
     expect(result.discountTotal).toBe(0);
+    expect(result.serviceFeeEstimated).toBe(false);
+  });
+
+  test('derives service fee as a percentage of subtotal, flagged when estimated', () => {
+    const matches = [
+      { referenceItem: { quantity: 1 }, platformItem: { unitPrice: 16.70 }, matched: true },
+    ];
+    const result = computeTotal(matches, 0, 0, [], { serviceFeePct: 0.11, serviceFeeMax: 3.49, serviceFeeEstimated: true });
+    expect(result.serviceFee).toBeCloseTo(1.84); // 16.70 * 0.11
+    expect(result.serviceFeeEstimated).toBe(true);
+    expect(result.total).toBeCloseTo(18.54);
+  });
+
+  test('caps the percentage service fee at the max', () => {
+    const matches = [
+      { referenceItem: { quantity: 1 }, platformItem: { unitPrice: 100.00 }, matched: true },
+    ];
+    const result = computeTotal(matches, 0, 0, [], { serviceFeePct: 0.11, serviceFeeMax: 2.99 });
+    expect(result.serviceFee).toBeCloseTo(2.99);
+  });
+
+  test('floors the percentage service fee at the min (Just Eat exact, not estimated)', () => {
+    const matches = [
+      { referenceItem: { quantity: 1 }, platformItem: { unitPrice: 4.00 }, matched: true },
+    ];
+    // 4.00 * 0.11 = 0.44, below the £0.99 floor
+    const result = computeTotal(matches, 0, 0, [], { serviceFeePct: 0.11, serviceFeeMin: 0.99, serviceFeeMax: 2.99, serviceFeeEstimated: false });
+    expect(result.serviceFee).toBeCloseTo(0.99);
+    expect(result.serviceFeeEstimated).toBe(false);
+  });
+
+  test('prefers a scraped flat service fee over the percentage', () => {
+    const matches = [
+      { referenceItem: { quantity: 1 }, platformItem: { unitPrice: 16.70 }, matched: true },
+    ];
+    const result = computeTotal(matches, 0, 2.00, [], { serviceFeePct: 0.11, serviceFeeMax: 3.49 });
+    expect(result.serviceFee).toBeCloseTo(2.00);
+    expect(result.serviceFeeEstimated).toBe(false);
   });
 });

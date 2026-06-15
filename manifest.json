@@ -7,12 +7,15 @@
     "tabs",
     "scripting",
     "storage",
-    "activeTab"
+    "activeTab",
+    "webNavigation"
   ],
   "host_permissions": [
     "*://www.ubereats.com/*",
     "*://www.deliveroo.co.uk/*",
-    "*://www.just-eat.co.uk/*"
+    "*://deliveroo.co.uk/*",
+    "*://www.just-eat.co.uk/*",
+    "*://uk.api.just-eat.io/*"
   ],
   "background": {
     "service_worker": "dist/service-worker.js"

@@ -29,7 +29,10 @@ styleEl.textContent = `
 .meta { flex:1; font-size:11px; color:#6b7280; }
 .meta .mname { display:block; font-size:12px; font-weight:600; color:#374151; }
 .cls { color:#9ca3af; font-size:16px; cursor:pointer; background:none; border:none; padding:2px 6px; }
-.bd { flex:1; overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:10px; }
+/* min-height:0 lets this flex child shrink below its content height so its own
+   overflow-y scrolls, instead of growing the column and pushing the footer and
+   lower cards off-screen. */
+.bd { flex:1; min-height:0; overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:10px; }
 .loading { display:flex; align-items:center; justify-content:center; flex:1; gap:8px;
   color:#9ca3af; font-size:13px; flex-direction:column; }
 .spin { width:24px; height:24px; border:2px solid #e5e7eb; border-top-color:#f97316;
@@ -174,8 +177,13 @@ function buildCard(platform, result, order, isCurrent, isWinner) {
     const nameSpan = document.createElement('span');
     const priceSpan = document.createElement('span');
     if (m.matched) {
-      nameSpan.textContent = `${m.referenceItem.name} ×${m.referenceItem.quantity}`;
-      priceSpan.textContent = fmt(m.platformItem.unitPrice * m.referenceItem.quantity);
+      // Asterisk flags an item whose price includes options estimated at this
+      // platform's prices (its base item + the option cost selected on checkout).
+      const est = m.platformItem.optionsEstimated ? ' *' : '';
+      nameSpan.textContent = `${m.referenceItem.name} ×${m.referenceItem.quantity}${est}`;
+      priceSpan.textContent = m.platformItem.unitPrice > 0
+        ? fmt(m.platformItem.unitPrice * m.referenceItem.quantity)
+        : '—';
     } else {
       nameSpan.textContent = `⚠ ${m.referenceItem.name} — not found`;
       priceSpan.textContent = '—';
@@ -199,7 +207,7 @@ function buildCard(platform, result, order, isCurrent, isWinner) {
 
   addRow('Subtotal', fmt(total.itemsTotal));
   addRow('Delivery', fmt(total.deliveryFee), '');
-  addRow('Service fee', fmt(total.serviceFee), '');
+  addRow(`Service fee${total.serviceFeeEstimated ? ' (est.)' : ''}`, fmt(total.serviceFee), '');
   if (total.discountTotal > 0) {
     const drow = document.createElement('div');
     drow.className = 'row g';
@@ -256,11 +264,11 @@ browser.runtime.onMessage.addListener((msg) => {
   subtext.textContent = `${order.items.length} item${order.items.length !== 1 ? 's' : ''} · ${order.postcode}`;
   metaEl.appendChild(subtext);
 
-  const currentTotal =
-    order.items.reduce((s, i) => s + i.unitPrice * i.quantity, 0) +
-    order.deliveryFee +
-    order.serviceFee -
-    order.discounts.reduce((s, d) => s + d.amount, 0);
+  const discountTotal = order.discounts.reduce((s, d) => s + d.amount, 0);
+  const currentTotal = order.checkoutTotal > 0
+    ? order.checkoutTotal
+    : (order.items.reduce((s, i) => s + i.unitPrice * i.quantity, 0) +
+       order.deliveryFee + order.serviceFee - discountTotal);
 
   const compPlatforms = Object.keys(results).filter((p) => p !== order.platform);
   compPlatforms.sort((a, b) => {
@@ -271,7 +279,10 @@ browser.runtime.onMessage.addListener((msg) => {
     return results[a].total.total - results[b].total.total;
   });
 
-  const cheapest = compPlatforms.find((p) => !results[p].error);
+  // Only a platform that priced every item can be crowned cheapest — otherwise an
+  // incomplete match (missing or unpriced items) would look misleadingly cheap.
+  const isComplete = (p) => !results[p].error && results[p].total.matchedCount === results[p].total.totalCount;
+  const cheapest = compPlatforms.find(isComplete);
   const winner = cheapest && results[cheapest].total.total < currentTotal ? cheapest : order.platform;
 
   bd.textContent = '';
@@ -281,13 +292,17 @@ browser.runtime.onMessage.addListener((msg) => {
   });
 
   // Synthesise a card for the current platform
+  const itemsPricesKnown = order.items.some((i) => i.unitPrice > 0);
+  const itemsTotal = itemsPricesKnown
+    ? order.items.reduce((s, i) => s + i.unitPrice * i.quantity, 0)
+    : currentTotal - order.deliveryFee - order.serviceFee + discountTotal;
   const currentResult = {
     matches: order.items.map((i) => ({ referenceItem: i, platformItem: i, matched: true })),
     total: {
-      itemsTotal: order.items.reduce((s, i) => s + i.unitPrice * i.quantity, 0),
+      itemsTotal,
       deliveryFee: order.deliveryFee,
       serviceFee: order.serviceFee,
-      discountTotal: order.discounts.reduce((s, d) => s + d.amount, 0),
+      discountTotal,
       total: currentTotal,
       matchedCount: order.items.length,
       totalCount: order.items.length,
@@ -323,7 +338,17 @@ browser.runtime.onMessage.addListener((msg) => {
   if (caveated) {
     const cv = document.createElement('div');
     cv.className = 'cv';
-    cv.textContent = '* Some items could not be matched — totals may be incomplete';
+    cv.textContent = '⚠ Some items couldn\'t be matched — totals may be incomplete';
+    ft.appendChild(cv);
+  }
+
+  const optionsEstimated = compPlatforms.some(
+    (p) => !results[p].error && results[p].matches.some((m) => m.matched && m.platformItem.optionsEstimated)
+  );
+  if (optionsEstimated) {
+    const cv = document.createElement('div');
+    cv.className = 'cv';
+    cv.textContent = '* Includes your selected options, estimated at each platform\'s prices';
     ft.appendChild(cv);
   }
 

@@ -246,12 +246,16 @@ function parseJustEat(data) {
   const modifierBySetId = {};
   for (const s of modifierSets) if (s.modifier) modifierBySetId[s.id] = s.modifier;
 
-  // items is a map keyed by id; sizes are separate items, but guard for any with
-  // multiple variations by taking the cheapest base price (pounds).
+  // Include deals (meals/bundles) as well as plain items so a "... Meal" reference
+  // can match the real meal rather than a bare burger. Sizes are separate items,
+  // but guard for any with multiple variations by taking the cheapest base price.
   const items = Object.values(itemSource ?? {})
-    .filter((i) => i && i.type === 'menuitem' && i.name)
+    .filter((i) => i && (i.type === 'menuitem' || i.type === 'deal') && i.name)
     .map((i) => {
+      // dealOnly variations are deal-component placeholders (often £0/£1), not
+      // standalone-orderable, so exclude them and price from real variations only.
       const prices = (i.variations ?? [])
+        .filter((v) => !v.dealOnly)
         .map((v) => v.basePrice)
         .filter((p) => typeof p === 'number' && p > 0);
       return {

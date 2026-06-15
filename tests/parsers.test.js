@@ -1,4 +1,5 @@
 const { classifyResponse, parseMenuResponse } = require('../src/shared/parsers');
+const { matchItems } = require('../src/shared/matcher');
 const { PLATFORM } = require('../src/shared/constants');
 
 const ubereats = require('./fixtures/ubereats-menu.json');
@@ -62,6 +63,39 @@ describe('parseMenuResponse - Deliveroo', () => {
     expect(freeDel).toBeTruthy();
     expect(freeDel.minSpend).toBeCloseTo(10);
     expect(result.offers.some((o) => /£20\.00/.test(o.description))).toBe(true);
+  });
+});
+
+describe('parseMenuResponse - Just Eat dealOnly placeholders and deals', () => {
+  // The same burger appears as £0/£1 deal-component placeholders (dealOnly: true)
+  // plus the real £9.79 standalone (dealOnly: false), and the meal as a "deal".
+  const data = {
+    props: { appProps: { preloadedState: { menu: { restaurant: { cdn: {
+      restaurant: { restaurantInfo: { name: 'Burger King', location: { postCode: 'E14 7LG' } } },
+      items: {
+        a: { id: 'a', name: 'Bacon Double Cheese XL', type: 'menuitem', variations: [{ basePrice: 1, dealOnly: true }] },
+        b: { id: 'b', name: 'Bacon Double Cheese XL', type: 'menuitem', variations: [{ basePrice: 0, dealOnly: true }] },
+        c: { id: 'c', name: 'Bacon Double Cheese XL', type: 'menuitem', variations: [{ basePrice: 9.79, dealOnly: false }] },
+        d: { id: 'd', name: 'Bacon Double Cheese XL Meal', type: 'deal', variations: [{ basePrice: 12.59, dealOnly: false }] },
+      },
+    } } } } } },
+  };
+  let result;
+  beforeAll(() => { result = parseMenuResponse(PLATFORM.JUST_EAT, data); });
+
+  test('prices dealOnly placeholder copies at 0 and the real entry at its price', () => {
+    const burgers = result.items.filter((i) => i.name === 'Bacon Double Cheese XL');
+    expect(burgers.map((b) => b.unitPrice).sort((x, y) => x - y)).toEqual([0, 0, 9.79]);
+  });
+  test('includes deal (meal) items', () => {
+    const meal = result.items.find((i) => i.name === 'Bacon Double Cheese XL Meal');
+    expect(meal.unitPrice).toBeCloseTo(12.59);
+  });
+  test('matching skips the placeholders and resolves real prices', () => {
+    const [burger] = matchItems([{ name: 'Bacon Double Cheese XL', quantity: 1 }], result.items);
+    expect(burger.platformItem.unitPrice).toBeCloseTo(9.79);
+    const [meal] = matchItems([{ name: 'Bacon Double Cheese XL Meal', quantity: 1 }], result.items);
+    expect(meal.platformItem.unitPrice).toBeCloseTo(12.59);
   });
 });
 

@@ -38,4 +38,20 @@ function selectNearestBranches(candidates, targetName, n) {
   return unique.slice(0, n);
 }
 
-module.exports = { findByKey, selectNearestBranches };
+// Build branch candidates from a Just Eat area-listing __NEXT_DATA__ object.
+// brandName is the chain ("Burger King"); name may carry the locality. The
+// label prefers an explicit area field, falling back to the suffix of name.
+function justEatCandidates(nextData) {
+  const map = findByKey(nextData, 'restaurantData') || {};
+  return Object.values(map)
+    .filter((r) => r && r.uniqueName && r.name)
+    .map((r) => ({
+      id: r.uniqueName,
+      name: r.brandName || r.name,
+      label: r.cuisineArea || (r.name.includes(' - ') ? r.name.split(' - ').pop().trim() : ''),
+      distance: typeof r.distanceInMiles === 'number' ? r.distanceInMiles : null,
+      menuUrl: `/restaurants-${r.uniqueName}/menu`,
+    }));
+}
+
+module.exports = { findByKey, selectNearestBranches, justEatCandidates };

@@ -1,0 +1,11 @@
+{
+  "props": {
+    "initialState": {
+      "restaurantData": {
+        "bk-wc": { "uniqueName": "burger-king-whitechapel", "name": "Burger King - Whitechapel", "brandName": "Burger King", "distanceInMiles": 0.4, "cuisineArea": "Whitechapel" },
+        "bk-al": { "uniqueName": "burger-king-aldgate", "name": "Burger King - Aldgate", "brandName": "Burger King", "distanceInMiles": 0.9, "cuisineArea": "Aldgate" },
+        "kfc-al": { "uniqueName": "kfc-aldgate", "name": "KFC - Aldgate", "brandName": "KFC", "distanceInMiles": 0.3, "cuisineArea": "Aldgate" }
+      }
+    }
+  }
+}

@@ -40,3 +40,22 @@ describe('selectNearestBranches', () => {
     expect(out.filter((b) => b.id === 'bk-wc')).toHaveLength(1);
   });
 });
+
+const { justEatCandidates } = require('../src/shared/branches');
+const jeListing = require('./fixtures/just-eat-listing.json');
+
+describe('justEatCandidates', () => {
+  test('builds candidates from restaurantData', () => {
+    const cands = justEatCandidates(jeListing);
+    expect(cands).toHaveLength(3);
+    const wc = cands.find((c) => c.id === 'burger-king-whitechapel');
+    expect(wc.name).toBe('Burger King');
+    expect(wc.label).toBe('Whitechapel');
+    expect(wc.distance).toBeCloseTo(0.4);
+    expect(wc.menuUrl).toBe('/restaurants-burger-king-whitechapel/menu');
+  });
+  test('matches end-to-end through selectNearestBranches', () => {
+    const out = selectNearestBranches(justEatCandidates(jeListing), 'Burger King', 3);
+    expect(out.map((b) => b.id)).toEqual(['burger-king-whitechapel', 'burger-king-aldgate']);
+  });
+});

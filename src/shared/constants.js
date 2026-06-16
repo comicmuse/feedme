@@ -35,10 +35,29 @@ const MSG = {
   START_COMPARISON: 'START_COMPARISON',   // popup -> service-worker
   PLATFORM_DATA: 'PLATFORM_DATA',         // platform-scraper -> service-worker
   COMPARISON_RESULT: 'COMPARISON_RESULT', // service-worker -> sidebar
+  BRANCHES_FOUND: 'BRANCHES_FOUND',       // enumerator -> service-worker
+  COMPARISON_UPDATE: 'COMPARISON_UPDATE', // service-worker -> sidebar (progressive)
 };
 
 const SCRAPER_TIMEOUT_MS = 15000;
 const FUSE_THRESHOLD = 0.4;
+
+const DEFAULT_BRANCH_COUNT = 3;
+const DEFAULT_MAX_CONCURRENT = 4;
+
+// Read tunables from storage.local, falling back to defaults outside the browser
+// or when unset. Never throws.
+async function getConfig() {
+  try {
+    const stored = await browser.storage.local.get(['branchCount', 'maxConcurrent']);
+    return {
+      branchCount: Number.isInteger(stored.branchCount) ? stored.branchCount : DEFAULT_BRANCH_COUNT,
+      maxConcurrent: Number.isInteger(stored.maxConcurrent) ? stored.maxConcurrent : DEFAULT_MAX_CONCURRENT,
+    };
+  } catch (_) {
+    return { branchCount: DEFAULT_BRANCH_COUNT, maxConcurrent: DEFAULT_MAX_CONCURRENT };
+  }
+}
 
 // Deliveroo's service fee is a basket-dependent percentage we can't read from the
 // menu page, so we estimate it: a share of the matched subtotal, capped. The rate
@@ -72,9 +91,12 @@ module.exports = {
   MSG,
   SCRAPER_TIMEOUT_MS,
   FUSE_THRESHOLD,
+  DEFAULT_BRANCH_COUNT,
+  DEFAULT_MAX_CONCURRENT,
   DELIVEROO_SERVICE_FEE_PCT,
   DELIVEROO_SERVICE_FEE_CAP,
   platformFromUrl,
   buildSearchUrl,
+  getConfig,
   browser,
 };

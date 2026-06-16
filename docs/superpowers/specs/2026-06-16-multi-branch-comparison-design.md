@@ -57,6 +57,13 @@ distance. Branch **label** is derived from an explicit field (locality/area), no
 a heuristic — the exact field per platform is confirmed against live data before
 relying on it (per the deterministic-signals preference).
 
+**Independent (single-branch) restaurants** are the natural degenerate case: the
+enumerator returns a single above-threshold match, so the platform column shows
+one branch and behaves exactly as the comparison does today. No chain membership
+is assumed — "nearest N" simply yields fewer than N (often 1) branches when that
+is all the listing offers. A label may be unavailable for a lone branch; the card
+falls back to the restaurant name with no area suffix.
+
 ### 2. Orchestration (service worker)
 
 State becomes branch-keyed:
@@ -143,7 +150,8 @@ scope** for this build.
 New pure, independently testable units:
 
 - Per-platform **branch extractor** — fixtures of listing/feed data → nearest-N
-  `{ id, label, distance, menuUrl }`.
+  `{ id, label, distance, menuUrl }`, including the single-match (independent
+  restaurant) case yielding exactly one branch.
 - **Pool scheduler** — enqueue / concurrency cap / tab recycling.
 - **Snapshot builder** — branches → per-column cheapest + global footer
   comparison.

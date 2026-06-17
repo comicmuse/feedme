@@ -91,10 +91,15 @@ const { parseMenuResponse } = require('../shared/parsers');
         const name = parts[0].trim();
         const distMatch = label.match(/([\d.]+)\s*mi\b/i);
         const href = a.getAttribute('href') || '';
+        // Menu hrefs are /menu/{city}/{area}/{slug}; the area path segment is a
+        // usable branch label. (The aria-label's parts[1] is just "0.3 mi", the
+        // distance text — confirmed against live data in Task 11.)
+        const areaSeg = href.split('/')[3] || '';
+        const areaLabel = areaSeg.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
         return {
           id: href,                       // the menu path uniquely identifies a branch
           name,
-          label: (parts[1] || '').trim(), // area / "0.3 mi" segment; refined in Task 11
+          label: areaLabel,
           distance: distMatch ? parseFloat(distMatch[1]) : null,
           menuUrl: href,
         };

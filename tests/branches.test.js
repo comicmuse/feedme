@@ -47,15 +47,17 @@ const jeListing = require('./fixtures/just-eat-listing.json');
 describe('justEatCandidates', () => {
   test('builds candidates from restaurantData', () => {
     const cands = justEatCandidates(jeListing);
-    expect(cands).toHaveLength(3);
-    const wc = cands.find((c) => c.id === 'burger-king-whitechapel');
-    expect(wc.name).toBe('Burger King');
-    expect(wc.label).toBe('Whitechapel');
-    expect(wc.distance).toBeCloseTo(0.4);
-    expect(wc.menuUrl).toBe('/restaurants-burger-king-whitechapel/menu');
+    expect(cands).toHaveLength(4);
+    const wc = cands.find((c) => c.id === '81738');
+    expect(wc.name).toBe('KFC Whitechapel');
+    expect(wc.label).toBe('84 Whitechapel High Street');
+    expect(wc.distance).toBeCloseTo(912 / 1609.344); // ~0.567 miles
+    expect(wc.menuUrl).toBe('/restaurants-kfc-whitechapelaldgate/menu');
   });
   test('matches end-to-end through selectNearestBranches', () => {
-    const out = selectNearestBranches(justEatCandidates(jeListing), 'Burger King', 3);
-    expect(out.map((b) => b.id)).toEqual(['burger-king-whitechapel', 'burger-king-aldgate']);
+    // KFC branches sorted by distance: Whitechapel (912m) < Bishopsgate (1562m)
+    // < Hackney (3162m); the Aniseed Bar entry is a different chain.
+    const out = selectNearestBranches(justEatCandidates(jeListing), 'KFC', 2);
+    expect(out.map((b) => b.id)).toEqual(['81738', '73853']);
   });
 });

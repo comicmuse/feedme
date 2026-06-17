@@ -38,18 +38,25 @@ function selectNearestBranches(candidates, targetName, n) {
   return unique.slice(0, n);
 }
 
+// Metres-per-mile, for converting Just Eat's driveDistanceMeters to miles so
+// distances are comparable with the other platforms.
+const METRES_PER_MILE = 1609.344;
+
 // Build branch candidates from a Just Eat area-listing __NEXT_DATA__ object.
-// brandName is the chain ("Burger King"); name may carry the locality. The
-// label prefers an explicit area field, falling back to the suffix of name.
+// Field names confirmed against live restaurantData (Task 11): each record has
+// `id`, `uniqueName`, `name` (carries brand + locality, e.g. "KFC Bishopsgate"),
+// `driveDistanceMeters`, and an `address` object. There is no brandName /
+// distanceInMiles / cuisineArea. The label uses the street (address.firstLine),
+// falling back to the city; distance is metres converted to miles.
 function justEatCandidates(nextData) {
   const map = findByKey(nextData, 'restaurantData') || {};
   return Object.values(map)
     .filter((r) => r && r.uniqueName && r.name)
     .map((r) => ({
-      id: r.uniqueName,
-      name: r.brandName || r.name,
-      label: r.cuisineArea || (r.name.includes(' - ') ? r.name.split(' - ').pop().trim() : ''),
-      distance: typeof r.distanceInMiles === 'number' ? r.distanceInMiles : null,
+      id: r.id || r.uniqueName,
+      name: r.name,
+      label: (r.address && (r.address.firstLine || r.address.city)) || '',
+      distance: typeof r.driveDistanceMeters === 'number' ? r.driveDistanceMeters / METRES_PER_MILE : null,
       menuUrl: `/restaurants-${r.uniqueName}/menu`,
     }));
 }

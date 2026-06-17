@@ -2,9 +2,10 @@
   "props": {
     "initialState": {
       "restaurantData": {
-        "bk-wc": { "uniqueName": "burger-king-whitechapel", "name": "Burger King - Whitechapel", "brandName": "Burger King", "distanceInMiles": 0.4, "cuisineArea": "Whitechapel" },
-        "bk-al": { "uniqueName": "burger-king-aldgate", "name": "Burger King - Aldgate", "brandName": "Burger King", "distanceInMiles": 0.9, "cuisineArea": "Aldgate" },
-        "kfc-al": { "uniqueName": "kfc-aldgate", "name": "KFC - Aldgate", "brandName": "KFC", "distanceInMiles": 0.3, "cuisineArea": "Aldgate" }
+        "73853": { "id": "73853", "uniqueName": "kfc-bishopsgate", "name": "KFC Bishopsgate", "driveDistanceMeters": 1562, "address": { "city": "London", "firstLine": "180 Bishopsgate", "postalCode": "EC2M 4NQ" } },
+        "81738": { "id": "81738", "uniqueName": "kfc-whitechapelaldgate", "name": "KFC Whitechapel", "driveDistanceMeters": 912, "address": { "city": "Aldgate", "firstLine": "84 Whitechapel High Street", "postalCode": "E1 7QX" } },
+        "67207": { "id": "67207", "uniqueName": "kfchackney-london", "name": "KFC Hackney - Mare Street", "driveDistanceMeters": 3162, "address": { "city": "London", "firstLine": "311 Mare Street, Hackney", "postalCode": "E8 1EJ" } },
+        "132": { "id": "132", "uniqueName": "roguetrader", "name": "Aniseed Bar & Indian Restaurant", "driveDistanceMeters": 2914, "address": { "city": "London", "firstLine": "1 Cannon Street", "postalCode": "EC4N 6AA" } }
       }
     }
   }

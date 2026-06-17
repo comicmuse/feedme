@@ -1,4 +1,4 @@
-const Fuse = require('fuse.js');
+const { selectNearestBranches } = require('../shared/branches');
 const { MSG, PLATFORM } = require('../shared/constants');
 const { parseMenuResponse } = require('../shared/parsers');
 
@@ -82,24 +82,29 @@ const { parseMenuResponse } = require('../shared/parsers');
       await new Promise((r) => setTimeout(r, 500));
     }
 
+    const ctx = window.__feedmeCompare ?? {};
     const candidates = [...document.querySelectorAll('a[href*="/menu/"]')]
       .map((a) => {
         const label = a.getAttribute('aria-label') ?? a.textContent ?? '';
-        // Labels read "Name. 0.3 mi. Delivers at 15. Rated 4.8..." — keep the name.
-        const name = label.split('. ')[0].trim();
-        return { name, el: a };
+        // Labels read "Name. 0.3 mi. Delivers at 15. Rated 4.8..."
+        const parts = label.split('. ');
+        const name = parts[0].trim();
+        const distMatch = label.match(/([\d.]+)\s*mi\b/i);
+        const href = a.getAttribute('href') || '';
+        return {
+          id: href,                       // the menu path uniquely identifies a branch
+          name,
+          label: (parts[1] || '').trim(), // area / "0.3 mi" segment; refined in Task 11
+          distance: distMatch ? parseFloat(distMatch[1]) : null,
+          menuUrl: href,
+        };
       })
-      .filter((c) => c.name);
+      .filter((c) => c.name && c.menuUrl);
 
-    const fuse = new Fuse(candidates, { keys: ['name'], threshold: 0.5 });
-    const best = fuse.search(target.restaurantName ?? '')[0]?.item;
-    if (!best) {
-      // No confident match — report not found rather than opening a random
-      // restaurant (the old `?? candidates[0]` fallback produced wrong prices).
-      chrome.runtime.sendMessage({ type: MSG.PLATFORM_DATA, platform: PLATFORM.DELIVEROO, error: 'not-found' });
-      return;
-    }
-    best.el.click(); // navigates to the menu page (re-injection follows)
+    const branches = selectNearestBranches(candidates, ctx.restaurantName ?? '', ctx.branchCount ?? 3)
+      .map(({ id, label, distance, menuUrl }) => ({ id, label, distance, menuUrl }));
+
+    chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.DELIVEROO, branches });
     return;
   }
 

@@ -9,6 +9,7 @@ const ctx = await esbuild.context({
     'platform-scraper': 'src/content/platform-scraper.js',
     'deliveroo-scraper': 'src/content/deliveroo-scraper.js',
     'just-eat-scraper': 'src/content/just-eat-scraper.js',
+    'uber-scraper': 'src/content/uber-scraper.js',
     'sidebar': 'src/content/sidebar.js',
     'popup': 'src/popup.js',
   },

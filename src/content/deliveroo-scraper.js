@@ -55,56 +55,69 @@ const { parseMenuResponse } = require('../shared/parsers');
   // PHASE 1 — homepage: enter postcode and select the first suggestion.
   if (path === '/' || path === '') {
     const input = await waitFor(() => document.querySelector('#location-search'));
-    if (!input) return;
+    if (!input) {
+      chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.DELIVEROO, branches: [] });
+      return;
+    }
     setInputValue(input, target.postcode ?? '');
 
     const suggestion = await waitFor(() =>
       [...document.querySelectorAll('li')].find((li) => /,\s*UK\s*$/i.test(li.textContent.trim()))
     );
-    if (!suggestion) return;
+    if (!suggestion) {
+      chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.DELIVEROO, branches: [] });
+      return;
+    }
     const clickable = suggestion.querySelector('button, a, [role="button"]') ?? suggestion;
     clickable.click(); // navigates to the listing page (re-injection follows)
     return;
   }
 
-  // PHASE 2 — listing: fuzzy-match the restaurant and open its menu.
+  // PHASE 2 — listing: the /restaurants landing page is only a curated subset
+  // (~20 restaurants, no full chain coverage), so search by brand to find the
+  // chain's branches in the autocomplete results.
   if (path.startsWith('/restaurants/')) {
+    const ctx = window.__feedmeCompare ?? {};
+    const brand = (ctx.restaurantName ?? '').trim().split(/\s+/)[0] || '';
+
+    const search = await waitFor(() =>
+      document.querySelector('input[type="search"], input[placeholder*="estaurant" i], input[placeholder*="earch" i]')
+    );
+    if (!search) {
+      chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.DELIVEROO, branches: [] });
+      return;
+    }
+    setInputValue(search, brand);
+    search.focus();
+
+    // Wait for autocomplete results whose name starts with the brand to render.
+    const brandLc = brand.toLowerCase();
     const links = await waitFor(() => {
-      const found = [...document.querySelectorAll('a[href*="/menu/"]')];
+      const found = [...document.querySelectorAll('a[href*="/menu/"]')]
+        .filter((a) => (a.getAttribute('aria-label') || '').trim().toLowerCase().startsWith(brandLc));
       return found.length ? found : null;
     });
-    if (!links) return;
-
-    // The listing lazy-loads restaurants on scroll; load more so a target further
-    // down isn't missed (and we don't open the wrong one).
-    for (let i = 0; i < 6; i += 1) {
-      window.scrollTo(0, document.body.scrollHeight);
-      await new Promise((r) => setTimeout(r, 500));
+    if (!links) {
+      chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.DELIVEROO, branches: [] });
+      return;
     }
 
-    const ctx = window.__feedmeCompare ?? {};
-    const candidates = [...document.querySelectorAll('a[href*="/menu/"]')]
-      .map((a) => {
-        const label = a.getAttribute('aria-label') ?? a.textContent ?? '';
-        // Labels read "Name. 0.3 mi. Delivers at 15. Rated 4.8..."
-        const parts = label.split('. ');
-        const name = parts[0].trim();
-        const distMatch = label.match(/([\d.]+)\s*mi\b/i);
-        const href = a.getAttribute('href') || '';
-        // Menu hrefs are /menu/{city}/{area}/{slug}; the area path segment is a
-        // usable branch label. (The aria-label's parts[1] is just "0.3 mi", the
-        // distance text — confirmed against live data in Task 11.)
-        const areaSeg = href.split('/')[3] || '';
-        const areaLabel = areaSeg.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-        return {
-          id: href,                       // the menu path uniquely identifies a branch
-          name,
-          label: areaLabel,
-          distance: distMatch ? parseFloat(distMatch[1]) : null,
-          menuUrl: href,
-        };
-      })
-      .filter((c) => c.name && c.menuUrl);
+    // Search-result anchors: aria-label is the clean name; the text carries the
+    // distance ("· 0.8 mi"); the href is /menu/{city}/{area}/{slug}(?query).
+    const candidates = links.map((a) => {
+      const name = (a.getAttribute('aria-label') || '').trim();
+      const distMatch = (a.textContent || '').match(/([\d.]+)\s*mi\b/i);
+      const href = a.getAttribute('href') || '';
+      const areaSeg = href.split('?')[0].split('/')[3] || '';
+      const areaLabel = areaSeg.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+      return {
+        id: href.split('?')[0],
+        name,
+        label: areaLabel,
+        distance: distMatch ? parseFloat(distMatch[1]) : null,
+        menuUrl: href,
+      };
+    }).filter((c) => c.name && c.menuUrl);
 
     const branches = selectNearestBranches(candidates, ctx.restaurantName ?? '', ctx.branchCount ?? 3)
       .map(({ id, label, distance, menuUrl }) => ({ id, label, distance, menuUrl }));

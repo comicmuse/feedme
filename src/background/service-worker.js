@@ -1,5 +1,5 @@
 const { PLATFORM, CHECKOUT_PATTERNS, MSG, buildSearchUrl, getConfig, browser } = require('../shared/constants');
-const { matchItems, computeTotal } = require('../shared/matcher');
+const { matchItems, computeTotal, estimateUberFees } = require('../shared/matcher');
 const { buildSnapshot } = require('../shared/snapshot');
 const { createScheduler } = require('../shared/pool');
 
@@ -19,7 +19,9 @@ const ENUMERATORS = {
 const MENU_SCRAPERS = {
   [PLATFORM.DELIVEROO]: { file: 'dist/deliveroo-scraper.js', world: 'ISOLATED' },
   [PLATFORM.JUST_EAT]: { file: 'dist/just-eat-scraper.js', world: 'ISOLATED' },
-  [PLATFORM.UBER_EATS]: { file: 'dist/platform-scraper.js', world: 'MAIN' },
+  // Other Uber branches are store pages: uber-scraper.js reads their JSON-LD menu
+  // in menu mode (the old MAIN-world XHR interceptor only fits the checkout page).
+  [PLATFORM.UBER_EATS]: { file: 'dist/uber-scraper.js', world: 'ISOLATED' },
 };
 
 const ENUM_TIMEOUT_MS = 30000;
@@ -203,10 +205,15 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   comparison.enumTabs.delete(sender.tab.id);
 
   // Drop the user's current branch from the source platform's scrape set so it
-  // isn't shown twice (dedupe by normalised label against the live cart).
+  // isn't shown twice: prefer the exact store id (Uber), fall back to the
+  // normalised label matching the live cart's restaurant name.
   const currentLabel = normaliseLabel(comparison.order.restaurantName);
-  const found = (msg.branches || []).filter((b) =>
-    !(platform === comparison.order.platform && normaliseLabel(b.label) && normaliseLabel(b.label) === currentLabel));
+  const currentStoreId = comparison.order.sourceStoreId || '';
+  const found = (msg.branches || []).filter((b) => {
+    if (platform !== comparison.order.platform) return true;
+    if (currentStoreId && String(b.id).includes(currentStoreId)) return false;
+    return !(normaliseLabel(b.label) && normaliseLabel(b.label) === currentLabel);
+  });
 
   if (!found.length) { onPlatformDone(comparison, platform); return; }
 
@@ -265,13 +272,31 @@ browser.runtime.onMessage.addListener((msg, sender) => {
     branch.result = { error: msg.error || 'parse-failed' };
   } else {
     const matches = matchItems(comparison.order.items, msg.parsed.items);
-    const total = computeTotal(matches, msg.parsed.deliveryFee, msg.parsed.serviceFee, msg.parsed.offers ?? [], {
+    const feeOpts = {
       serviceFeePct: msg.parsed.serviceFeePct, serviceFeeMin: msg.parsed.serviceFeeMin,
       serviceFeeMax: msg.parsed.serviceFeeMax, serviceFeeEstimated: msg.parsed.serviceFeeEstimated,
-    });
+    };
+    let { deliveryFee, serviceFee } = msg.parsed;
+    // Other Uber branches (store-page JSON-LD) have no fees — estimate from the cart.
+    if (branch.platform === PLATFORM.UBER_EATS && branchKey !== 'current') {
+      const est = estimateUberFees(comparison.order);
+      deliveryFee = est.deliveryFee;
+      serviceFee = 0;
+      feeOpts.serviceFeePct = est.serviceFeePct;
+      feeOpts.serviceFeeEstimated = true;
+    }
+    const total = computeTotal(matches, deliveryFee, serviceFee, msg.parsed.offers ?? [], feeOpts);
     branch.status = 'done';
     branch.result = { restaurantName: msg.parsed.restaurantName, matches, total, offers: msg.parsed.offers ?? [] };
     if (!branch.label && msg.parsed.restaurantName) branch.label = msg.parsed.restaurantName;
+
+    // Stage-2 validity: first-token brand enumeration can admit a sibling brand
+    // that shares the leading word (e.g. "Burger Eats" for "Burger King"). Such a
+    // branch carries none of the cart's items, so drop it rather than show a
+    // misleading 0-matched card.
+    if (total.matchedCount === 0) {
+      comparison.branches.delete(branchKey);
+    }
   }
 
   comparison.scheduler.release();

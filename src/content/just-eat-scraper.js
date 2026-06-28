@@ -44,12 +44,18 @@ const { parseMenuResponse } = require('../shared/parsers');
       const text = document.querySelector('#__NEXT_DATA__')?.textContent;
       return text && text.includes('restaurantData') ? text : null;
     });
-    if (!blob) return;
+    if (!blob) {
+      // Report rather than return silently — otherwise the platform only ends via
+      // the enum timeout.
+      chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.JUST_EAT, branches: [] });
+      return;
+    }
 
     let branches = [];
     try {
       const data = JSON.parse(blob);
-      branches = selectNearestBranches(justEatCandidates(data), ctx.restaurantName ?? '', ctx.branchCount ?? 3)
+      const cands = justEatCandidates(data);
+      branches = selectNearestBranches(cands, ctx.restaurantName ?? '', ctx.branchCount ?? 3)
         .map(({ id, label, distance, menuUrl }) => ({ id, label, distance, menuUrl }));
     } catch (_) {}
 

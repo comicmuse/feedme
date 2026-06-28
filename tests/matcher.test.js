@@ -1,4 +1,24 @@
-const { matchItems, computeTotal } = require('../src/shared/matcher');
+const { matchItems, computeTotal, estimateUberFees } = require('../src/shared/matcher');
+
+describe('estimateUberFees', () => {
+  test('derives the service-fee percentage and delivery fee from the live cart', () => {
+    const order = { items: [{ unitPrice: 5, quantity: 2 }], deliveryFee: 0.99, serviceFee: 1.5, checkoutTotal: 12.49, discounts: [] };
+    const est = estimateUberFees(order);
+    expect(est.deliveryFee).toBeCloseTo(0.99);
+    expect(est.serviceFeePct).toBeCloseTo(0.15); // 1.5 / 10
+  });
+
+  test('falls back to the checkout total when per-item prices are unknown', () => {
+    const order = { items: [{ unitPrice: 0, quantity: 1 }], deliveryFee: 1, serviceFee: 2, checkoutTotal: 23, discounts: [] };
+    const est = estimateUberFees(order); // subtotal = 23 - 1 - 2 = 20 -> pct = 0.1
+    expect(est.serviceFeePct).toBeCloseTo(0.1);
+  });
+
+  test('no divide-by-zero when subtotal is unknown', () => {
+    const est = estimateUberFees({ items: [], deliveryFee: 0, serviceFee: 0, checkoutTotal: 0, discounts: [] });
+    expect(est.serviceFeePct).toBe(0);
+  });
+});
 
 const PLATFORM_ITEMS = [
   { name: 'Whopper', description: 'Flame-grilled beef burger', unitPrice: 5.89 },

@@ -1,10 +1,27 @@
-const { classifyResponse, parseMenuResponse } = require('../src/shared/parsers');
+const { classifyResponse, parseMenuResponse, parseUberStore } = require('../src/shared/parsers');
 const { matchItems } = require('../src/shared/matcher');
 const { PLATFORM } = require('../src/shared/constants');
 
 const ubereats = require('./fixtures/ubereats-menu.json');
 const deliveroo = require('./fixtures/deliveroo-menu.json');
 const justeat = require('./fixtures/just-eat-menu.json');
+const uberStoreLd = require('./fixtures/ubereats-store-ld.json');
+
+describe('parseUberStore (Uber store-page JSON-LD)', () => {
+  test('flattens JSON-LD menu sections into priced items', () => {
+    const m = parseUberStore(uberStoreLd);
+    expect(m.restaurantName).toBe('Subway Mile End Halal');
+    expect(m.items.length).toBe(176);
+    const bites = m.items.find((i) => i.name === 'Chipotle Cheesy Bites - 5 pieces');
+    expect(bites.unitPrice).toBeCloseTo(3.89);
+    expect(m.items.every((i) => typeof i.unitPrice === 'number' && !Number.isNaN(i.unitPrice))).toBe(true);
+  });
+
+  test('produces the standard parsed shape (fees default to 0, offers empty)', () => {
+    const m = parseUberStore(uberStoreLd);
+    expect(m).toMatchObject({ deliveryFee: 0, serviceFee: 0, offers: [] });
+  });
+});
 
 describe('classifyResponse', () => {
   test('identifies Uber Eats menu response', () => {

@@ -27,7 +27,12 @@ const SEARCH_URL_TEMPLATES = {
   // The /area/{postcode} listing works directly (no geocode step); just-eat-scraper
   // matches the restaurant there and opens its menu.
   [PLATFORM.JUST_EAT]: 'https://www.just-eat.co.uk/area/{postcode}/restaurants',
-  [PLATFORM.UBER_EATS]: 'https://www.ubereats.com/gb/feed?q={name}&pl={postcode}',
+  // Brand search: /gb/search with searchType=GLOBAL_SEARCH returns the focused
+  // "N locations" view listing every nearby branch of the chain. (/gb/feed?q= and
+  // /gb/search without GLOBAL_SEARCH both return a generic feed with a single
+  // store.) No pl=: a shorthand postcode is rejected and Uber resolves the session
+  // location via a 307 redirect, so we let the logged-in session supply it.
+  [PLATFORM.UBER_EATS]: 'https://www.ubereats.com/gb/search?q={name}&vertical=ALL&searchType=GLOBAL_SEARCH&sc=SEARCH_BAR',
 };
 
 const MSG = {
@@ -78,8 +83,11 @@ function platformFromUrl(url) {
 function buildSearchUrl(platform, restaurantName, postcode) {
   const template = SEARCH_URL_TEMPLATES[platform];
   if (!template) return null;
+  // Search by the brand (first token) only: the verbose store name ("Subway Mile
+  // End Halal") makes Uber return just that one store, hiding sibling branches.
+  const brand = String(restaurantName || '').trim().split(/\s+/)[0] || '';
   return template
-    .replace('{name}', encodeURIComponent(restaurantName))
+    .replace('{name}', encodeURIComponent(brand))
     // Postcodes are case-insensitive in these URLs; lowercase matches the form the
     // sites use in their own paths (e.g. /area/sw1e5je).
     .replace('{postcode}', encodeURIComponent(postcode.replace(/\s+/g, '').toLowerCase()));

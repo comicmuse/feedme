@@ -17,26 +17,14 @@ function buildSnapshot(order, branches, loadingPlatforms) {
   const current = branches.find((b) => b.isCurrent);
   const currentTotal = current && current.status === 'done' ? current.result.total.total : Infinity;
 
-  const platforms = ORDER.map((platform) => {
-    const own = branches.filter((b) => b.platform === platform);
-    let cheapestKey = null;
-    let best = Infinity;
-    for (const b of own) {
-      if (!isComplete(b)) continue;
-      if (b.result.total.total < best) {
-        best = b.result.total.total;
-        cheapestKey = b.key;
-      }
-    }
-    return {
-      platform,
-      spinner: loadingPlatforms.has(platform),
-      cheapestKey,
-      branches: own,
-    };
-  });
+  const platforms = ORDER.map((platform) => ({
+    platform,
+    spinner: loadingPlatforms.has(platform),
+    branches: branches.filter((b) => b.platform === platform),
+  }));
 
   // Overall cheapest complete branch across everything, including the current one.
+  // This is the only branch the sidebar highlights (no per-column highlight).
   let overall = null;
   for (const b of branches) {
     if (!isComplete(b)) continue;
@@ -57,7 +45,7 @@ function buildSnapshot(order, branches, loadingPlatforms) {
     };
   }
 
-  return { platforms, footer, currentTotal: currentTotal === Infinity ? 0 : currentTotal };
+  return { platforms, cheapestKey: overall ? overall.key : null, footer, currentTotal: currentTotal === Infinity ? 0 : currentTotal };
 }
 
 module.exports = { buildSnapshot };

@@ -20,10 +20,10 @@ function branches() {
 }
 
 describe('buildSnapshot', () => {
-  test('picks the cheapest complete branch per platform', () => {
+  test('highlights only the single overall-cheapest branch (no per-column highlight)', () => {
     const snap = buildSnapshot(order, branches(), new Set());
-    const del = snap.platforms.find((p) => p.platform === PLATFORM.DELIVEROO);
-    expect(del.cheapestKey).toBe('del|wc');
+    expect(snap.cheapestKey).toBe('del|wc'); // 11.40 is the lowest of all branches
+    expect(snap.platforms.every((p) => !('cheapestKey' in p))).toBe(true);
   });
   test('footer recommends switching to the overall cheapest with the saving', () => {
     const snap = buildSnapshot(order, branches(), new Set());
@@ -43,7 +43,7 @@ describe('buildSnapshot', () => {
       { platform: PLATFORM.DELIVEROO, key: 'del|wc', label: 'WC', distance: 0.4, isCurrent: false, ...done(5.00, 2, 3) },
     ];
     const snap = buildSnapshot(order, b, new Set());
-    expect(snap.platforms.find((p) => p.platform === PLATFORM.DELIVEROO).cheapestKey).toBeNull();
+    expect(snap.cheapestKey).toBe('uber|cur'); // only the complete current branch qualifies
     expect(snap.footer.kind).toBe('best');
   });
   test('spinner set for platforms still loading; unknown footer with nothing complete', () => {

@@ -41,6 +41,45 @@ describe('selectNearestBranches', () => {
   });
 });
 
+describe('selectNearestBranches — deterministic brand matching', () => {
+  // The source name is the verbose platform store name; candidates may be just
+  // the brand. Matching must be brand-based, not fuzzy on the whole string.
+  const mixed = [
+    { id: 'sub-1', name: 'Subway',               label: 'Aldgate',   distance: 0.3, menuUrl: '/m/1' },
+    { id: 'sub-2', name: 'Subway - Mile End',     label: 'Mile End',  distance: 0.6, menuUrl: '/m/2' },
+    { id: 'bm',    name: 'BurgerMania',           label: 'X',         distance: 0.2, menuUrl: '/m/3' },
+    { id: 'be',    name: 'Burger Eats',           label: 'Y',         distance: 0.1, menuUrl: '/m/4' },
+    { id: 'bk',    name: 'Burger King - Canary Wharf', label: 'CW',   distance: 0.9, menuUrl: '/m/5' },
+  ];
+
+  test('verbose source name matches every same-brand branch (divergent localities)', () => {
+    const out = selectNearestBranches(mixed, 'Subway Mile End Halal', 5).map((b) => b.id);
+    expect(out).toContain('sub-1'); // "Subway"
+    expect(out).toContain('sub-2'); // "Subway - Mile End"
+    expect(out).not.toContain('bm'); // "BurgerMania" — different brand
+    expect(out).not.toContain('bk'); // "Burger King …" — different brand
+  });
+
+  test('excludes partial-word lookalikes (different first token)', () => {
+    // "BurgerMania" is one token != "burger", so it is filtered at enumeration.
+    const out = selectNearestBranches(mixed, 'Burger King', 5).map((b) => b.id);
+    expect(out).not.toContain('bm');
+  });
+
+  test('a sibling brand sharing the first word is enumerated (dropped later by item match)', () => {
+    // First-token matching cannot tell "Burger Eats" from "Burger King"; the
+    // service worker drops 0-item-match branches after scraping (stage 2).
+    const out = selectNearestBranches(mixed, 'Burger King', 5).map((b) => b.id);
+    expect(out).toContain('bk'); // real Burger King
+    expect(out).toContain('be'); // "Burger Eats" — survives enumeration, dropped post-scrape
+  });
+
+  test('apostrophe/punctuation differences still match', () => {
+    const solo = [{ id: 'tp', name: "Tony's Pizza", label: '', distance: 0.5, menuUrl: '/m' }];
+    expect(selectNearestBranches(solo, 'Tonys Pizza', 3).map((b) => b.id)).toEqual(['tp']);
+  });
+});
+
 const { justEatCandidates } = require('../src/shared/branches');
 const jeListing = require('./fixtures/just-eat-listing.json');
 

@@ -162,4 +162,21 @@ function computeTotal(matches, deliveryFee, serviceFee, offers, opts = {}) {
   };
 }
 
-module.exports = { matchItems, computeTotal };
+// Other Uber branches are scraped from their store page's JSON-LD, which carries
+// item prices but no fees. Estimate their fees from the live cart (same platform,
+// same delivery area): reuse its delivery fee and apply its service-fee rate
+// (serviceFee / subtotal) to each branch's subtotal. Totals built this way are
+// flagged estimated via computeTotal's serviceFeeEstimated.
+function estimateUberFees(order) {
+  const discountTotal = (order.discounts ?? []).reduce((s, d) => s + d.amount, 0);
+  const itemsKnown = (order.items ?? []).some((i) => i.unitPrice > 0);
+  const subtotal = itemsKnown
+    ? order.items.reduce((s, i) => s + i.unitPrice * i.quantity, 0)
+    : order.checkoutTotal - order.deliveryFee - order.serviceFee + discountTotal;
+  return {
+    deliveryFee: order.deliveryFee ?? 0,
+    serviceFeePct: subtotal > 0 ? order.serviceFee / subtotal : 0,
+  };
+}
+
+module.exports = { matchItems, computeTotal, estimateUberFees };

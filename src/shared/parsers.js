@@ -50,6 +50,40 @@ function parseUberEats(data) {
   };
 }
 
+// Uber store pages (other branches of the chain) server-render their catalogue
+// into the page's catalog blob, but it's not fetched via an interceptable XHR and
+// is custom-escaped. The Schema.org Restaurant JSON-LD on the same page carries a
+// clean menu (hasMenu.hasMenuSection[].hasMenuItem[] with offer prices), which is
+// enough for a cross-branch price comparison. No modifiers or fees are available
+// here, so fees default to 0 (mirroring the SSR-only Just Eat path).
+function asArray(v) {
+  return Array.isArray(v) ? v : v ? [v] : [];
+}
+
+function parseUberStore(ld) {
+  const sections = asArray(ld?.hasMenu?.hasMenuSection ?? ld?.hasMenu);
+  const items = [];
+  for (const section of sections) {
+    for (const it of asArray(section?.hasMenuItem)) {
+      const offer = asArray(it?.offers)[0] ?? it?.offers;
+      items.push({
+        name: it?.name ?? '',
+        description: it?.description ?? '',
+        unitPrice: parseFloat(offer?.price ?? 0) || 0,
+      });
+    }
+  }
+  return {
+    restaurantName: ld?.name ?? '',
+    postcode: ld?.address?.postalCode ?? '',
+    items,
+    deliveryFee: 0,
+    serviceFee: 0,
+    serviceFeePct: 0,
+    offers: [],
+  };
+}
+
 // The menu root inside Deliveroo's __NEXT_DATA__ blob.
 function deliverooRoot(data) {
   return data?.props?.initialState?.menuPage?.menu?.metas?.root ?? null;
@@ -308,4 +342,4 @@ function justEatOffers(notifications) {
     });
 }
 
-module.exports = { classifyResponse, parseMenuResponse };
+module.exports = { classifyResponse, parseMenuResponse, parseUberStore };

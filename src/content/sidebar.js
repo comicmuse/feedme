@@ -243,6 +243,9 @@ function render(snapshot, order) {
   const cols = document.createElement('div');
   cols.className = 'cols';
 
+  // Only the single overall-cheapest branch is highlighted (no per-column winner).
+  const cheapestKey = snapshot.cheapestKey;
+
   snapshot.platforms.forEach((col) => {
     const colEl = document.createElement('div');
     colEl.className = 'col';
@@ -254,16 +257,16 @@ function render(snapshot, order) {
 
     // Order branches: cheapest first (expanded), current pinned, then by distance.
     const ordered = [...col.branches].sort((a, b) => {
-      if (a.key === col.cheapestKey) return -1;
-      if (b.key === col.cheapestKey) return 1;
+      if (a.key === cheapestKey) return -1;
+      if (b.key === cheapestKey) return 1;
       if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
       return (a.distance ?? Infinity) - (b.distance ?? Infinity);
     });
 
     ordered.forEach((branch) => {
-      const showFull = branch.key === col.cheapestKey || branch.isCurrent || expanded.has(branch.key);
+      const showFull = branch.key === cheapestKey || branch.isCurrent || expanded.has(branch.key);
       colEl.appendChild(showFull
-        ? buildBranchCard(branch, branch.key === col.cheapestKey)
+        ? buildBranchCard(branch, branch.key === cheapestKey)
         : buildCollapsedRow(branch));
     });
 

@@ -60,9 +60,17 @@ async function extractUberEats(doc) {
           const lineTotal = priceSpans.length
             ? parsePrice(priceSpans[priceSpans.length - 1].textContent)
             : 0;
-          // Quantity is only rendered as a leading "N ×"/"Nx" prefix when > 1.
-          const qtyMatch = el.textContent.match(/^\s*(\d+)\s*[×x]\s/);
-          const quantity = qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
+          // Quantity (the stepper value) is rendered in the row wrapper OUTSIDE the
+          // cart-item content. Reading it from the item's own text was unreliable: it
+          // matched digits in product names (e.g. "3x Chocolate Chunk Cookies" → 3)
+          // and missed deal lines that show no "N ×" prefix (e.g. a Buy-1-get-1 line,
+          // which still steps to 2). Find the standalone integer in the enclosing
+          // <li> that isn't inside the item content.
+          const row = el.closest('li');
+          const qtyEl = row && [...row.querySelectorAll('div, span')].find(
+            (n) => !el.contains(n) && /^\d+$/.test(n.textContent.trim())
+          );
+          const quantity = qtyEl ? parseInt(qtyEl.textContent.trim(), 10) : 1;
           // Paid options/modifiers render as "{name} (£{price})" (a group label
           // like "Add:" may prefix it). Capturing name + price lets comparison
           // platforms be priced using their OWN cost for the same option, falling
@@ -101,6 +109,10 @@ async function extractUberEats(doc) {
       )
     : null;
   const restaurantName = nameLeaf?.textContent.trim() ?? restLink?.textContent.trim() ?? '';
+  // The store UUID (last path segment of the store link) identifies this exact
+  // branch, so the enumerator can drop it from the Uber column (avoids showing the
+  // cart's own store twice).
+  const sourceStoreId = (restLink?.getAttribute('href') ?? '').split('?')[0].split('/').filter(Boolean).pop() ?? '';
 
   const feeEl = (testid) =>
     doc.querySelector(`[data-testid="${testid}"]`);
@@ -114,6 +126,7 @@ async function extractUberEats(doc) {
   return {
     platform: PLATFORM.UBER_EATS,
     restaurantName,
+    sourceStoreId,
     postcode: postcodeMatch?.[0]?.replace(/\s+/, ' ') ?? '',
     items,
     deliveryFee: parsePrice(feeEl('fare-breakdown-charge-badge-delivery-fee')?.textContent),

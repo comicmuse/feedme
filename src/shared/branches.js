@@ -1,6 +1,14 @@
-const Fuse = require('fuse.js');
-
-const FUSE_THRESHOLD = 0.4;
+// Normalise a restaurant name to comparable tokens: lowercase, drop apostrophes
+// (so "Tony's" == "Tonys"), split on any other non-alphanumeric run.
+function nameTokens(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/['’]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
 
 // Recursively locate a named property (some platform blobs nest the data at a
 // deep, version-dependent path). Shared by the Just Eat scraper and candidate
@@ -24,18 +32,23 @@ function findByKey(obj, key, depth = 0) {
  * @param {number} n
  */
 function selectNearestBranches(candidates, targetName, n) {
-  if (!targetName) return [];
-  const fuse = new Fuse(candidates, { keys: ['name'], threshold: FUSE_THRESHOLD });
-  const matched = fuse.search(targetName).map((r) => r.item);
+  const brand = nameTokens(targetName)[0];
+  if (!brand) return [];
   const seen = new Set();
-  const unique = [];
-  for (const c of matched) {
+  const matched = [];
+  for (const c of candidates) {
+    // Brand match on the first token (whole word). Branch names diverge after the
+    // brand ("Subway", "Subway - Mile End", "Subway Chronos Building …"), so we
+    // anchor on the leading token only. "BurgerMania" is one token != "burger" so
+    // it's excluded; a true sibling brand sharing the first word ("Burger Eats"
+    // vs "Burger King") survives here and is dropped later by the cart item match.
+    if (nameTokens(c.name)[0] !== brand) continue;
     if (seen.has(c.id)) continue;
     seen.add(c.id);
-    unique.push(c);
+    matched.push(c);
   }
-  unique.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
-  return unique.slice(0, n);
+  matched.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+  return matched.slice(0, n);
 }
 
 // Metres-per-mile, for converting Just Eat's driveDistanceMeters to miles so
@@ -61,4 +74,4 @@ function justEatCandidates(nextData) {
     }));
 }
 
-module.exports = { findByKey, selectNearestBranches, justEatCandidates };
+module.exports = { findByKey, selectNearestBranches, justEatCandidates, nameTokens };

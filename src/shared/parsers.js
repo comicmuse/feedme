@@ -300,6 +300,14 @@ function parseJustEat(data) {
       };
     });
 
+  // Resolve item-level offer references (offerMenuItems[].id) back to names: the
+  // notifications API identifies discounted items by catalogue id, but the deal
+  // engine matches eligible items by name. Built from the same source as `items`.
+  const itemNameById = {};
+  for (const i of Object.values(itemSource ?? {})) {
+    if (i && i.id && i.name) itemNameById[i.id] = i.name;
+  }
+
   const rInfo = cdn.restaurant?.restaurantInfo ?? {};
   const svc = justEatServiceFee(data._feedmeDynamic);
 
@@ -314,14 +322,15 @@ function parseJustEat(data) {
     serviceFeeMin: svc.serviceFeeMin,
     serviceFeeMax: svc.serviceFeeMax,
     serviceFeeEstimated: false,
-    offers: justEatOffers(data._feedmeOffers),
+    offers: justEatOffers(data._feedmeOffers, itemNameById),
   };
 }
 
 // Structured offers from Just Eat's notifications. Percent offers carry the
 // minimum spend; the rate and cap are only in the description text. Free-delivery
-// notifications keep the threshold in the text too.
-function justEatOffers(notifications) {
+// notifications keep the threshold in the text too. `itemNameById` resolves the
+// catalogue-id references in item-level offers' offerMenuItems back to names.
+function justEatOffers(notifications, itemNameById = {}) {
   return (notifications ?? [])
     .filter((o) => o && o.description)
     .map((o) => {
@@ -330,16 +339,48 @@ function justEatOffers(notifications) {
         ? o.minimumSpendValue.value / 100
         : parseFloat((desc.match(/spend £(\d+(?:\.\d+)?)/i) ?? [])[1]) || 0;
       if (/free deliver/i.test(desc)) return { type: 'free-delivery', minSpend, description: desc };
-      // Only an order-level percentage offer (offerType "Percent") is applied to the
-      // whole subtotal. "ItemLevelDiscount" offers ("31% off X Meal") are tied to a
-      // specific item we can't assume is ordered, so they're display-only.
+      // An order-level percentage offer (offerType "Percent") applies to the whole
+      // subtotal; the rate and cap are only in the description text.
       if (o.offerType === 'Percent') {
         const percent = (parseFloat((desc.match(/(\d+(?:\.\d+)?)%/) ?? [])[1]) || 0) / 100;
         const cap = parseFloat((desc.match(/up to £(\d+(?:\.\d+)?)/i) ?? [])[1]) || Infinity;
         return { type: 'percent', minSpend, percent, cap, description: desc };
       }
+      // "ItemLevelDiscount" ("25% off selected items") discounts specific items. Its
+      // offerMenuItems list the eligible items by catalogue id with the discount rate;
+      // map them to the item-level deal model so the discount applies only when an
+      // eligible item is actually in the cart. Product ids resolve to names; Category
+      // ids can't be expanded from the catalogue, so they're dropped (the Product
+      // entries already enumerate the discounted items). With no resolvable item the
+      // deal carries no eligibleItems and stays display-only.
+      if (o.offerType === 'ItemLevelDiscount') {
+        return justEatItemDeal(o, minSpend, itemNameById);
+      }
       return { type: 'other', minSpend, description: desc };
     });
+}
+
+// Map a Just Eat ItemLevelDiscount notification to the percent-off-items deal shape.
+function justEatItemDeal(offer, minSpend, itemNameById) {
+  const menuItems = offer.offerMenuItems ?? [];
+  const eligibleItems = [
+    ...new Set(
+      menuItems
+        .filter((m) => m.menuItemType === 'Product')
+        .map((m) => itemNameById[m.id])
+        .filter(Boolean)
+    ),
+  ];
+  const pct = menuItems.find((m) => m.discount?.discountPercentage > 0)?.discount.discountPercentage ?? 0;
+  return {
+    type: 'item-deal',
+    rule: 'percent-off-items',
+    eligibleItems,
+    percent: pct / 100,
+    cap: Infinity,
+    minSpend,
+    description: offer.description,
+  };
 }
 
 module.exports = { classifyResponse, parseMenuResponse, parseUberStore };

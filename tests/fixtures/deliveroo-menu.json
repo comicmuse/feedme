@@ -67,7 +67,8 @@
                 "offers": [
                   {
                     "typeName": "FreeItemOffer",
-                    "minimumOrderValue": { "code": "GBP", "fractional": 2000, "formatted": "£20.00" }
+                    "minimumOrderValue": { "code": "GBP", "fractional": 2000, "formatted": "£20.00" },
+                    "itemIds": ["dr-3"]
                   }
                 ],
                 "progressBar": {

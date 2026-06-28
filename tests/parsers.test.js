@@ -79,7 +79,43 @@ describe('parseMenuResponse - Deliveroo', () => {
     const freeDel = result.offers.find((o) => o.type === 'free-delivery');
     expect(freeDel).toBeTruthy();
     expect(freeDel.minSpend).toBeCloseTo(10);
-    expect(result.offers.some((o) => /£20\.00/.test(o.description))).toBe(true);
+  });
+  test('maps a FreeItemOffer to a structured free-item item-deal', () => {
+    const deal = result.offers.find((o) => o.type === 'item-deal');
+    expect(deal).toBeTruthy();
+    expect(deal.rule).toBe('free-item');
+    expect(deal.minSpend).toBeCloseTo(20);
+  });
+  test('resolves FreeItemOffer itemIds to branch item names as eligibleItems', () => {
+    const deal = result.offers.find((o) => o.type === 'item-deal');
+    expect(deal.eligibleItems).toEqual(['Large Fries']);
+  });
+});
+
+describe('Deliveroo free-item deal applied end-to-end', () => {
+  const parsed = parseMenuResponse(PLATFORM.DELIVEROO, deliveroo);
+
+  test('frees the named item once the minimum spend is met and it is in the cart', () => {
+    // Double Whopper £7.89 x3 = £23.67 + Large Fries £3.19 = £26.86 subtotal (>= £20)
+    const matches = matchItems(
+      [{ name: 'Double Whopper', quantity: 3 }, { name: 'Large Fries', quantity: 1 }],
+      parsed.items
+    );
+    const result = computeTotal(matches, 0, 0, parsed.offers);
+    expect(result.discountTotal).toBeCloseTo(3.19);
+    expect(result.appliedDeals).toHaveLength(1);
+  });
+  test('does not free the item when the minimum spend is not met', () => {
+    const matches = matchItems([{ name: 'Large Fries', quantity: 1 }], parsed.items);
+    const result = computeTotal(matches, 0, 0, parsed.offers);
+    expect(result.discountTotal).toBe(0);
+    expect(result.appliedDeals).toEqual([]);
+  });
+  test('does not free the item when it is not in the cart', () => {
+    const matches = matchItems([{ name: 'Double Whopper', quantity: 3 }], parsed.items);
+    const result = computeTotal(matches, 0, 0, parsed.offers);
+    expect(result.discountTotal).toBe(0);
+    expect(result.appliedDeals).toEqual([]);
   });
 });
 

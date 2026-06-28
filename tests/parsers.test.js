@@ -1,5 +1,5 @@
 const { classifyResponse, parseMenuResponse, parseUberStore } = require('../src/shared/parsers');
-const { matchItems } = require('../src/shared/matcher');
+const { matchItems, computeTotal } = require('../src/shared/matcher');
 const { PLATFORM } = require('../src/shared/constants');
 
 const ubereats = require('./fixtures/ubereats-menu.json');
@@ -151,7 +151,7 @@ describe('parseMenuResponse - Just Eat', () => {
 
   test('extracts restaurant name', () => { expect(result.restaurantName).toBe('Burger King - Victoria'); });
   test('extracts postcode', () => { expect(result.postcode).toBe('SW1E 5JE'); });
-  test('extracts items from the cdn map', () => { expect(result.items).toHaveLength(3); });
+  test('extracts items from the cdn map', () => { expect(result.items).toHaveLength(4); });
   test('first item unitPrice in pounds', () => { expect(result.items[0].unitPrice).toBeCloseTo(5.69); });
   test('resolves the item\'s paid modifier options via modifierSets', () => {
     expect(result.items[0].modifiers).toEqual([{ name: 'Regular Fries', price: 2.50 }]);
@@ -176,9 +176,40 @@ describe('parseMenuResponse - Just Eat', () => {
     expect(percent.percent).toBeCloseTo(0.20);
     expect(percent.cap).toBeCloseTo(10);
   });
-  test('does not treat item-level discounts as order-level percent offers', () => {
-    const itemLevel = result.offers.find((o) => /Meal Deal/.test(o.description));
-    expect(itemLevel.type).toBe('other');
+  test('maps an ItemLevelDiscount to a structured percent-off-items item-deal', () => {
+    const deal = result.offers.find((o) => o.type === 'item-deal');
+    expect(deal).toBeTruthy();
+    expect(deal.rule).toBe('percent-off-items');
+    expect(deal.percent).toBeCloseTo(0.25);
+    expect(deal.cap).toBe(Infinity);
+  });
+  test('resolves offerMenuItems Product ids to branch item names as eligibleItems', () => {
+    const deal = result.offers.find((o) => o.type === 'item-deal');
+    expect(deal.eligibleItems).toEqual(['Whopper', 'Large Fries']);
+  });
+  test('ignores Category-type offerMenuItems that cannot be resolved to items', () => {
+    const deal = result.offers.find((o) => o.type === 'item-deal');
+    expect(deal.eligibleItems).toHaveLength(2);
+  });
+  test('does not treat the item-level discount as an order-level percent offer', () => {
     expect(result.offers.filter((o) => o.type === 'percent')).toHaveLength(1);
+  });
+});
+
+describe('Just Eat item-level deal applied end-to-end', () => {
+  const parsed = parseMenuResponse(PLATFORM.JUST_EAT, justeat);
+
+  test('discounts an eligible item that is in the cart', () => {
+    const matches = matchItems([{ name: 'Whopper', quantity: 1 }], parsed.items);
+    const result = computeTotal(matches, 0, 0, parsed.offers);
+    expect(result.discountTotal).toBeCloseTo(5.69 * 0.25);
+    expect(result.appliedDeals).toHaveLength(1);
+  });
+
+  test('leaves the total unchanged when no eligible item is in the cart', () => {
+    const matches = matchItems([{ name: 'Onion Rings', quantity: 1 }], parsed.items);
+    const result = computeTotal(matches, 0, 0, parsed.offers);
+    expect(result.discountTotal).toBe(0);
+    expect(result.appliedDeals).toEqual([]);
   });
 });

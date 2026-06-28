@@ -40,6 +40,13 @@
                   "description": "Seasoned shoestring fries",
                   "type": "menuitem",
                   "variations": [{ "name": "Regular", "basePrice": 3.49 }, { "name": "Large", "basePrice": 3.09 }]
+                },
+                "je-4": {
+                  "id": "je-4",
+                  "name": "Onion Rings",
+                  "description": "Crispy battered onion rings",
+                  "type": "menuitem",
+                  "variations": [{ "name": "", "type": "NoVariation", "basePrice": 2.99 }]
                 }
               }
             }
@@ -62,9 +69,13 @@
     },
     {
       "offerId": "ccc",
-      "description": "32% off Honey BBQ Wrap Meal Deal",
+      "description": "25% off selected items",
       "offerType": "ItemLevelDiscount",
-      "offerMenuItems": [{ "discount": { "discountPercentage": 32 } }]
+      "offerMenuItems": [
+        { "id": "je-1", "roleType": "DiscountedItem", "menuItemType": "Product", "discount": { "discountPercentage": 25, "discountedItemPrice": 427 } },
+        { "id": "je-3", "roleType": "DiscountedItem", "menuItemType": "Product", "discount": { "discountPercentage": 25, "discountedItemPrice": 232 } },
+        { "id": "cat-x", "roleType": "DiscountedItem", "menuItemType": "Category", "discount": { "discountPercentage": 25 } }
+      ]
     }
   ],
   "_feedmeDynamic": {

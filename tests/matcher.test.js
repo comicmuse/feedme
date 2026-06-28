@@ -246,3 +246,107 @@ describe('computeTotal', () => {
     expect(result.serviceFeeEstimated).toBe(false);
   });
 });
+
+describe('computeTotal — item-level deals', () => {
+  const line = (name, unitPrice, quantity = 1) => ({
+    referenceItem: { quantity },
+    platformItem: { name, unitPrice },
+    matched: true,
+  });
+
+  test('cheapest-free (2-for-1) frees the cheaper of two qualifying items', () => {
+    const matches = [line('Footlong Sub', 6.0), line('Footlong Sub', 5.0)];
+    const offers = [
+      { type: 'item-deal', rule: 'cheapest-free', eligibleItems: ['Footlong Sub'], quantity: 2, description: 'Buy one get one free' },
+    ];
+    const result = computeTotal(matches, 0, 0, offers);
+    expect(result.discountTotal).toBeCloseTo(5.0);
+    expect(result.total).toBeCloseTo(6.0);
+  });
+
+  test('percent-off-items discounts only eligible lines and respects the cap', () => {
+    const matches = [line('Pizza', 20.0), line('Coke', 2.0)];
+    const offers = [
+      { type: 'item-deal', rule: 'percent-off-items', eligibleItems: ['Pizza'], percent: 0.5, cap: 8, description: '50% off pizzas' },
+    ];
+    // 50% of the £20 pizza = £10, capped at £8; the £2 Coke is untouched.
+    const result = computeTotal(matches, 0, 0, offers);
+    expect(result.discountTotal).toBeCloseTo(8.0);
+    expect(result.total).toBeCloseTo(14.0);
+  });
+
+  test('free-item frees the named item once when it is in the matched cart', () => {
+    const matches = [line('Burger', 9.0), line('Fries', 3.5)];
+    const offers = [
+      { type: 'item-deal', rule: 'free-item', eligibleItems: ['Fries'], description: 'Free fries' },
+    ];
+    const result = computeTotal(matches, 0, 0, offers);
+    expect(result.discountTotal).toBeCloseTo(3.5);
+    expect(result.total).toBeCloseTo(9.0);
+  });
+
+  test('free-item gives no discount when the named item is absent', () => {
+    const matches = [line('Burger', 9.0)];
+    const offers = [
+      { type: 'item-deal', rule: 'free-item', eligibleItems: ['Fries'], description: 'Free fries' },
+    ];
+    const result = computeTotal(matches, 0, 0, offers);
+    expect(result.discountTotal).toBe(0);
+    expect(result.total).toBeCloseTo(9.0);
+  });
+
+  test('eligibility matches fuzzily so wording differences still qualify', () => {
+    const matches = [line('Footlong Sub', 6.0), line('Footlong Sub', 5.0)];
+    const offers = [
+      { type: 'item-deal', rule: 'cheapest-free', eligibleItems: ['Footlong'], quantity: 2, description: 'BOGOF on footlongs' },
+    ];
+    const result = computeTotal(matches, 0, 0, offers);
+    expect(result.discountTotal).toBeCloseTo(5.0);
+  });
+
+  test('a deal with no eligible items is display-only (total unchanged)', () => {
+    const matches = [line('Footlong Sub', 6.0), line('Footlong Sub', 5.0)];
+    const offers = [
+      { type: 'item-deal', rule: 'cheapest-free', eligibleItems: [], quantity: 2, description: 'unlocatable deal' },
+    ];
+    const result = computeTotal(matches, 0, 0, offers);
+    expect(result.discountTotal).toBe(0);
+    expect(result.appliedDeals).toEqual([]);
+    expect(result.total).toBeCloseTo(11.0);
+  });
+
+  test('cheapest-free frees one per group of N (3-for-2, odd counts)', () => {
+    const threeForTwo = [
+      { type: 'item-deal', rule: 'cheapest-free', eligibleItems: ['Cookie'], quantity: 3, description: '3 for 2' },
+    ];
+    // 3 cookies -> floor(3/3)=1 free (the cheapest)
+    expect(
+      computeTotal([line('Cookie', 2), line('Cookie', 1.5), line('Cookie', 1)], 0, 0, threeForTwo).discountTotal
+    ).toBeCloseTo(1);
+    // 2 cookies -> floor(2/3)=0 free
+    expect(
+      computeTotal([line('Cookie', 2), line('Cookie', 1.5)], 0, 0, threeForTwo).discountTotal
+    ).toBe(0);
+  });
+
+  test('an item-deal composes with an order-level percentage offer', () => {
+    const matches = [line('Sub', 6.0), line('Sub', 6.0)];
+    const offers = [
+      { type: 'item-deal', rule: 'cheapest-free', eligibleItems: ['Sub'], quantity: 2, description: 'BOGOF' },
+      { type: 'percent', minSpend: 0, percent: 0.1, cap: 5 },
+    ];
+    // BOGOF frees one £6 sub (6); 10% of the £12 subtotal (1.20) also applies.
+    const result = computeTotal(matches, 0, 0, offers);
+    expect(result.discountTotal).toBeCloseTo(7.2);
+    expect(result.total).toBeCloseTo(4.8);
+  });
+
+  test('appliedDeals lists each applied item-deal with its discount', () => {
+    const matches = [line('Sub', 6.0), line('Sub', 5.0)];
+    const offers = [
+      { type: 'item-deal', rule: 'cheapest-free', eligibleItems: ['Sub'], quantity: 2, description: 'Buy one get one free' },
+    ];
+    const result = computeTotal(matches, 0, 0, offers);
+    expect(result.appliedDeals).toEqual([{ description: 'Buy one get one free', discount: 5.0 }]);
+  });
+});

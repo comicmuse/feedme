@@ -3,15 +3,9 @@ const { MSG, PLATFORM, buildSearchUrl, browser } = require('../shared/constants'
 // Prevent double-injection on re-click
 if (document.getElementById('feedme-root')) return;
 
-const LABEL = {
-  [PLATFORM.UBER_EATS]: { emoji: '🟠', name: 'Uber Eats' },
-  [PLATFORM.DELIVEROO]: { emoji: '🔵', name: 'Deliveroo' },
-  [PLATFORM.JUST_EAT]: { emoji: '🟣', name: 'Just Eat' },
-};
-
 const host = document.createElement('div');
 host.id = 'feedme-root';
-host.style.cssText = 'position:fixed;top:0;right:0;width:400px;height:100vh;z-index:2147483647;pointer-events:auto;';
+host.style.cssText = 'position:fixed;left:0;right:0;bottom:0;width:100%;z-index:2147483647;pointer-events:auto;';
 document.body.appendChild(host);
 
 const shadow = host.attachShadow({ mode: 'open' });
@@ -19,51 +13,76 @@ const shadow = host.attachShadow({ mode: 'open' });
 const styleEl = document.createElement('style');
 styleEl.textContent = `
 * { box-sizing: border-box; margin: 0; padding: 0; }
-#bar { width:400px; height:100vh; background:#fff; border-left:1px solid #e5e7eb;
+#bar { width:100%; max-height:80vh; background:#fff; border-top:1px solid #e5e7eb;
   display:flex; flex-direction:column;
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  box-shadow:-4px 0 20px rgba(0,0,0,.08); }
-.hd { padding:12px 14px; border-bottom:1px solid #e5e7eb; display:flex; align-items:center; gap:10px; }
+  box-shadow:0 -4px 24px rgba(0,0,0,.12); }
+.hd { padding:12px 14px; border-bottom:1px solid #e5e7eb; display:flex; align-items:center; gap:10px; flex-shrink:0; }
 .logo { font-size:15px; font-weight:800; color:#111; }
 .logo .accent { color:#f97316; }
 .meta { flex:1; font-size:11px; color:#6b7280; }
 .meta .mname { display:block; font-size:12px; font-weight:600; color:#374151; }
 .cls { color:#9ca3af; font-size:16px; cursor:pointer; background:none; border:none; padding:2px 6px; }
-.bd { flex:1; overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:10px; }
-.loading { display:flex; align-items:center; justify-content:center; flex:1; gap:8px;
-  color:#9ca3af; font-size:13px; flex-direction:column; }
+/* Cards sit side by side, sharing the width; the row scrolls (x if too many to
+   fit, y if a single card is taller than the bar) rather than squashing cards. */
+.bd { min-height:0; overflow:auto; padding:14px; display:flex; flex-direction:row;
+  align-items:flex-start; gap:14px; }
+.loading { display:flex; align-items:center; justify-content:center; width:100%; gap:8px;
+  color:#9ca3af; font-size:13px; padding:30px; }
 .spin { width:24px; height:24px; border:2px solid #e5e7eb; border-top-color:#f97316;
   border-radius:50%; animation:sp .8s linear infinite; }
 @keyframes sp { to { transform:rotate(360deg); } }
-.card { border:1px solid #e5e7eb; border-radius:10px; overflow:hidden; }
+/* Each card is an equal-width column in the row, with a sensible minimum so they
+   stay readable (the row scrolls horizontally if they can't all fit). */
+.card { border:1px solid #e5e7eb; border-radius:10px; overflow:hidden;
+  flex:1 1 0; min-width:280px; }
 .card.win { border:2px solid #22c55e; }
 .card.cur { background:#fafafa; }
 .ch { padding:10px 12px; display:flex; align-items:center; gap:8px; background:#fafafa;
   border-bottom:1px solid #e5e7eb; }
 .card.win .ch { background:#f0fdf4; }
-.pname { font-size:12px; font-weight:700; flex:1; display:flex; align-items:center; gap:6px; }
-.wb { background:#22c55e; color:#fff; font-size:8px; font-weight:800; padding:2px 6px; border-radius:8px; }
-.cb { background:#f3f4f6; color:#6b7280; font-size:8px; font-weight:700; padding:2px 6px; border-radius:8px; }
-.ptotal { font-size:18px; font-weight:800; color:#111; }
+.pname { font-size:14px; font-weight:700; flex:1; display:flex; align-items:center; gap:6px; }
+.wb { background:#22c55e; color:#fff; font-size:9px; font-weight:800; padding:2px 6px; border-radius:8px; }
+.cb { background:#f3f4f6; color:#6b7280; font-size:9px; font-weight:700; padding:2px 6px; border-radius:8px; }
+.ptotal { font-size:22px; font-weight:800; color:#111; }
 .card.win .ptotal { color:#16a34a; }
-.cbody { padding:8px 12px; display:flex; flex-direction:column; gap:3px; }
-.row { display:flex; justify-content:space-between; font-size:11px; color:#6b7280; padding:2px 0; }
+.cbody { padding:10px 14px; display:flex; flex-direction:column; gap:4px; }
+.row { display:flex; justify-content:space-between; font-size:13px; color:#6b7280; padding:3px 0; gap:10px; }
 .row.b { color:#374151; font-weight:600; border-top:1px solid #e5e7eb; padding-top:4px; margin-top:2px; }
 .row.g { color:#16a34a; }
 .row.r { color:#ef4444; }
-.off { margin:0 12px 10px; background:#f0fdf4; border:1px solid #bbf7d0;
-  border-radius:6px; padding:5px 8px; font-size:10px; color:#15803d; }
+.off { margin:0 14px 10px; background:#f0fdf4; border:1px solid #bbf7d0;
+  border-radius:6px; padding:6px 9px; font-size:11px; color:#15803d; }
 .off.n { background:#fafafa; border-color:#e5e7eb; color:#9ca3af; }
 .obtn { margin:0 12px 12px; background:#f3f4f6; color:#374151; border:none;
   border-radius:7px; padding:9px; font-size:11px; font-weight:700; cursor:pointer;
   width:calc(100% - 24px); }
 .obtn:hover { background:#e5e7eb; }
-.ft { border-top:2px solid #dcfce7; background:#f0fdf4; padding:10px 14px; font-size:12px; color:#15803d; }
+.ft { border-top:2px solid #dcfce7; background:#f0fdf4; padding:10px 14px; font-size:12px; color:#15803d; flex-shrink:0; }
 .ft .save { font-weight:700; color:#166534; }
 .ft.sw { background:#fff7ed; border-top-color:#fed7aa; color:#c2410c; }
 .ft.sw .save { color:#7c2d12; }
 .cv { font-size:10px; color:#6b7280; margin-top:3px; }
 .errc { border:1px solid #fecaca; border-radius:10px; padding:12px; font-size:12px; color:#ef4444; }
+.cols { display:flex; flex-direction:row; gap:10px; padding:12px; align-items:flex-start; width:100%; }
+.col { flex:1 1 0; min-width:0; }
+.colhd { font-size:12px; font-weight:700; color:#374151; padding:0 2px 6px; display:flex; align-items:center; gap:5px; }
+.bc { border:1px solid #e5e7eb; border-radius:8px; margin-bottom:7px; overflow:hidden; background:#fff; }
+.bc.win { border:2px solid #22c55e; }
+.bc.cur { background:#fafafa; }
+.bch { padding:7px 9px; display:flex; align-items:center; justify-content:space-between; gap:6px; }
+.bc.win .bch { background:#f0fdf4; }
+.bn { font-size:11px; font-weight:600; color:#374151; display:flex; flex-direction:column; gap:1px; }
+.bn .sub { font-size:9px; color:#9ca3af; font-weight:500; }
+.bt { font-size:15px; font-weight:800; color:#111; white-space:nowrap; }
+.bc.win .bt { color:#16a34a; }
+.tag { font-size:8px; font-weight:800; padding:1px 5px; border-radius:6px; margin-left:4px; align-self:flex-start; }
+.tag.ch { background:#22c55e; color:#fff; }
+.tag.cu { background:#eef2ff; color:#4f46e5; }
+.det { border-top:1px dashed #e5e7eb; padding:6px 9px; font-size:10px; color:#6b7280; display:flex; flex-direction:column; gap:2px; }
+.det .r { display:flex; justify-content:space-between; }
+.collrow { padding:6px 9px; display:flex; align-items:center; justify-content:space-between; font-size:10px; color:#6b7280; cursor:pointer; }
+.collrow:hover { background:#fafafa; }
 `;
 
 const bar = document.createElement('div');
@@ -114,218 +133,188 @@ bar.appendChild(bd);
 shadow.appendChild(styleEl);
 shadow.appendChild(bar);
 
+const expanded = new Set();
 const fmt = (n) => `£${(+n || 0).toFixed(2)}`;
 
-function buildCard(platform, result, order, isCurrent, isWinner) {
-  const { emoji, name } = LABEL[platform];
-  const card = document.createElement('div');
-  card.className = `card${isWinner ? ' win' : ''}${isCurrent ? ' cur' : ''}`;
+const PLATFORM_LABEL = {
+  [PLATFORM.UBER_EATS]: { emoji: '🟠', name: 'Uber Eats' },
+  [PLATFORM.DELIVEROO]: { emoji: '🔵', name: 'Deliveroo' },
+  [PLATFORM.JUST_EAT]: { emoji: '🟣', name: 'Just Eat' },
+};
 
-  if (result.error) {
-    const ch = document.createElement('div');
-    ch.className = 'ch';
-    const pname = document.createElement('div');
-    pname.className = 'pname';
-    pname.textContent = `${emoji} ${name}`;
-    ch.appendChild(pname);
-    const errc = document.createElement('div');
-    errc.className = 'errc';
-    errc.textContent = `Could not load (${result.error})`;
-    card.appendChild(ch);
-    card.appendChild(errc);
+function branchTotal(branch) {
+  return branch.status === 'done' ? branch.result.total.total : null;
+}
+
+// Full (expanded) branch card: header + item rows + fee breakdown + offers.
+function buildBranchCard(branch, isCheapest) {
+  const card = document.createElement('div');
+  card.className = `bc${isCheapest ? ' win' : ''}${branch.isCurrent ? ' cur' : ''}`;
+
+  const head = document.createElement('div');
+  head.className = 'bch';
+  const nameWrap = document.createElement('span');
+  nameWrap.className = 'bn';
+  const labelLine = document.createElement('span');
+  labelLine.textContent = branch.label || branch.result?.restaurantName || '';
+  nameWrap.appendChild(labelLine);
+  if (branch.isCurrent) appendTag(nameWrap, 'YOUR CART', 'cu');
+  if (isCheapest) appendTag(nameWrap, 'CHEAPEST', 'ch');
+  if (branch.distance != null) {
+    const sub = document.createElement('span');
+    sub.className = 'sub';
+    sub.textContent = `${branch.distance} mi`;
+    nameWrap.appendChild(sub);
+  }
+  const totalEl = document.createElement('span');
+  totalEl.className = 'bt';
+  totalEl.textContent = branch.status === 'error' ? '—' : fmt(branchTotal(branch));
+  head.appendChild(nameWrap);
+  head.appendChild(totalEl);
+  card.appendChild(head);
+
+  if (branch.status === 'error') {
+    const err = document.createElement('div');
+    err.className = 'det';
+    err.textContent = `Could not load (${branch.result.error})`;
+    card.appendChild(err);
     return card;
   }
-
-  const { matches, total, offers } = result;
-  const caveated = total.matchedCount < total.totalCount;
-
-  // Card header
-  const ch = document.createElement('div');
-  ch.className = 'ch';
-  const pname = document.createElement('div');
-  pname.className = 'pname';
-  pname.textContent = `${emoji} ${name} `;
-  if (isWinner) {
-    const wb = document.createElement('span');
-    wb.className = 'wb';
-    wb.textContent = 'CHEAPEST';
-    pname.appendChild(wb);
-  }
-  if (isCurrent) {
-    const cb = document.createElement('span');
-    cb.className = 'cb';
-    cb.textContent = 'current';
-    pname.appendChild(cb);
-  }
-  const ptotal = document.createElement('span');
-  ptotal.className = 'ptotal';
-  ptotal.textContent = fmt(total.total);
-  ch.appendChild(pname);
-  ch.appendChild(ptotal);
-  card.appendChild(ch);
-
-  // Card body — item rows
-  const cbody = document.createElement('div');
-  cbody.className = 'cbody';
-
-  matches.forEach((m) => {
-    const row = document.createElement('div');
-    row.className = `row${m.matched ? '' : ' r'}`;
-    const nameSpan = document.createElement('span');
-    const priceSpan = document.createElement('span');
-    if (m.matched) {
-      nameSpan.textContent = `${m.referenceItem.name} ×${m.referenceItem.quantity}`;
-      priceSpan.textContent = fmt(m.platformItem.unitPrice * m.referenceItem.quantity);
-    } else {
-      nameSpan.textContent = `⚠ ${m.referenceItem.name} — not found`;
-      priceSpan.textContent = '—';
-    }
-    row.appendChild(nameSpan);
-    row.appendChild(priceSpan);
-    cbody.appendChild(row);
-  });
-
-  const addRow = (label, value, cls = '') => {
-    const row = document.createElement('div');
-    row.className = `row b${cls ? ' ' + cls : ''}`;
-    const l = document.createElement('span');
-    l.textContent = label;
-    const v = document.createElement('span');
-    v.textContent = value;
-    row.appendChild(l);
-    row.appendChild(v);
-    cbody.appendChild(row);
-  };
-
-  addRow('Subtotal', fmt(total.itemsTotal));
-  addRow('Delivery', fmt(total.deliveryFee), '');
-  addRow('Service fee', fmt(total.serviceFee), '');
-  if (total.discountTotal > 0) {
-    const drow = document.createElement('div');
-    drow.className = 'row g';
-    const dl = document.createElement('span');
-    dl.textContent = 'Discounts';
-    const dv = document.createElement('span');
-    dv.textContent = `-${fmt(total.discountTotal)}`;
-    drow.appendChild(dl);
-    drow.appendChild(dv);
-    cbody.appendChild(drow);
-  }
-  addRow(`Total${caveated ? ` (${total.matchedCount}/${total.totalCount})` : ''}`, fmt(total.total));
-  card.appendChild(cbody);
-
-  // Offer tags — text from platform API, use textContent
-  if (offers.length > 0) {
-    offers.forEach((o) => {
-      const offEl = document.createElement('div');
-      offEl.className = 'off';
-      offEl.textContent = `🏷 ${o.description}`;
-      card.appendChild(offEl);
-    });
-  } else {
-    const noOff = document.createElement('div');
-    noOff.className = 'off n';
-    noOff.textContent = '— No current offers';
-    card.appendChild(noOff);
-  }
-
-  // Open in X button
-  if (!isCurrent) {
-    const btn = document.createElement('button');
-    btn.className = 'obtn';
-    btn.textContent = `Open in ${name} →`;
-    btn.addEventListener('click', () => {
-      const url = buildSearchUrl(platform, order.restaurantName, order.postcode);
-      if (url) window.open(url, '_blank');
-    });
-    card.appendChild(btn);
-  }
-
+  const det = document.createElement('div');
+  det.className = 'det';
+  const t = branch.result.total;
+  appendDetRow(det, 'Subtotal', fmt(t.itemsTotal));
+  appendDetRow(det, 'Delivery', fmt(t.deliveryFee));
+  appendDetRow(det, `Service${t.serviceFeeEstimated ? ' (est.)' : ''}`, fmt(t.serviceFee));
+  if (t.discountTotal > 0) appendDetRow(det, 'Discounts', `-${fmt(t.discountTotal)}`);
+  card.appendChild(det);
   return card;
 }
 
-browser.runtime.onMessage.addListener((msg) => {
-  if (msg.type !== MSG.COMPARISON_RESULT) return;
-  const { order, results } = msg;
+// Collapsed one-line row; clicking it expands that branch on the next render.
+function buildCollapsedRow(branch) {
+  const wrap = document.createElement('div');
+  wrap.className = 'bc';
+  const row = document.createElement('div');
+  row.className = 'collrow';
+  const left = document.createElement('span');
+  left.textContent = branch.distance != null
+    ? `${branch.label || 'Branch'} · ${branch.distance} mi`
+    : (branch.label || 'Branch');
+  const right = document.createElement('span');
+  right.textContent = branch.status === 'error' ? 'error ▾'
+    : branch.status === 'pending' ? '… ▾' : `${fmt(branchTotal(branch))} ▾`;
+  row.appendChild(left);
+  row.appendChild(right);
+  row.addEventListener('click', () => { expanded.add(branch.key); render(lastSnapshot, lastOrder); });
+  wrap.appendChild(row);
+  return wrap;
+}
 
-  // Update header — textContent for user-controlled data
+function appendTag(parent, text, cls) {
+  const t = document.createElement('span');
+  t.className = `tag ${cls}`;
+  t.textContent = text;
+  parent.appendChild(t);
+}
+function appendDetRow(parent, label, value) {
+  const r = document.createElement('div');
+  r.className = 'r';
+  const l = document.createElement('span'); l.textContent = label;
+  const v = document.createElement('span'); v.textContent = value;
+  r.appendChild(l); r.appendChild(v); parent.appendChild(r);
+}
+
+let lastSnapshot = null;
+let lastOrder = null;
+
+function render(snapshot, order) {
+  lastSnapshot = snapshot;
+  lastOrder = order;
+  if (!snapshot) return;
+
   mname.textContent = order.restaurantName;
-  // Remove any previously appended subtext
   while (metaEl.childNodes.length > 1) metaEl.removeChild(metaEl.lastChild);
   const subtext = document.createElement('span');
   subtext.textContent = `${order.items.length} item${order.items.length !== 1 ? 's' : ''} · ${order.postcode}`;
   metaEl.appendChild(subtext);
 
-  const currentTotal =
-    order.items.reduce((s, i) => s + i.unitPrice * i.quantity, 0) +
-    order.deliveryFee +
-    order.serviceFee -
-    order.discounts.reduce((s, d) => s + d.amount, 0);
-
-  const compPlatforms = Object.keys(results).filter((p) => p !== order.platform);
-  compPlatforms.sort((a, b) => {
-    const aErr = !!results[a].error;
-    const bErr = !!results[b].error;
-    if (aErr !== bErr) return aErr ? 1 : -1;
-    if (aErr) return 0;
-    return results[a].total.total - results[b].total.total;
-  });
-
-  const cheapest = compPlatforms.find((p) => !results[p].error);
-  const winner = cheapest && results[cheapest].total.total < currentTotal ? cheapest : order.platform;
-
   bd.textContent = '';
+  const cols = document.createElement('div');
+  cols.className = 'cols';
 
-  compPlatforms.forEach((p) => {
-    bd.appendChild(buildCard(p, results[p], order, false, winner === p));
+  // Only the single overall-cheapest branch is highlighted (no per-column winner).
+  const cheapestKey = snapshot.cheapestKey;
+
+  snapshot.platforms.forEach((col) => {
+    const colEl = document.createElement('div');
+    colEl.className = 'col';
+    const hd = document.createElement('div');
+    hd.className = 'colhd';
+    const { emoji, name } = PLATFORM_LABEL[col.platform];
+    hd.textContent = `${emoji} ${name}`;
+    colEl.appendChild(hd);
+
+    // Order branches: cheapest first (expanded), current pinned, then by distance.
+    const ordered = [...col.branches].sort((a, b) => {
+      if (a.key === cheapestKey) return -1;
+      if (b.key === cheapestKey) return 1;
+      if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
+      return (a.distance ?? Infinity) - (b.distance ?? Infinity);
+    });
+
+    ordered.forEach((branch) => {
+      const showFull = branch.key === cheapestKey || branch.isCurrent || expanded.has(branch.key);
+      colEl.appendChild(showFull
+        ? buildBranchCard(branch, branch.key === cheapestKey)
+        : buildCollapsedRow(branch));
+    });
+
+    if (col.spinner) {
+      const sp = document.createElement('div');
+      sp.className = 'loading';
+      const s = document.createElement('div'); s.className = 'spin';
+      sp.appendChild(s); sp.appendChild(document.createTextNode('Finding branches…'));
+      colEl.appendChild(sp);
+    } else if (!col.branches.length) {
+      const none = document.createElement('div');
+      none.className = 'errc';
+      none.textContent = 'No branches found';
+      colEl.appendChild(none);
+    }
+    cols.appendChild(colEl);
   });
+  bd.appendChild(cols);
 
-  // Synthesise a card for the current platform
-  const currentResult = {
-    matches: order.items.map((i) => ({ referenceItem: i, platformItem: i, matched: true })),
-    total: {
-      itemsTotal: order.items.reduce((s, i) => s + i.unitPrice * i.quantity, 0),
-      deliveryFee: order.deliveryFee,
-      serviceFee: order.serviceFee,
-      discountTotal: order.discounts.reduce((s, d) => s + d.amount, 0),
-      total: currentTotal,
-      matchedCount: order.items.length,
-      totalCount: order.items.length,
-    },
-    offers: order.discounts.map((d) => ({ description: d.label })),
-  };
-  bd.appendChild(buildCard(order.platform, currentResult, order, true, winner === order.platform));
+  renderFooter(snapshot);
+}
 
-  // Footer
+function renderFooter(snapshot) {
+  const existing = bar.querySelector('.ft');
+  if (existing) existing.remove();
   const ft = document.createElement('div');
-  const caveated = compPlatforms.some(
-    (p) => !results[p].error && results[p].total.matchedCount < results[p].total.totalCount
-  );
-
-  if (winner !== order.platform && cheapest) {
+  const f = snapshot.footer;
+  if (f.kind === 'switch') {
     ft.className = 'ft sw';
     ft.textContent = 'Switch to ';
-    const saveSpan = document.createElement('span');
-    saveSpan.className = 'save';
-    saveSpan.textContent = LABEL[cheapest].name;
-    const saving = (currentTotal - results[cheapest].total.total).toFixed(2);
-    ft.appendChild(saveSpan);
-    ft.appendChild(document.createTextNode(` to save `));
-    const saveAmt = document.createElement('span');
-    saveAmt.className = 'save';
-    saveAmt.textContent = `£${saving}`;
-    ft.appendChild(saveAmt);
+    const who = document.createElement('span'); who.className = 'save';
+    who.textContent = `${PLATFORM_LABEL[f.platform].name}${f.label ? ` (${f.label})` : ''}`;
+    ft.appendChild(who);
+    ft.appendChild(document.createTextNode(' to save '));
+    const amt = document.createElement('span'); amt.className = 'save';
+    amt.textContent = fmt(f.saving);
+    ft.appendChild(amt);
+  } else if (f.kind === 'best') {
+    ft.className = 'ft';
+    ft.textContent = "✅ You're already on the cheapest branch";
   } else {
     ft.className = 'ft';
-    ft.textContent = '✅ You\'re already on the cheapest platform';
+    ft.textContent = 'Comparing branches…';
   }
-
-  if (caveated) {
-    const cv = document.createElement('div');
-    cv.className = 'cv';
-    cv.textContent = '* Some items could not be matched — totals may be incomplete';
-    ft.appendChild(cv);
-  }
-
   bar.appendChild(ft);
+}
+
+browser.runtime.onMessage.addListener((msg) => {
+  if (msg.type !== MSG.COMPARISON_UPDATE) return;
+  render(msg.snapshot, msg.order);
 });

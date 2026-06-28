@@ -1,26 +1,141 @@
 const { PLATFORM, MSG, platformFromUrl } = require('../shared/constants');
 
 function parsePrice(text) {
-  return parseFloat((text ?? '').replace(/[^0-9.]/g, '')) || 0;
+  // If multiple prices exist (e.g. "£0.99  £0.00" with a strikethrough), take the last one
+  const matches = [...(text ?? '').matchAll(/£?([\d.]+)/g)].map(m => parseFloat(m[1]));
+  return matches[matches.length - 1] ?? 0;
 }
 
-function extractUberEats(doc) {
-  const items = [...doc.querySelectorAll('[data-testid="cart-item"]')].map((el) => ({
-    name: el.querySelector('[data-testid="item-name"]')?.textContent?.trim() ?? '',
-    quantity: parseInt(el.querySelector('[data-testid="item-quantity"]')?.textContent ?? '1', 10),
-    unitPrice: parsePrice(el.querySelector('[data-testid="item-price"]')?.textContent),
-  }));
-  const promoEl = doc.querySelector('[data-testid="promo-discount"]');
+function waitForElement(doc, selector, timeout = 10000) {
+  return new Promise((resolve) => {
+    const existing = doc.querySelector(selector);
+    if (existing) { resolve(existing); return; }
+    const timer = setTimeout(() => { mo.disconnect(); resolve(null); }, timeout);
+    const mo = new MutationObserver(() => {
+      const found = doc.querySelector(selector);
+      if (found) { clearTimeout(timer); mo.disconnect(); resolve(found); }
+    });
+    mo.observe(doc.body, { childList: true, subtree: true });
+  });
+}
+
+async function extractUberEats(doc) {
+  // Wait for React to render the checkout UI (SPA loads a spinner first)
+  const panel = await waitForElement(doc, '[data-testid="cart-summary-panel"]');
+  if (!panel) return { platform: PLATFORM.UBER_EATS, restaurantName: '', postcode: '', items: [], deliveryFee: 0, serviceFee: 0, discounts: [], checkoutTotal: 0 };
+
+  // Cart items are lazy-loaded inside the panel — expand it if needed
+  if (!doc.querySelector('[data-testid="cart-items-list"]')) {
+    const toggle = doc.querySelector('[data-testid="cart_summary_toggle"]');
+    if (toggle) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 3000);
+        const mo = new MutationObserver(() => {
+          if (doc.querySelector('[data-testid="cart-items-list"]')) {
+            clearTimeout(timer);
+            mo.disconnect();
+            resolve();
+          }
+        });
+        mo.observe(doc.body, { childList: true, subtree: true });
+        toggle.click();
+      });
+    }
+  }
+
+  // Fee breakdown may load in a second async phase — wait for it before reading prices
+  await waitForElement(doc, '[data-testid="fare-breakdown-charge-badge-total"]', 5000);
+
+  const itemsList = doc.querySelector('[data-testid="cart-items-list"]');
+  const items = itemsList
+    ? [...itemsList.querySelectorAll('[data-testid^="cart-item-"]')]
+        .map((el) => {
+          const name = el.querySelector('img')?.alt?.trim() ?? '';
+          // Line total is a bare price span (e.g. "£27.39"); modifier prices are
+          // inside parentheses (e.g. "Medium 11.5\" (£13.00)") so we match only
+          // spans whose entire text is a price. Take the last (handles strikethrough).
+          const priceSpans = [...el.querySelectorAll('span')].filter((s) =>
+            /^£\d+(\.\d+)?$/.test(s.textContent.trim())
+          );
+          const lineTotal = priceSpans.length
+            ? parsePrice(priceSpans[priceSpans.length - 1].textContent)
+            : 0;
+          // Quantity (the stepper value) is rendered in the row wrapper OUTSIDE the
+          // cart-item content. Reading it from the item's own text was unreliable: it
+          // matched digits in product names (e.g. "3x Chocolate Chunk Cookies" → 3)
+          // and missed deal lines that show no "N ×" prefix (e.g. a Buy-1-get-1 line,
+          // which still steps to 2). Find the standalone integer in the enclosing
+          // <li> that isn't inside the item content.
+          const row = el.closest('li');
+          const qtyEl = row && [...row.querySelectorAll('div, span')].find(
+            (n) => !el.contains(n) && /^\d+$/.test(n.textContent.trim())
+          );
+          const quantity = qtyEl ? parseInt(qtyEl.textContent.trim(), 10) : 1;
+          // Paid options/modifiers render as "{name} (£{price})" (a group label
+          // like "Add:" may prefix it). Capturing name + price lets comparison
+          // platforms be priced using their OWN cost for the same option, falling
+          // back to this price only when a platform doesn't list it.
+          const options = [...el.querySelectorAll('span')]
+            .map((s) => s.textContent.trim().match(/^(?:[^():]*:\s*)?(.+?)\s*\(£(\d+(?:\.\d+)?)\)$/))
+            .filter(Boolean)
+            .map((m) => ({ name: m[1].trim(), price: parseFloat(m[2]) }))
+            .filter((o) => o.name && o.price > 0);
+          const optionsTotal = options.reduce((sum, o) => sum + o.price, 0);
+          return {
+            name,
+            quantity,
+            unitPrice: quantity > 0 ? lineTotal / quantity : lineTotal,
+            options,
+            optionsTotal,
+          };
+        })
+        .filter((i) => i.name)
+    : [];
+
+  const addressText =
+    doc.querySelector('[data-testid="checkout-delivery-address-section"]')?.textContent ?? '';
+  const postcodeMatch = addressText.match(/[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}/);
+
+  // The checkout page title is just "Checkout | Uber Eats", so derive the
+  // restaurant name from the store link (the one that isn't "Back to store").
+  const storeLinks = [...doc.querySelectorAll('a[href*="/store/"]')];
+  const restLink =
+    storeLinks.find((a) => !/back to store/i.test(a.textContent)) ?? storeLinks[0];
+  // The name is the first leaf element with text; the address follows in a
+  // sibling <p>, so we can't just read the link's whole textContent.
+  const nameLeaf = restLink
+    ? [...restLink.querySelectorAll('*')].find(
+        (e) => e.children.length === 0 && e.textContent.trim()
+      )
+    : null;
+  const restaurantName = nameLeaf?.textContent.trim() ?? restLink?.textContent.trim() ?? '';
+  // The store UUID (last path segment of the store link) identifies this exact
+  // branch, so the enumerator can drop it from the Uber column (avoids showing the
+  // cart's own store twice).
+  const sourceStoreId = (restLink?.getAttribute('href') ?? '').split('?')[0].split('/').filter(Boolean).pop() ?? '';
+
+  const feeEl = (testid) =>
+    doc.querySelector(`[data-testid="${testid}"]`);
+
+  const membershipEl = feeEl('fare-breakdown-charge-badge-membership-benefit');
+  const membershipText = membershipEl?.textContent?.trim() ?? '';
+  const membershipAmount = membershipText
+    ? Math.abs(parsePrice(membershipText))
+    : 0;
+
   return {
     platform: PLATFORM.UBER_EATS,
-    restaurantName: doc.querySelector('[data-testid="restaurant-name"]')?.textContent?.trim() ?? '',
-    postcode: doc.querySelector('[data-testid="delivery-postcode"]')?.textContent?.trim() ?? '',
+    restaurantName,
+    sourceStoreId,
+    postcode: postcodeMatch?.[0]?.replace(/\s+/, ' ') ?? '',
     items,
-    deliveryFee: parsePrice(doc.querySelector('[data-testid="delivery-fee"]')?.textContent),
-    serviceFee: parsePrice(doc.querySelector('[data-testid="service-fee"]')?.textContent),
-    discounts: promoEl
-      ? [{ amount: parseFloat(promoEl.dataset.amount ?? '0'), label: promoEl.textContent?.trim() ?? '' }]
+    deliveryFee: parsePrice(feeEl('fare-breakdown-charge-badge-delivery-fee')?.textContent),
+    serviceFee: parsePrice(feeEl('fare-breakdown-charge-badge-fees')?.textContent),
+    discounts: membershipAmount > 0
+      ? [{ amount: membershipAmount, label: membershipText }]
       : [],
+    // Actual total from the checkout page (avoids needing per-item prices)
+    checkoutTotal: parsePrice(feeEl('fare-breakdown-charge-badge-total')?.textContent),
   };
 }
 
@@ -58,23 +173,24 @@ function extractJustEat(doc) {
   };
 }
 
-function extractOrder(platform, doc) {
+async function extractOrder(platform, doc) {
   if (platform === PLATFORM.UBER_EATS) return extractUberEats(doc);
   if (platform === PLATFORM.DELIVEROO) return extractDeliveroo(doc);
   if (platform === PLATFORM.JUST_EAT) return extractJustEat(doc);
   throw new Error(`Unsupported platform: ${platform}`);
 }
 
-// Browser entry point — not reached during Jest tests
-// Note: action.* and storage.session are background-only; content script only sends a message
+// Browser entry point
 if (typeof window !== 'undefined' && typeof chrome !== 'undefined') {
-  const platform = platformFromUrl(window.location.href);
-  if (platform) {
-    const order = extractOrder(platform, document);
-    if (order.items.length > 0) {
-      chrome.runtime.sendMessage({ type: MSG.ORDER_DETECTED, order });
+  (async () => {
+    const platform = platformFromUrl(window.location.href);
+    if (platform) {
+      const order = await extractOrder(platform, document);
+      if (order.items.length > 0) {
+        chrome.runtime.sendMessage({ type: MSG.ORDER_DETECTED, order });
+      }
     }
-  }
+  })();
 }
 
 module.exports = { extractOrder };

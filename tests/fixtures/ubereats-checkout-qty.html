@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head><title>Checkout | Uber Eats</title></head>
+<body>
+<a href="/gb/store/subway-mile-end-halal/abc">Back to store</a>
+<div data-testid="checkout-delivery-address-section">
+  Delivery bag E14 7LG, Commercial Rd, London Edit
+</div>
+<li data-testid="cart-summary-panel">
+  <div aria-expanded="true" role="button"><div>Basket summary (3 items)</div></div>
+  <div data-testid="cart_summary_toggle"></div>
+  <ul data-testid="cart-items-list">
+    <!-- Real Uber DOM: the quantity stepper value lives in a nested ul>li in the
+         row wrapper, OUTSIDE the cart-item content. The BMT line is a Buy-1-get-1
+         deal (no "N ×" prefix anywhere) yet the stepper reads 2. -->
+    <li data-test="cart-row-1">
+      <div><div><div><ul><li><div><div>2</div></div></li></ul></div></div></div>
+      <div data-testid="cart-item-3b48b40a">
+        <div class="_al _d0 _bc"><div class="_kc"><img alt="Classic B.M.T.®" src="" aria-hidden="true"></div></div>
+        <div class="_bi">
+          <div class="_bo _bp _do _dp _ef">Classic B.M.T.®</div>
+          <p><span data-testid="rich-text">Size: </span><span data-testid="rich-text">Classic B.M.T.®  (Footlong) (£4.24)</span></p>
+          <p><span data-testid="rich-text">Bread: </span><span data-testid="rich-text">Italian Herbs &amp; Cheese</span></p>
+          <p><span data-testid="rich-text">Extras: </span><span data-testid="rich-text">Philly-Style Steak (£3.99)</span></p>
+          <div><div class="_kl"><div class="_bw">Buy 1, get 1 free</div></div></div>
+          <div><div data-baseweb="typo-labelmedium"><div class="_al _fx">
+            <span data-testid="rich-text">£25.71</span><span data-testid="rich-text">£34.96</span>
+          </div></div></div>
+        </div>
+      </div>
+    </li>
+    <li data-test="cart-row-2">
+      <div><div><div><ul><li><div><div>1</div></div></li></ul></div></div></div>
+      <div data-testid="cart-item-49343a4a">
+        <div class="_al _d0 _bc"><div class="_kc"><img alt="3x Chocolate Chunk Cookies" src="" aria-hidden="true"></div></div>
+        <div class="_bi">
+          <div class="_bo _bp _do _dp _ef">3x Chocolate Chunk Cookies</div>
+          <div></div>
+          <div><div data-baseweb="typo-labelmedium"><div class="_al _fx">
+            <span data-testid="rich-text">£2.59</span>
+          </div></div></div>
+        </div>
+      </div>
+    </li>
+  </ul>
+</li>
+<a href="/gb/store/subway-mile-end-halal/abc">
+  <div>Subway</div>
+  <p>Commercial Rd, London</p>
+</a>
+<div data-testid="fare-breakdown-charge-badge-delivery-fee">£0.00</div>
+<div data-testid="fare-breakdown-charge-badge-fees">£2.51</div>
+<div data-testid="fare-breakdown-charge-badge-total">£29.04</div>
+</body>
+</html>

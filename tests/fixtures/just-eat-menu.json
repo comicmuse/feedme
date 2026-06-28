@@ -1,13 +1,87 @@
 {
-  "restaurantId": "je-99999",
-  "name": "Burger King - Victoria",
-  "address": { "postCode": "SW1E 5JE" },
-  "menuItems": [
-    { "id": "je-1", "name": "Whopper", "description": "Flame-grilled beef burger", "price": 569 },
-    { "id": "je-2", "name": "Double Whopper", "description": "Two flame-grilled patties", "price": 759 },
-    { "id": "je-3", "name": "Large Fries", "description": "Seasoned shoestring fries", "price": 309 }
+  "props": {
+    "appProps": {
+      "preloadedState": {
+        "menu": {
+          "restaurant": {
+            "cdn": {
+              "restaurant": {
+                "restaurantId": "120913",
+                "restaurantInfo": {
+                  "name": "Burger King - Victoria",
+                  "location": { "address": "123 Victoria Street", "postCode": "SW1E 5JE", "city": "London" }
+                }
+              },
+              "modifierGroups": [
+                { "id": "mg-1", "name": "Add Fries?", "minChoices": 0, "maxChoices": 1, "modifiers": ["s4", "s5"] }
+              ],
+              "modifierSets": [
+                { "id": "s4", "modifier": { "id": "m4", "name": "Regular Fries", "additionPrice": 2.50 } },
+                { "id": "s5", "modifier": { "id": "m5", "name": "No Thanks", "additionPrice": 0 } }
+              ],
+              "items": {
+                "je-1": {
+                  "id": "je-1",
+                  "name": "Whopper",
+                  "description": "Flame-grilled beef burger",
+                  "type": "menuitem",
+                  "variations": [{ "name": "", "type": "NoVariation", "basePrice": 5.69, "modifierGroupsIds": ["mg-1"] }]
+                },
+                "je-2": {
+                  "id": "je-2",
+                  "name": "Double Whopper",
+                  "description": "Two flame-grilled patties",
+                  "type": "menuitem",
+                  "variations": [{ "name": "", "type": "NoVariation", "basePrice": 7.59 }]
+                },
+                "je-3": {
+                  "id": "je-3",
+                  "name": "Large Fries",
+                  "description": "Seasoned shoestring fries",
+                  "type": "menuitem",
+                  "variations": [{ "name": "Regular", "basePrice": 3.49 }, { "name": "Large", "basePrice": 3.09 }]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "_feedmeOffers": [
+    {
+      "offerId": "aaa",
+      "description": "Free Delivery when you spend £15* T&Cs apply.",
+      "offerType": "Notification"
+    },
+    {
+      "offerId": "bbb",
+      "description": "20% off (up to £10) when you spend £15",
+      "offerType": "Percent",
+      "minimumSpendValue": { "value": 1500 }
+    },
+    {
+      "offerId": "ccc",
+      "description": "32% off Honey BBQ Wrap Meal Deal",
+      "offerType": "ItemLevelDiscount",
+      "offerMenuItems": [{ "discount": { "discountPercentage": 32 } }]
+    }
   ],
-  "deliveryFee": 299,
-  "serviceFeePercent": 9,
-  "promotions": []
+  "_feedmeDynamic": {
+    "DeliveryFees": {
+      "MinimumOrderValue": 0,
+      "Currency": "GBP",
+      "Bands": [{ "MinimumAmount": 0, "Fee": 29 }]
+    },
+    "RestaurantFees": {
+      "ServiceFee": {
+        "ServiceTypes": {
+          "Delivery": {
+            "Use": "percentage",
+            "Percentage": { "MinAmount": 99, "MaxAmount": 299, "Percent": 11 }
+          }
+        }
+      }
+    }
+  }
 }

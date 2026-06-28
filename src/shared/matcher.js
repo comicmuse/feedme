@@ -98,16 +98,22 @@ function matchItems(referenceItems, platformItems) {
 }
 
 /**
- * Apply spend-threshold offers against the matched subtotal. Free-delivery offers
- * zero the delivery fee; the single best-value percentage offer (capped) becomes a
- * discount. Legacy offers carrying a fixed `amount` are still summed. Offers whose
- * minimum spend isn't met, or that we can't apply, are left for display only.
- * @returns {{deliveryFee: number, discountTotal: number}}
+ * Apply offers against the matched cart. Order-level offers act on the subtotal:
+ * free-delivery offers zero the delivery fee; the single best-value percentage
+ * offer (capped) becomes a discount; legacy offers carrying a fixed `amount` are
+ * summed. `item-deal` offers are item-level and quantity-dependent, applied against
+ * the eligible matched lines (see itemDealDiscount) and reported in appliedDeals.
+ * Offers whose minimum spend isn't met, or whose eligible items aren't in the cart,
+ * are left for display only.
+ * @param {Array<{referenceItem, platformItem, matched: boolean}>} matches - matched
+ *   cart lines; item-deals locate their eligible items here (never the raw menu).
+ * @returns {{deliveryFee: number, discountTotal: number, appliedDeals: Array<{description: string, discount: number}>}}
  */
-function applyOffers(offers, itemsTotal, deliveryFee) {
+function applyOffers(offers, itemsTotal, deliveryFee, matches = []) {
   let effectiveDelivery = deliveryFee;
   let discountTotal = 0;
   let bestPercentDiscount = 0;
+  const appliedDeals = [];
   for (const o of offers) {
     if (o.minSpend && itemsTotal < o.minSpend) continue;
     if (o.type === 'free-delivery') {
@@ -115,11 +121,61 @@ function applyOffers(offers, itemsTotal, deliveryFee) {
     } else if (o.type === 'percent' && o.percent > 0) {
       const d = Math.min(itemsTotal * o.percent, o.cap ?? Infinity);
       bestPercentDiscount = Math.max(bestPercentDiscount, d);
+    } else if (o.type === 'item-deal') {
+      const d = itemDealDiscount(o, matches);
+      if (d > 0) {
+        discountTotal += d;
+        appliedDeals.push({ description: o.description ?? '', discount: d });
+      }
     } else if (o.amount > 0) {
       discountTotal += o.amount;
     }
   }
-  return { deliveryFee: effectiveDelivery, discountTotal: discountTotal + bestPercentDiscount };
+  return { deliveryFee: effectiveDelivery, discountTotal: discountTotal + bestPercentDiscount, appliedDeals };
+}
+
+// Unit prices of the matched lines whose branch item is eligible for a deal,
+// each expanded by the line's ordered quantity. Eligibility is fuzzy (same Fuse
+// settings as item matching) so platform wording differences ("Footlong" vs
+// "Footlong Sub") still qualify.
+function eligibleUnitPrices(offer, matches) {
+  const eligible = offer.eligibleItems ?? [];
+  if (!eligible.length) return [];
+  const fuse = new Fuse(
+    eligible.map((name) => ({ name })),
+    { keys: ['name'], threshold: FUSE_THRESHOLD }
+  );
+  const units = [];
+  for (const m of matches) {
+    if (!m.matched || !fuse.search(m.platformItem.name).length) continue;
+    for (let q = 0; q < m.referenceItem.quantity; q++) units.push(m.platformItem.unitPrice);
+  }
+  return units;
+}
+
+// Discount contributed by a single item-level deal, applied against the matched
+// cart only. Returns 0 when the deal's eligible items aren't present.
+function itemDealDiscount(offer, matches) {
+  const units = eligibleUnitPrices(offer, matches);
+  if (offer.rule === 'cheapest-free') {
+    const freeCount = Math.floor(units.length / (offer.quantity || 2));
+    if (freeCount <= 0) return 0;
+    return units
+      .slice()
+      .sort((a, b) => a - b)
+      .slice(0, freeCount)
+      .reduce((s, p) => s + p, 0);
+  }
+  if (offer.rule === 'percent-off-items') {
+    const eligibleSubtotal = units.reduce((s, p) => s + p, 0);
+    return Math.min(eligibleSubtotal * (offer.percent ?? 0), offer.cap ?? Infinity);
+  }
+  if (offer.rule === 'free-item') {
+    // The named item becomes free once; if several are in the cart, free the
+    // cheapest unit (conservative, deterministic).
+    return units.length ? Math.min(...units) : 0;
+  }
+  return 0;
 }
 
 /**
@@ -127,7 +183,9 @@ function applyOffers(offers, itemsTotal, deliveryFee) {
  * @param {number} deliveryFee
  * @param {number} serviceFee - flat fee; if 0 and serviceFeePct is given, the fee
  *   is estimated as a percentage of the matched subtotal (capped) and flagged.
- * @param {Array<{type?: string, minSpend?: number, percent?: number, cap?: number, amount?: number, description?: string}>} offers
+ * @param {Array<{type?: string, minSpend?: number, percent?: number, cap?: number, amount?: number, description?: string, rule?: 'cheapest-free'|'percent-off-items'|'free-item', eligibleItems?: string[], quantity?: number}>} offers
+ *   Order-level offers plus optional `item-deal`s (rule + eligibleItems, applied
+ *   against the matched cart). Applied item-deals are listed in result.appliedDeals.
  * @param {{serviceFeePct?: number, serviceFeeMin?: number, serviceFeeMax?: number, serviceFeeEstimated?: boolean}} [opts]
  */
 function computeTotal(matches, deliveryFee, serviceFee, offers, opts = {}) {
@@ -148,7 +206,12 @@ function computeTotal(matches, deliveryFee, serviceFee, offers, opts = {}) {
     serviceFeeEstimated = opts.serviceFeeEstimated ?? false;
   }
 
-  const { deliveryFee: effectiveDelivery, discountTotal } = applyOffers(offers, itemsTotal, deliveryFee);
+  const { deliveryFee: effectiveDelivery, discountTotal, appliedDeals } = applyOffers(
+    offers,
+    itemsTotal,
+    deliveryFee,
+    matches
+  );
 
   return {
     itemsTotal,
@@ -156,6 +219,7 @@ function computeTotal(matches, deliveryFee, serviceFee, offers, opts = {}) {
     serviceFee: effectiveServiceFee,
     serviceFeeEstimated,
     discountTotal,
+    appliedDeals,
     total: itemsTotal + effectiveDelivery + effectiveServiceFee - discountTotal,
     matchedCount: matches.filter((m) => m.matched).length,
     totalCount: matches.length,

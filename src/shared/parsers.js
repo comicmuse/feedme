@@ -60,7 +60,50 @@ function asArray(v) {
   return Array.isArray(v) ? v : v ? [v] : [];
 }
 
-function parseUberStore(ld) {
+// Collect every catalog item carrying an itemPromotion. The store blob nests items
+// deep (under section/subsection structures, not a flat list) and repeats an item
+// across the sections it appears in, so walk the whole tree rather than hardcode a
+// path. De-duping to the right eligible set is left to the caller (by item name).
+function collectUberPromoItems(node, acc = [], seen = new Set()) {
+  if (!node || typeof node !== 'object' || seen.has(node)) return acc;
+  seen.add(node);
+  if (node.itemPromotion && (node.title || node.name)) acc.push(node);
+  for (const k of Object.keys(node)) collectUberPromoItems(node[k], acc, seen);
+  return acc;
+}
+
+// The JSON-LD carries no structured promotions, but the same store page embeds a
+// react-query catalog blob whose items carry a typed `itemPromotion`. Uber's
+// buy-one-get-one is `buyXGetYItemPromotion`: it maps to the #7 cheapest-free rule
+// with quantity = buy + get. The promotion is mix-and-match across the items that
+// share its terms (Subway's "Buy 1, get 1 free" section), so those items collapse
+// into one deal whose eligibleItems are their names. Sourced from the blob, not the
+// JSON-LD section title, so the signal stays deterministic and typed.
+function uberStoreOffers(catalog) {
+  const byTerms = new Map();
+  for (const it of collectUberPromoItems(catalog)) {
+    const promo = it.itemPromotion.buyXGetYItemPromotion;
+    if (!promo) continue;
+    const name = it.title || it.name;
+    const buy = promo.buyQuantity ?? 1;
+    const get = promo.getQuantity ?? 1;
+    const key = `${buy}-${get}`;
+    if (!byTerms.has(key)) {
+      byTerms.set(key, {
+        type: 'item-deal',
+        rule: 'cheapest-free',
+        quantity: buy + get,
+        eligibleItems: [],
+        description: `Buy ${buy}, get ${get} free`,
+      });
+    }
+    const deal = byTerms.get(key);
+    if (!deal.eligibleItems.includes(name)) deal.eligibleItems.push(name);
+  }
+  return [...byTerms.values()];
+}
+
+function parseUberStore(ld, catalog) {
   const sections = asArray(ld?.hasMenu?.hasMenuSection ?? ld?.hasMenu);
   const items = [];
   for (const section of sections) {
@@ -80,7 +123,7 @@ function parseUberStore(ld) {
     deliveryFee: 0,
     serviceFee: 0,
     serviceFeePct: 0,
-    offers: [],
+    offers: catalog ? uberStoreOffers(catalog) : [],
   };
 }
 

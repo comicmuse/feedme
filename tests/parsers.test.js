@@ -6,6 +6,7 @@ const ubereats = require('./fixtures/ubereats-menu.json');
 const deliveroo = require('./fixtures/deliveroo-menu.json');
 const justeat = require('./fixtures/just-eat-menu.json');
 const uberStoreLd = require('./fixtures/ubereats-store-ld.json');
+const uberStoreCatalog = require('./fixtures/ubereats-store-catalog.json');
 
 describe('parseUberStore (Uber store-page JSON-LD)', () => {
   test('flattens JSON-LD menu sections into priced items', () => {
@@ -20,6 +21,63 @@ describe('parseUberStore (Uber store-page JSON-LD)', () => {
   test('produces the standard parsed shape (fees default to 0, offers empty)', () => {
     const m = parseUberStore(uberStoreLd);
     expect(m).toMatchObject({ deliveryFee: 0, serviceFee: 0, offers: [] });
+  });
+
+  test('without a catalog blob there are no offers (back-compat)', () => {
+    expect(parseUberStore(uberStoreLd).offers).toEqual([]);
+  });
+});
+
+describe('parseUberStore item-level deals (catalog blob)', () => {
+  test('maps a buyXGetYItemPromotion to a structured cheapest-free item-deal', () => {
+    const m = parseUberStore(uberStoreLd, uberStoreCatalog);
+    const deal = m.offers.find((o) => o.type === 'item-deal');
+    expect(deal).toBeTruthy();
+    expect(deal.rule).toBe('cheapest-free');
+    expect(deal.quantity).toBe(2);
+  });
+
+  test('groups promo items into one deal with their titles as eligibleItems', () => {
+    const m = parseUberStore(uberStoreLd, uberStoreCatalog);
+    const deals = m.offers.filter((o) => o.type === 'item-deal');
+    expect(deals).toHaveLength(1);
+    expect(deals[0].eligibleItems).toEqual([
+      'Chipotle Cheesy Bites - 5 pieces',
+      'Nacho Chicken Bites - 6 Bites',
+    ]);
+  });
+
+  test('ignores items that carry no itemPromotion', () => {
+    const m = parseUberStore(uberStoreLd, uberStoreCatalog);
+    const deals = m.offers.filter((o) => o.type === 'item-deal');
+    expect(deals[0].eligibleItems).not.toContain('Legendary Teriyaki');
+  });
+});
+
+describe('Uber store buy-one-get-one deal applied end-to-end', () => {
+  const parsed = parseUberStore(uberStoreLd, uberStoreCatalog);
+
+  test('frees the cheapest item when two eligible items are in the cart', () => {
+    const matches = matchItems(
+      [
+        { name: 'Chipotle Cheesy Bites - 5 pieces', quantity: 1 },
+        { name: 'Nacho Chicken Bites - 6 Bites', quantity: 1 },
+      ],
+      parsed.items
+    );
+    const result = computeTotal(matches, 0, 0, parsed.offers);
+    expect(result.discountTotal).toBeCloseTo(3.89);
+    expect(result.appliedDeals).toHaveLength(1);
+  });
+
+  test('does not discount when only one eligible unit is in the cart', () => {
+    const matches = matchItems(
+      [{ name: 'Chipotle Cheesy Bites - 5 pieces', quantity: 1 }],
+      parsed.items
+    );
+    const result = computeTotal(matches, 0, 0, parsed.offers);
+    expect(result.discountTotal).toBe(0);
+    expect(result.appliedDeals).toEqual([]);
   });
 });
 

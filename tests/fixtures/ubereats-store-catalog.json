@@ -1,0 +1,51 @@
+{
+  "catalogSectionsMap": {
+    "3ce600f0-d9a6-5637-945a-1efccc661891": []
+  },
+  "sections": [
+    {
+      "uuid": "sec-bogof",
+      "title": "Buy 1, get 1 free",
+      "items": [
+        {
+          "uuid": "i1",
+          "title": "Chipotle Cheesy Bites - 5 pieces",
+          "price": 389,
+          "itemPromotion": {
+            "buyXGetYItemPromotion": { "buyQuantity": 1, "getQuantity": 1, "maxRedemptionCount": 3 },
+            "type": "buyXGetYItemPromotion"
+          }
+        },
+        {
+          "uuid": "i2",
+          "title": "Nacho Chicken Bites - 6 Bites",
+          "price": 449,
+          "itemPromotion": {
+            "buyXGetYItemPromotion": { "buyQuantity": 1, "getQuantity": 1, "maxRedemptionCount": 3 },
+            "type": "buyXGetYItemPromotion"
+          }
+        },
+        {
+          "uuid": "i3",
+          "title": "Legendary Teriyaki",
+          "price": 925
+        }
+      ]
+    },
+    {
+      "uuid": "sec-sides",
+      "title": "Sides",
+      "items": [
+        {
+          "uuid": "i1",
+          "title": "Chipotle Cheesy Bites - 5 pieces",
+          "price": 389,
+          "itemPromotion": {
+            "buyXGetYItemPromotion": { "buyQuantity": 1, "getQuantity": 1, "maxRedemptionCount": 3 },
+            "type": "buyXGetYItemPromotion"
+          }
+        }
+      ]
+    }
+  ]
+}

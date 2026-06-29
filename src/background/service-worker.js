@@ -1,4 +1,4 @@
-const { PLATFORM, CHECKOUT_PATTERNS, MSG, buildSearchUrl, getConfig, browser } = require('../shared/constants');
+const { PLATFORM, CHECKOUT_PATTERNS, MSG, buildSearchUrl, isAllowedMenuUrl, getConfig, browser } = require('../shared/constants');
 const { matchItems, computeTotal, estimateUberFees } = require('../shared/matcher');
 const { buildSnapshot } = require('../shared/snapshot');
 const { createScheduler } = require('../shared/pool');
@@ -240,6 +240,8 @@ async function pump(comparison) {
     const { platform, menuUrl } = comparison.queued.get(key);
     comparison.queued.delete(key);
     const url = menuUrl.startsWith('http') ? menuUrl : originFor(platform) + menuUrl;
+    // menuUrl is scraped from page links; never open one that points off-platform.
+    if (!isAllowedMenuUrl(platform, url)) { failBranch(comparison, key, 'bad-url'); continue; }
     const tab = await browser.tabs.create({ url, active: false }).catch(() => null);
     if (!tab) { failBranch(comparison, key, 'tab-failed'); continue; }
     comparison.menuTabs.set(tab.id, key);

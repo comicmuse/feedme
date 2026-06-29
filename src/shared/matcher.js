@@ -186,7 +186,9 @@ function itemDealDiscount(offer, matches) {
  * @param {Array<{type?: string, minSpend?: number, percent?: number, cap?: number, amount?: number, description?: string, rule?: 'cheapest-free'|'percent-off-items'|'free-item', eligibleItems?: string[], quantity?: number}>} offers
  *   Order-level offers plus optional `item-deal`s (rule + eligibleItems, applied
  *   against the matched cart). Applied item-deals are listed in result.appliedDeals.
- * @param {{serviceFeePct?: number, serviceFeeMin?: number, serviceFeeMax?: number, serviceFeeEstimated?: boolean}} [opts]
+ * @param {{serviceFeePct?: number, serviceFeeMin?: number, serviceFeeMax?: number, serviceFeeEstimated?: boolean, deliveryFeeBands?: Array<{minSubtotal: number, fee: number}>}} [opts]
+ *   deliveryFeeBands, when given, override the flat deliveryFee: the band with the
+ *   highest minSubtotal at or below the matched subtotal is used.
  */
 function computeTotal(matches, deliveryFee, serviceFee, offers, opts = {}) {
   const serviceFeePct = opts.serviceFeePct ?? 0;
@@ -206,10 +208,22 @@ function computeTotal(matches, deliveryFee, serviceFee, offers, opts = {}) {
     serviceFeeEstimated = opts.serviceFeeEstimated ?? false;
   }
 
+  // Just Eat delivery fees are banded by basket subtotal (higher spend -> cheaper),
+  // so select the band with the highest threshold the matched subtotal meets; the
+  // flat deliveryFee is the fallback for platforms that publish no bands.
+  let baseDelivery = deliveryFee;
+  const bands = opts.deliveryFeeBands;
+  if (Array.isArray(bands) && bands.length) {
+    const applicable = bands
+      .filter((b) => (b.minSubtotal ?? 0) <= itemsTotal)
+      .sort((a, b) => (b.minSubtotal ?? 0) - (a.minSubtotal ?? 0))[0];
+    if (applicable) baseDelivery = applicable.fee ?? 0;
+  }
+
   const { deliveryFee: effectiveDelivery, discountTotal, appliedDeals } = applyOffers(
     offers,
     itemsTotal,
-    deliveryFee,
+    baseDelivery,
     matches
   );
 

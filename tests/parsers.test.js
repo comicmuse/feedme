@@ -255,6 +255,9 @@ describe('parseMenuResponse - Just Eat', () => {
     expect(fries.unitPrice).toBeCloseTo(3.09);
   });
   test('extracts delivery fee from the fee API band', () => { expect(result.deliveryFee).toBeCloseTo(0.29); });
+  test('exposes the delivery fee bands (sorted, in pounds) for basket-dependent selection', () => {
+    expect(result.deliveryFeeBands).toEqual([{ minSubtotal: 0, fee: 0.29 }]);
+  });
   test('exposes the exact service-fee formula (not estimated)', () => {
     expect(result.serviceFeePct).toBeCloseTo(0.11);
     expect(result.serviceFeeMin).toBeCloseTo(0.99);

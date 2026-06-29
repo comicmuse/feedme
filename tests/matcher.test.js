@@ -245,6 +245,36 @@ describe('computeTotal', () => {
     expect(result.serviceFee).toBeCloseTo(2.00);
     expect(result.serviceFeeEstimated).toBe(false);
   });
+
+  // Just Eat delivery fees are banded by basket subtotal (higher spend -> cheaper),
+  // so the applicable fee is the band with the highest threshold the subtotal meets.
+  describe('basket-dependent delivery fee bands', () => {
+    const bands = [
+      { minSubtotal: 0, fee: 3.99 },
+      { minSubtotal: 10, fee: 1.99 },
+    ];
+    test('selects the cheaper band once the subtotal reaches its threshold', () => {
+      const matches = [{ referenceItem: { quantity: 1 }, platformItem: { unitPrice: 12.00 }, matched: true }];
+      const result = computeTotal(matches, 0, 0, [], { deliveryFeeBands: bands });
+      expect(result.deliveryFee).toBeCloseTo(1.99);
+      expect(result.total).toBeCloseTo(13.99);
+    });
+    test('uses the base band when the subtotal is below the next threshold', () => {
+      const matches = [{ referenceItem: { quantity: 1 }, platformItem: { unitPrice: 8.00 }, matched: true }];
+      const result = computeTotal(matches, 0, 0, [], { deliveryFeeBands: bands });
+      expect(result.deliveryFee).toBeCloseTo(3.99);
+    });
+    test('a free-delivery offer still overrides the selected band', () => {
+      const matches = [{ referenceItem: { quantity: 1 }, platformItem: { unitPrice: 12.00 }, matched: true }];
+      const result = computeTotal(matches, 0, 0, [{ type: 'free-delivery', minSpend: 10 }], { deliveryFeeBands: bands });
+      expect(result.deliveryFee).toBe(0);
+    });
+    test('falls back to the flat delivery fee when no bands are given', () => {
+      const matches = [{ referenceItem: { quantity: 1 }, platformItem: { unitPrice: 12.00 }, matched: true }];
+      const result = computeTotal(matches, 2.50, 0, []);
+      expect(result.deliveryFee).toBeCloseTo(2.50);
+    });
+  });
 });
 
 describe('computeTotal — item-level deals', () => {

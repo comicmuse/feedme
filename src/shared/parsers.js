@@ -275,6 +275,15 @@ function justEatDeliveryFee(dynamic) {
   return base ? (base.Fee ?? 0) / 100 : 0;
 }
 
+// The fee is banded by basket subtotal (higher spend -> cheaper), so expose every
+// band (in pounds, sorted by threshold) for computeTotal to select against the
+// matched subtotal rather than collapsing to a single basket-independent fee.
+function justEatDeliveryBands(dynamic) {
+  return (dynamic?.DeliveryFees?.Bands ?? [])
+    .map((b) => ({ minSubtotal: (b.MinimumAmount ?? 0) / 100, fee: (b.Fee ?? 0) / 100 }))
+    .sort((a, b) => a.minSubtotal - b.minSubtotal);
+}
+
 function justEatServiceFee(dynamic) {
   const st = dynamic?.RestaurantFees?.ServiceFee?.ServiceTypes?.Delivery;
   if (st?.Use === 'fixed' && st.Fixed) {
@@ -378,6 +387,7 @@ function parseJustEat(data) {
     postcode: rInfo.location?.postCode ?? '',
     items,
     deliveryFee: justEatDeliveryFee(data._feedmeDynamic),
+    deliveryFeeBands: justEatDeliveryBands(data._feedmeDynamic),
     // Service fee comes from Just Eat's own published formula, so it's exact.
     serviceFee: svc.serviceFee,
     serviceFeePct: svc.serviceFeePct,

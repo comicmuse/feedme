@@ -275,6 +275,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
     const feeOpts = {
       serviceFeePct: msg.parsed.serviceFeePct, serviceFeeMin: msg.parsed.serviceFeeMin,
       serviceFeeMax: msg.parsed.serviceFeeMax, serviceFeeEstimated: msg.parsed.serviceFeeEstimated,
+      deliveryFeeBands: msg.parsed.deliveryFeeBands,
     };
     let { deliveryFee, serviceFee } = msg.parsed;
     // Other Uber branches (store-page JSON-LD) have no fees — estimate from the cart.

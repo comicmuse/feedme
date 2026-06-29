@@ -1,4 +1,25 @@
-const { MSG, DEFAULT_BRANCH_COUNT, DEFAULT_MAX_CONCURRENT, getConfig, buildSearchUrl, PLATFORM } = require('../src/shared/constants');
+const { MSG, DEFAULT_BRANCH_COUNT, DEFAULT_MAX_CONCURRENT, getConfig, buildSearchUrl, isAllowedMenuUrl, PLATFORM } = require('../src/shared/constants');
+
+describe('isAllowedMenuUrl', () => {
+  test('allows the platform\'s own origin (www and apex)', () => {
+    expect(isAllowedMenuUrl(PLATFORM.UBER_EATS, 'https://www.ubereats.com/gb/store/x/abc')).toBe(true);
+    expect(isAllowedMenuUrl(PLATFORM.DELIVEROO, 'https://deliveroo.co.uk/menu/london/x')).toBe(true);
+    expect(isAllowedMenuUrl(PLATFORM.DELIVEROO, 'https://www.deliveroo.co.uk/menu/london/x')).toBe(true);
+    expect(isAllowedMenuUrl(PLATFORM.JUST_EAT, 'https://www.just-eat.co.uk/restaurants-x/menu')).toBe(true);
+  });
+  test('rejects an off-platform host', () => {
+    expect(isAllowedMenuUrl(PLATFORM.UBER_EATS, 'https://evil.com/gb/store/x')).toBe(false);
+  });
+  test('rejects a look-alike suffix host', () => {
+    expect(isAllowedMenuUrl(PLATFORM.UBER_EATS, 'https://ubereats.com.evil.com/gb/store/x')).toBe(false);
+  });
+  test('rejects a URL for a different platform', () => {
+    expect(isAllowedMenuUrl(PLATFORM.JUST_EAT, 'https://www.ubereats.com/gb/store/x')).toBe(false);
+  });
+  test('rejects a malformed URL', () => {
+    expect(isAllowedMenuUrl(PLATFORM.UBER_EATS, 'not a url')).toBe(false);
+  });
+});
 
 describe('buildSearchUrl', () => {
   test('Uber search query uses the brand (first token), not the verbose store name', () => {

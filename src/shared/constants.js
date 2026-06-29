@@ -80,6 +80,29 @@ function platformFromUrl(url) {
   return null;
 }
 
+// Registrable hosts each platform's branch/menu URLs may resolve to (mirrors the
+// manifest host_permissions). Branch menu URLs are scraped from page links, so a
+// malicious page could surface an off-platform absolute href; validate before
+// opening one in a tab. Matches the apex and any subdomain, but not look-alikes
+// (e.g. ubereats.com.evil.com).
+const MENU_URL_HOSTS = {
+  [PLATFORM.UBER_EATS]: 'ubereats.com',
+  [PLATFORM.DELIVEROO]: 'deliveroo.co.uk',
+  [PLATFORM.JUST_EAT]: 'just-eat.co.uk',
+};
+
+function isAllowedMenuUrl(platform, url) {
+  const suffix = MENU_URL_HOSTS[platform];
+  if (!suffix) return false;
+  let host;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch (_) {
+    return false;
+  }
+  return host === suffix || host.endsWith('.' + suffix);
+}
+
 function buildSearchUrl(platform, restaurantName, postcode) {
   const template = SEARCH_URL_TEMPLATES[platform];
   if (!template) return null;
@@ -105,6 +128,7 @@ module.exports = {
   DELIVEROO_SERVICE_FEE_CAP,
   platformFromUrl,
   buildSearchUrl,
+  isAllowedMenuUrl,
   getConfig,
   browser,
 };

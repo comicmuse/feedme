@@ -3,7 +3,8 @@ global.TextEncoder = TextEncoder;
 global.TextDecoder = TextDecoder;
 
 const { JSDOM } = require('jsdom');
-const { extractUberStoreCards } = require('../src/content/uber-scraper');
+const { extractUberStoreCards, extractUberStoreCatalog } = require('../src/content/uber-scraper');
+const { parseUberStore } = require('../src/shared/parsers');
 
 function docFromHtml(html) {
   return new JSDOM(`<!DOCTYPE html><body>${html}</body>`).window.document;
@@ -56,5 +57,49 @@ describe('extractUberStoreCards', () => {
       </a>
     `);
     expect(extractUberStoreCards(doc)[0].name).toBe('Burger King');
+  });
+});
+
+describe('extractUberStoreCatalog', () => {
+  // Reproduce Uber's wire encoding of the react-query blob: `"` -> " and a
+  // structural backslash -> %5C (so an escaped quote `\"` becomes %5C").
+  const encode = (j) => j.replace(/\\/g, '%5C').replace(/"/g, '\\u0022');
+  const blob = {
+    mutations: [],
+    queries: [{ state: { data: {
+      title: 'Subway Mile End Halal',
+      sections: [{ items: [
+        {
+          title: 'Chipotle Cheesy Bites - 5 pieces',
+          price: 389,
+          // an embedded HTML field carrying escaped quotes, to exercise the %5C path
+          priceTagline: { textFormat: '<span style="color:#000">£3.89</span>' },
+          itemPromotion: {
+            buyXGetYItemPromotion: { buyQuantity: 1, getQuantity: 1, maxRedemptionCount: 3 },
+            type: 'buyXGetYItemPromotion',
+          },
+        },
+        { title: 'Legendary Teriyaki', price: 925 },
+      ] }],
+    } } }],
+  };
+  const storeDoc = () =>
+    docFromHtml(`<script type="application/json">${encode(JSON.stringify(blob))}</script>`);
+
+  test('decodes the double-escaped react-query blob to the store data', () => {
+    const data = extractUberStoreCatalog(storeDoc());
+    expect(data).toBeTruthy();
+    expect(data.title).toBe('Subway Mile End Halal');
+  });
+
+  test('the decoded catalogue yields the buy-one-get-one item-deal via parseUberStore', () => {
+    const data = extractUberStoreCatalog(storeDoc());
+    const deal = parseUberStore({}, data).offers.find((o) => o.type === 'item-deal');
+    expect(deal.rule).toBe('cheapest-free');
+    expect(deal.eligibleItems).toEqual(['Chipotle Cheesy Bites - 5 pieces']);
+  });
+
+  test('returns null when no store catalogue blob is present', () => {
+    expect(extractUberStoreCatalog(docFromHtml('<div>no script here</div>'))).toBeNull();
   });
 });

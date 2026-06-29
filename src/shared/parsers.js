@@ -139,14 +139,26 @@ function collectDeliverooOffers(offerNode) {
 }
 
 // Turn a platform offer into a structured, applicable form. computeTotal applies
-// free-delivery and percentage offers whose minimum spend the order meets.
-function deliverooOffers(root) {
+// free-delivery and percentage offers whose minimum spend the order meets, and
+// item-level deals (free-item) against the matched cart. `itemNameById` resolves
+// a FreeItemOffer's itemIds to the names the deal engine matches on.
+function deliverooOffers(root, itemNameById = {}) {
   return collectDeliverooOffers(root.offer).map((o) => {
     const minSpend = (o.minimumOrderValue?.fractional ?? 0) / 100;
     const description = deliverooOfferDescription(o);
     if (o.typeName === 'FreeDeliveryOffer') return { type: 'free-delivery', minSpend, description };
     if (o.typeName === 'PercentageOffer') {
       return { type: 'percent', minSpend, percent: (o.percentage ?? 0) / 100, description };
+    }
+    // "Free [item] when you spend £X": itemIds name the item that becomes free, and
+    // minimumOrderValue is the spend threshold. Map to the item-level deal model so
+    // it discounts only when that item is in the cart and the threshold is met. With
+    // no resolvable itemIds the deal carries no eligibleItems and stays display-only.
+    if (o.typeName === 'FreeItemOffer') {
+      const eligibleItems = [
+        ...new Set((o.itemIds ?? []).map((id) => itemNameById[id]).filter(Boolean)),
+      ];
+      return { type: 'item-deal', rule: 'free-item', eligibleItems, minSpend, description };
     }
     return { type: 'other', minSpend, description };
   });
@@ -179,6 +191,13 @@ function parseDeliveroo(data) {
     }))
     .filter((i) => i.name);
 
+  // Resolve item-level offer references (FreeItemOffer.itemIds) back to names: the
+  // offer identifies the free item by id, but the deal engine matches by name.
+  const itemNameById = {};
+  for (const i of Object.values(root.items ?? {})) {
+    if (i && i.id && i.name) itemNameById[i.id] = i.name;
+  }
+
   const address1 = root.restaurant?.location?.address?.address1 ?? '';
   const postcodeMatch = address1.match(/[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}/i);
 
@@ -195,7 +214,7 @@ function parseDeliveroo(data) {
     serviceFeeMin: 0,
     serviceFeeMax: DELIVEROO_SERVICE_FEE_CAP,
     serviceFeeEstimated: true,
-    offers: deliverooOffers(root),
+    offers: deliverooOffers(root, itemNameById),
   };
 }
 

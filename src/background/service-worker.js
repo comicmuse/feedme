@@ -44,11 +44,11 @@ function findTab(tabId) {
 
 // ── Injection helper ─────────────────────────────────────────────────────────
 
-async function injectInto(tabId, file, world, ctx) {
+async function injectInto(tabId, file, world, ctx, ctxKey = '__feedmeCompare') {
   await browser.scripting.executeScript({
     target: { tabId },
-    func: (c) => { window.__feedmeCompare = c; },
-    args: [ctx],
+    func: (k, c) => { window[k] = c; },
+    args: [ctxKey, ctx],
   }).catch(() => {});
   await browser.scripting.executeScript({
     target: { tabId },
@@ -65,6 +65,20 @@ browser.tabs.onUpdated.addListener((tabId, info) => {
   if (!owner) return;
   injectForTab(tabId, owner);
 });
+
+// When a tab opened by a "switch" click finishes loading, inject the basket-builder
+// once with its plan. The builder polls for readiness itself, so a single injection
+// on the first complete is enough; clear it so SPA re-completes don't re-add items.
+browser.tabs.onUpdated.addListener(async (tabId, info) => {
+  if (info.status !== 'complete') return;
+  const build = pendingBuilds.get(tabId);
+  if (!build) return;
+  pendingBuilds.delete(tabId);
+  await injectInto(tabId, 'dist/basket-builder.js', 'ISOLATED', build, '__feedmeBuild');
+});
+
+// Drop a queued build if its tab is closed before it ever finished loading.
+browser.tabs.onRemoved.addListener((tabId) => { pendingBuilds.delete(tabId); });
 browser.webNavigation.onHistoryStateUpdated.addListener((details) => {
   const owner = findTab(details.tabId);
   if (owner) injectForTab(details.tabId, owner);

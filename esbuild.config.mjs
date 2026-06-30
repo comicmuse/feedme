@@ -10,6 +10,7 @@ const ctx = await esbuild.context({
     'deliveroo-scraper': 'src/content/deliveroo-scraper.js',
     'just-eat-scraper': 'src/content/just-eat-scraper.js',
     'uber-scraper': 'src/content/uber-scraper.js',
+    'basket-builder': 'src/content/basket-builder.js',
     'sidebar': 'src/content/sidebar.js',
     'popup': 'src/popup.js',
   },

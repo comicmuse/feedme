@@ -126,6 +126,54 @@ describe('matchItems', () => {
     expect(result.platformItem.unitPrice).toBeCloseTo(4.59);
     expect(result.platformItem.optionsEstimated).toBeUndefined();
   });
+});
+
+describe('matchItems basketLine (for scripted basket pre-fill)', () => {
+  test('carries the platform item id and quantity, prefillable when no options', () => {
+    const ref = [{ name: 'Whopper', quantity: 2, unitPrice: 5.49 }];
+    const platform = [{ id: 'dr-1', name: 'Whopper', description: '', unitPrice: 5.89, modifiers: [] }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine).toMatchObject({ id: 'dr-1', quantity: 2, modifiers: [], prefillable: true });
+  });
+
+  test('resolves a selected option to the platform modifier id/groupId', () => {
+    const ref = [{
+      name: 'Honey BBQ Sandwich', quantity: 1, unitPrice: 12.68,
+      options: [{ name: 'Regular Fries', price: 2.69 }], optionsTotal: 2.69,
+    }];
+    const platform = [{
+      id: 'dr-9', name: 'Honey BBQ Sandwich', description: '', unitPrice: 9.99,
+      modifiers: [{ name: 'Regular Fries', price: 2.50, id: 'opt-1', groupId: 'mg-1' }],
+    }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.prefillable).toBe(true);
+    expect(result.basketLine.modifiers).toEqual([{ id: 'opt-1', groupId: 'mg-1', name: 'Regular Fries' }]);
+  });
+
+  test('is not prefillable when a selected option has no matching platform modifier', () => {
+    const ref = [{
+      name: 'Honey BBQ Sandwich', quantity: 1, unitPrice: 12.68,
+      options: [{ name: 'Regular Fries', price: 2.69 }], optionsTotal: 2.69,
+    }];
+    const platform = [{ id: 'dr-9', name: 'Honey BBQ Sandwich', description: '', unitPrice: 9.99, modifiers: [] }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.prefillable).toBe(false);
+  });
+
+  test('is not prefillable when the matched item carries no id (e.g. Uber JSON-LD)', () => {
+    const ref = [{ name: 'Whopper', quantity: 1, unitPrice: 5.49 }];
+    const platform = [{ name: 'Whopper', description: '', unitPrice: 5.89 }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.prefillable).toBe(false);
+    expect(result.basketLine.id).toBeUndefined();
+  });
+
+  test('unmatched lines carry no basketLine', () => {
+    const ref = [{ name: 'Vegan Artisan Flatbread', quantity: 1, unitPrice: 9 }];
+    const platform = [{ id: 'x', name: 'Whopper', unitPrice: 5.89 }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine).toBeNull();
+  });
 
   test('returns one result per reference item', () => {
     const ref = [

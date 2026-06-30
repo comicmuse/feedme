@@ -26,6 +26,21 @@ describe('parseUberStore (Uber store-page JSON-LD)', () => {
   test('without a catalog blob there are no offers (back-compat)', () => {
     expect(parseUberStore(uberStoreLd).offers).toEqual([]);
   });
+
+  test('attaches catalog item ids to JSON-LD items by name when a blob is present', () => {
+    const m = parseUberStore(uberStoreLd, uberStoreCatalog);
+    const bites = m.items.find((i) => i.name === 'Chipotle Cheesy Bites - 5 pieces');
+    expect(bites.id).toBe('i1');
+  });
+  test('items absent from the catalog blob carry no id (open-only fallback)', () => {
+    const m = parseUberStore(uberStoreLd, uberStoreCatalog);
+    const notInBlob = m.items.find((i) => i.name === 'Hash Browns - 9 pieces');
+    expect(notInBlob.id).toBeUndefined();
+  });
+  test('without a catalog blob items carry no ids (back-compat)', () => {
+    const m = parseUberStore(uberStoreLd);
+    expect(m.items.every((i) => i.id === undefined)).toBe(true);
+  });
 });
 
 describe('parseUberStore item-level deals (catalog blob)', () => {
@@ -111,6 +126,9 @@ describe('parseMenuResponse - Uber Eats', () => {
     expect(result.items[0].unitPrice).toBeCloseTo(5.49);
   });
   test('extracts delivery fee in pounds', () => { expect(result.deliveryFee).toBe(0); });
+  test('retains the native item uuid as id for basket pre-fill', () => {
+    expect(result.items[0].id).toBe('ue-1');
+  });
 });
 
 describe('parseMenuResponse - Deliveroo', () => {
@@ -125,7 +143,11 @@ describe('parseMenuResponse - Deliveroo', () => {
     expect(result.items[0].unitPrice).toBeCloseTo(5.89);
   });
   test('resolves the item\'s paid modifier options', () => {
-    expect(result.items[0].modifiers).toEqual([{ name: 'Regular Fries', price: 2.50 }]);
+    expect(result.items[0].modifiers).toMatchObject([{ name: 'Regular Fries', price: 2.50 }]);
+  });
+  test('retains native item + modifier ids for basket pre-fill', () => {
+    expect(result.items[0].id).toBe('dr-1');
+    expect(result.items[0].modifiers[0]).toMatchObject({ id: 'opt-1', groupId: 'mg-1' });
   });
   test('extracts standard delivery fee from the header', () => {
     expect(result.deliveryFee).toBeCloseTo(1.29);
@@ -235,7 +257,11 @@ describe('parseMenuResponse - Just Eat deferred (large menu) catalogue', () => {
     expect(result.items[0].unitPrice).toBeCloseTo(14.99);
   });
   test('resolves modifiers from the deferred item details', () => {
-    expect(result.items[0].modifiers).toEqual([{ name: 'Extra Cheese', price: 1.50 }]);
+    expect(result.items[0].modifiers).toMatchObject([{ name: 'Extra Cheese', price: 1.50 }]);
+  });
+  test('retains native item + modifier ids from the deferred catalogue', () => {
+    expect(result.items[0].id).toBe('p1');
+    expect(result.items[0].modifiers[0]).toMatchObject({ id: 'm1', setId: 's1', groupId: 'mg1' });
   });
 });
 
@@ -248,7 +274,11 @@ describe('parseMenuResponse - Just Eat', () => {
   test('extracts items from the cdn map', () => { expect(result.items).toHaveLength(4); });
   test('first item unitPrice in pounds', () => { expect(result.items[0].unitPrice).toBeCloseTo(5.69); });
   test('resolves the item\'s paid modifier options via modifierSets', () => {
-    expect(result.items[0].modifiers).toEqual([{ name: 'Regular Fries', price: 2.50 }]);
+    expect(result.items[0].modifiers).toMatchObject([{ name: 'Regular Fries', price: 2.50 }]);
+  });
+  test('retains native item + modifier ids for basket pre-fill', () => {
+    expect(result.items[0].id).toBe('je-1');
+    expect(result.items[0].modifiers[0]).toMatchObject({ id: 'm4', setId: 's4', groupId: 'mg-1' });
   });
   test('uses the cheapest variation for multi-variation items', () => {
     const fries = result.items.find((i) => i.name === 'Large Fries');

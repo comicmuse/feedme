@@ -42,6 +42,7 @@ const MSG = {
   COMPARISON_RESULT: 'COMPARISON_RESULT', // service-worker -> sidebar
   BRANCHES_FOUND: 'BRANCHES_FOUND',       // enumerator -> service-worker
   COMPARISON_UPDATE: 'COMPARISON_UPDATE', // service-worker -> sidebar (progressive)
+  SWITCH_TO_BRANCH: 'SWITCH_TO_BRANCH',   // sidebar -> service-worker (open + build basket)
 };
 
 const SCRAPER_TIMEOUT_MS = 15000;

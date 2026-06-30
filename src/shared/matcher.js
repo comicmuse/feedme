@@ -34,36 +34,61 @@ function pickBestPricedMatch(results, referenceName) {
  * fuzzy-matched against that platform's own modifiers and priced at its rate; an
  * option the platform doesn't list falls back to the source price and is flagged.
  * @param {{options?: Array<{name: string, price: number}>, optionsTotal?: number}} ref
- * @param {Array<{name: string, price: number}>} [platformModifiers]
- * @returns {{cost: number, estimated: boolean}}
+ * @param {Array<{name: string, price: number, id?: string, groupId?: string}>} [platformModifiers]
+ * @returns {{cost: number, estimated: boolean, matched: Array, unresolved: number}}
+ *   `matched` holds the platform modifier objects (with ids) for the selected options
+ *   that resolved; `unresolved` counts selected options with no platform modifier.
  */
 function priceOptions(ref, platformModifiers) {
   const options = ref.options ?? [];
   // No per-option names captured (e.g. a non-Uber source) — fall back to the sum.
+  // Such options can't be targeted for pre-fill, so count them as unresolved.
   if (!options.length) {
-    return { cost: ref.optionsTotal || 0, estimated: (ref.optionsTotal || 0) > 0 };
+    const total = ref.optionsTotal || 0;
+    return { cost: total, estimated: total > 0, matched: [], unresolved: total > 0 ? 1 : 0 };
   }
   const fuse = platformModifiers && platformModifiers.length
     ? new Fuse(platformModifiers, { keys: ['name'], threshold: 0.4 })
     : null;
   let cost = 0;
   let estimated = false;
+  let unresolved = 0;
+  const matched = [];
   for (const opt of options) {
     const hit = fuse ? fuse.search(opt.name)[0]?.item : null;
     if (hit) {
       cost += hit.price;
+      matched.push(hit);
     } else {
       cost += opt.price;
       estimated = true;
+      unresolved += 1;
     }
   }
-  return { cost, estimated };
+  return { cost, estimated, matched, unresolved };
+}
+
+// Instructions a basket-builder needs to add one matched line on the target
+// platform: the item id, the quantity ordered, and the resolved modifier options
+// (with their ids). `prefillable` is false when the item has no id, or any selected
+// option couldn't be resolved to a platform modifier — those lines fall back to
+// being added manually by the user.
+function buildBasketLine(ref, item, matchedModifiers, unresolved) {
+  const modifiers = matchedModifiers.map((m) => ({ id: m.id, groupId: m.groupId, name: m.name }));
+  return {
+    id: item.id,
+    variationId: item.variationId,
+    name: item.name,
+    quantity: ref.quantity ?? 1,
+    modifiers,
+    prefillable: item.id != null && unresolved === 0,
+  };
 }
 
 /**
  * @param {Array<{name: string, quantity: number, unitPrice: number}>} referenceItems
  * @param {Array<{name: string, description?: string, unitPrice: number}>} platformItems
- * @returns {Array<{referenceItem, platformItem, matched: boolean}>}
+ * @returns {Array<{referenceItem, platformItem, matched: boolean, basketLine}>}
  */
 function matchItems(referenceItems, platformItems) {
   const fuse = new Fuse(platformItems, {
@@ -84,16 +109,16 @@ function matchItems(referenceItems, platformItems) {
     // lowering the total with a £0 (or wildly inflating it with a meal deal).
     const item = pickBestPricedMatch(results, ref.name);
     if (!item) {
-      return { referenceItem: ref, platformItem: null, matched: false };
+      return { referenceItem: ref, platformItem: null, matched: false, basketLine: null };
     }
     // Price the user's selected options using THIS platform's own modifier prices
     // where it lists them (exact); fall back to the source price and flag as an
     // estimate only for options this platform doesn't have.
-    const { cost, estimated } = priceOptions(ref, item.modifiers);
+    const { cost, estimated, matched, unresolved } = priceOptions(ref, item.modifiers);
     const platformItem = cost
       ? { ...item, unitPrice: item.unitPrice + cost, optionsEstimated: estimated }
       : item;
-    return { referenceItem: ref, platformItem, matched: true };
+    return { referenceItem: ref, platformItem, matched: true, basketLine: buildBasketLine(ref, item, matched, unresolved) };
   });
 }
 

@@ -6,6 +6,10 @@ const { createScheduler } = require('../shared/pool');
 // Keyed by source tabId.
 const comparisons = new Map();
 
+// Foreground tabs opened by a "switch" click, awaiting basket-building once loaded.
+// Keyed by the new tab's id -> { platform, basketPlan }.
+const pendingBuilds = new Map();
+
 const ALL_PLATFORMS = [PLATFORM.UBER_EATS, PLATFORM.DELIVEROO, PLATFORM.JUST_EAT];
 
 // Which dist script enumerates each platform, and how to start enumeration.
@@ -151,6 +155,25 @@ browser.runtime.onMessage.addListener(async (msg) => {
   }
 });
 
+// ── SWITCH_TO_BRANCH: open the chosen branch foreground + queue basket build ──
+
+browser.runtime.onMessage.addListener(async (msg, sender) => {
+  if (msg.type !== MSG.SWITCH_TO_BRANCH) return;
+  // The sidebar runs in the source tab, which keys the comparison.
+  const comparison = comparisons.get(sender.tab?.id);
+  if (!comparison) return;
+  const branch = comparison.branches.get(msg.branchKey);
+  if (!branch || branch.isCurrent || !branch.switchUrl) return;
+  // Defence in depth: the URL was validated when enqueued, re-check before opening.
+  if (!isAllowedMenuUrl(branch.platform, branch.switchUrl)) return;
+
+  const tab = await browser.tabs.create({ url: branch.switchUrl, active: true }).catch(() => null);
+  if (!tab) return;
+  // Stash the (prefillable) plan for the builder to claim once the tab has loaded.
+  const basketPlan = (branch.result?.basketPlan ?? []).filter((l) => l.prefillable);
+  if (basketPlan.length) pendingBuilds.set(tab.id, { platform: branch.platform, basketPlan });
+});
+
 // ── Seed + snapshot helpers ──────────────────────────────────────────────────
 
 // Build the "YOUR CART" branch from the live checkout order.
@@ -220,8 +243,12 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   const keys = [];
   for (const b of found) {
     const key = `${platform}|${b.id}`;
-    comparison.branches.set(key, { platform, key, label: b.label, distance: b.distance, isCurrent: false, status: 'pending', result: null });
-    comparison.queued.set(key, { platform, menuUrl: b.menuUrl });
+    // Resolve+validate the scraped menu URL once, here, so it's reused both to open
+    // the menu tab for scraping (pump) and to let the user switch to this branch
+    // later. An off-platform/look-alike URL yields null and disables both.
+    const switchUrl = resolveMenuUrl(platform, b.menuUrl);
+    comparison.branches.set(key, { platform, key, label: b.label, distance: b.distance, isCurrent: false, status: 'pending', result: null, switchUrl });
+    comparison.queued.set(key, { platform });
     keys.push(key);
   }
   comparison.scheduler.add(keys);
@@ -237,11 +264,11 @@ function normaliseLabel(s) {
 
 async function pump(comparison) {
   for (const key of comparison.scheduler.take()) {
-    const { platform, menuUrl } = comparison.queued.get(key);
     comparison.queued.delete(key);
-    const url = menuUrl.startsWith('http') ? menuUrl : originFor(platform) + menuUrl;
-    // menuUrl is scraped from page links; never open one that points off-platform.
-    if (!isAllowedMenuUrl(platform, url)) { failBranch(comparison, key, 'bad-url'); continue; }
+    // switchUrl was resolved + origin-validated when the branch was enqueued; a null
+    // means the scraped link pointed off-platform and must never be opened.
+    const url = comparison.branches.get(key)?.switchUrl;
+    if (!url) { failBranch(comparison, key, 'bad-url'); continue; }
     const tab = await browser.tabs.create({ url, active: false }).catch(() => null);
     if (!tab) { failBranch(comparison, key, 'tab-failed'); continue; }
     comparison.menuTabs.set(tab.id, key);
@@ -253,6 +280,14 @@ function originFor(platform) {
   if (platform === PLATFORM.JUST_EAT) return 'https://www.just-eat.co.uk';
   if (platform === PLATFORM.DELIVEROO) return 'https://deliveroo.co.uk';
   return 'https://www.ubereats.com';
+}
+
+// Make a scraped (possibly relative) menu URL absolute and validate it against the
+// platform's own origin. Returns the safe absolute URL, or null to reject it.
+function resolveMenuUrl(platform, menuUrl) {
+  if (!menuUrl) return null;
+  const url = menuUrl.startsWith('http') ? menuUrl : originFor(platform) + menuUrl;
+  return isAllowedMenuUrl(platform, url) ? url : null;
 }
 
 // ── PLATFORM_DATA: match items, compute total, push snapshot ─────────────────
@@ -290,7 +325,9 @@ browser.runtime.onMessage.addListener((msg, sender) => {
     }
     const total = computeTotal(matches, deliveryFee, serviceFee, msg.parsed.offers ?? [], feeOpts);
     branch.status = 'done';
-    branch.result = { restaurantName: msg.parsed.restaurantName, matches, total, offers: msg.parsed.offers ?? [] };
+    // Compact instructions for the basket-builder: one entry per matched line.
+    const basketPlan = matches.filter((m) => m.matched && m.basketLine).map((m) => m.basketLine);
+    branch.result = { restaurantName: msg.parsed.restaurantName, matches, total, offers: msg.parsed.offers ?? [], basketPlan };
     if (!branch.label && msg.parsed.restaurantName) branch.label = msg.parsed.restaurantName;
 
     // Stage-2 validity: first-token brand enumeration can admit a sibling brand

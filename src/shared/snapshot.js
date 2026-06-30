@@ -39,8 +39,12 @@ function buildSnapshot(order, branches, loadingPlatforms) {
   } else {
     footer = {
       kind: 'switch',
+      key: overall.key,
       platform: overall.platform,
       label: overall.label,
+      // The click target for the footer CTA; null when the branch's menu URL failed
+      // origin validation (the sidebar then renders the footer non-clickable).
+      switchUrl: overall.switchUrl ?? null,
       saving: currentTotal - overall.result.total.total,
     };
   }

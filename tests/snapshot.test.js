@@ -33,6 +33,13 @@ describe('buildSnapshot', () => {
     expect(snap.footer.saving).toBeCloseTo(0.39);
     expect(snap.currentTotal).toBeCloseTo(11.79);
   });
+  test('switch footer carries the cheapest branch key + switchUrl for the click target', () => {
+    const b = branches();
+    b[1].switchUrl = 'https://deliveroo.co.uk/menu/london/whitechapel/bk';
+    const snap = buildSnapshot(order, b, new Set());
+    expect(snap.footer.key).toBe('del|wc');
+    expect(snap.footer.switchUrl).toBe('https://deliveroo.co.uk/menu/london/whitechapel/bk');
+  });
   test('footer says best when the current branch is cheapest', () => {
     const only = [{ platform: PLATFORM.UBER_EATS, key: 'uber|cur', label: 'WC', distance: 0.4, isCurrent: true, ...done(9.99) }];
     expect(buildSnapshot(order, only, new Set()).footer.kind).toBe('best');

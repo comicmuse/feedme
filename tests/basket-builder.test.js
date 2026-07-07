@@ -85,6 +85,18 @@ describe('buildBasket engine', () => {
       buildBasket({ basketPlan: [null, { name: '', quantity: 1 }] }, { wait: fastWait, headless: true })
     ).resolves.toBeDefined();
   });
+
+  // A click that opens no customise dialog (a dead click on the wrong element, or an
+  // item that never renders) must NOT be reported as added — the earlier bug counted
+  // it as success and the overlay lied "basket filled" over an empty basket.
+  test('does not report success when clicking the item opens no dialog', async () => {
+    document.body.innerHTML = `
+      <button class="item" data-item-id="dead-1">Ghost Meal <span>£1.00</span></button>`;
+    // No click handler is attached, so clicking never opens a dialog.
+    const plan = [{ id: 'dead-1', name: 'Ghost Meal', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ name: 'Ghost Meal', added: 0, ok: false });
+  });
 });
 
 // Live DOM shapes verified on the real platforms (2026-07-06): the clickable item
@@ -114,6 +126,89 @@ describe('findItemCard accessible-name matching', () => {
     const card = findItemCard(document, { name: 'Zinger Tower Burger' });
     expect(card).not.toBeNull();
     expect(card.getAttribute('data-qa')).toBe('item');
+  });
+
+  // Just Eat search results render as a plain <li> whose text carries the name,
+  // with the real clickable overlay nested inside and hydrating a beat later.
+  // Matching the bare <li> and clicking it does nothing (regression: false success).
+  test('never returns a non-actionable container before its overlay hydrates', () => {
+    document.body.innerHTML = `
+      <li class="item-search-list-style_item">
+        Box Meals Spicy Chicken Sandwich Box Meal £13.29 Bring the heat...
+      </li>`;
+    expect(findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' })).toBeNull();
+  });
+
+  test('returns the nested overlay clickable once it has hydrated inside the li', () => {
+    document.body.innerHTML = `
+      <li class="item-search-list-style_item">
+        <span role="button" data-qa="item" aria-labelledby="n1"></span>
+        <span id="n1">Spicy Chicken Sandwich Box Meal</span>
+        <span>£13.29 Bring the heat...</span>
+      </li>`;
+    const card = findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' });
+    expect(card && card.getAttribute('data-qa')).toBe('item');
+  });
+
+  // While only the transient text row is present and the overlay's own name has
+  // not resolved yet, findItemCard returns nothing so the caller keeps polling —
+  // clicking the text row does nothing on the live site. Once the overlay's name
+  // resolves (previous test) it is returned and clicked.
+  test('waits (returns null) while only the text row exists and the overlay name is unresolved', () => {
+    document.body.innerHTML = `
+      <li class="item-search-list-style_item">
+        Box Meals Spicy Chicken Sandwich Box Meal £13.29 Bring the heat...
+        <span role="button" data-qa="item" aria-labelledby="not-here-yet"></span>
+      </li>`;
+    expect(findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' })).toBeNull();
+  });
+
+  // The live Just Eat search row is itself role="button" (a decoy that carries the
+  // name text but does nothing on click); the real target is the [data-qa="item"]
+  // overlay. findItemCard must pick the overlay, never the decoy.
+  test('prefers the item overlay over a role=button decoy carrying the same name', () => {
+    document.body.innerHTML = `
+      <li role="button" class="item-search-list-style_item" aria-labelledby="d1">
+        <span id="d1">Spicy Chicken Sandwich Box Meal £13.29</span>
+        <span role="button" data-qa="item" aria-labelledby="o1"></span>
+        <span id="o1">Spicy Chicken Sandwich Box Meal</span>
+      </li>`;
+    const card = findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' });
+    expect(card && card.getAttribute('data-qa')).toBe('item');
+    expect(card.tagName).toBe('SPAN');
+  });
+
+  // Before the overlay's name resolves, the decoy must NOT be clicked — wait instead.
+  test('does not fall back to a role=button decoy while the overlay name is unresolved', () => {
+    document.body.innerHTML = `
+      <li role="button" class="item-search-list-style_item" aria-labelledby="d1">
+        <span id="d1">Spicy Chicken Sandwich Box Meal £13.29</span>
+        <span role="button" data-qa="item" aria-labelledby="not-here-yet"></span>
+      </li>`;
+    expect(findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' })).toBeNull();
+  });
+
+  // In the first frames after a Just Eat search only the role=button decoy exists —
+  // no [data-qa="item"] overlay yet. With platform="just-eat" we must still wait for
+  // the overlay rather than clicking the decoy (which does nothing on the live site).
+  test('waits for the overlay on Just Eat even when only the decoy exists', () => {
+    document.body.innerHTML = `
+      <li role="button" class="item-search-list-style_item" aria-labelledby="d1">
+        <span id="d1">Spicy Chicken Sandwich Box Meal £13.29 Bring the heat...</span>
+      </li>`;
+    expect(findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' }, 'just-eat')).toBeNull();
+  });
+
+  // Just Eat tags the decoy search row with data-item-id = the item id. The id fast
+  // path must NOT return that row on Just Eat — it is not the element that opens the
+  // dialog. With no overlay present yet, findItemCard waits (returns null).
+  test('ignores the data-item-id decoy row on Just Eat and waits for the overlay', () => {
+    document.body.innerHTML = `
+      <li data-item-id="abc-123" role="button">
+        Spicy Chicken Sandwich Box Meal £13.29
+      </li>`;
+    const line = { id: 'abc-123', name: 'Spicy Chicken Sandwich Box Meal' };
+    expect(findItemCard(document, line, 'just-eat')).toBeNull();
   });
 });
 
@@ -235,11 +330,18 @@ describe('dialog scoping', () => {
         <h2>Enter your location</h2>
         <button class="add">Add a new address</button>
       </div>
-      <button class="item">Mighty Bucket</button>`;
+      <button class="item">Mighty Bucket</button>
+      <div id="dialog-root"></div>`;
     let panelClicked = false;
     document.querySelector('[data-qa="location-panel"] .add').addEventListener('click', () => { panelClicked = true; });
     let itemAdds = 0;
-    document.querySelector('.item').addEventListener('click', () => { itemAdds += 1; });
+    // Clicking the item opens its own customise dialog (as every live platform does).
+    document.querySelector('.item').addEventListener('click', () => {
+      itemAdds += 1;
+      const root = document.getElementById('dialog-root');
+      root.innerHTML = '<div role="dialog"><h2>Mighty Bucket</h2><button class="add">Add to basket</button></div>';
+      root.querySelector('.add').addEventListener('click', () => { root.innerHTML = ''; });
+    });
 
     const plan = [{ name: 'Mighty Bucket', quantity: 1, modifiers: [], prefillable: true }];
     const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
@@ -253,14 +355,19 @@ describe('surfacing items via the menu search box (Just Eat)', () => {
   test('types the name into the search box when the item is not in the DOM', async () => {
     document.body.innerHTML = `
       <input type="search" data-qa="menu-category-nav-search-element" placeholder="Search in KFC">
-      <div id="results"></div>`;
-    // Like the live menu: matching cards render only after a search.
+      <div id="results"></div>
+      <div id="dialog-root"></div>`;
+    // Like the live menu: matching cards render only after a search, and clicking
+    // one opens its customise dialog.
     document.querySelector('input[type="search"]').addEventListener('input', (e) => {
       if (/zinger/i.test(e.target.value)) {
         document.getElementById('results').innerHTML =
           '<button class="item">Zinger Tower Burger</button>';
         document.querySelector('.item').addEventListener('click', function () {
           this.dataset.added = (Number(this.dataset.added || 0) + 1).toString();
+          const root = document.getElementById('dialog-root');
+          root.innerHTML = '<div role="dialog"><h2>Zinger Tower Burger</h2><button class="add">Add to basket</button></div>';
+          root.querySelector('.add').addEventListener('click', () => { root.innerHTML = ''; });
         });
       }
     });

@@ -74,6 +74,10 @@ browser.tabs.onUpdated.addListener(async (tabId, info) => {
   const build = pendingBuilds.get(tabId);
   if (!build) return;
   pendingBuilds.delete(tabId);
+  let url = '';
+  try { url = (await browser.tabs.get(tabId)).url ?? ''; } catch (_) {}
+  console.info('[FeedMe switch] injecting basket-builder into tab', tabId, 'url=', url,
+    'plan lines=', build.basketPlan.map((l) => `${l.quantity}x ${l.name}`).join(', '));
   await injectInto(tabId, 'dist/basket-builder.js', 'ISOLATED', build, '__feedmeBuild');
 });
 
@@ -184,7 +188,10 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   const tab = await browser.tabs.create({ url: branch.switchUrl, active: true }).catch(() => null);
   if (!tab) return;
   // Stash the (prefillable) plan for the builder to claim once the tab has loaded.
-  const basketPlan = (branch.result?.basketPlan ?? []).filter((l) => l.prefillable);
+  const fullPlan = branch.result?.basketPlan ?? [];
+  const basketPlan = fullPlan.filter((l) => l.prefillable);
+  console.info('[FeedMe switch] to', branch.platform, branch.switchUrl,
+    '— plan', basketPlan.length, 'prefillable of', fullPlan.length, 'lines:', JSON.stringify(fullPlan));
   if (basketPlan.length) pendingBuilds.set(tab.id, { platform: branch.platform, basketPlan });
 });
 

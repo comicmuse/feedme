@@ -14,6 +14,26 @@
 const ADD_BUTTON_RE = /\badd\b.*\b(basket|order|bag|cart)\b|add for|add\s*·|add\s*£/i;
 const DIALOG_SELECTOR = '[role="dialog"], [aria-modal="true"]';
 
+// Diagnostic trail: the builder acts on the user's real basket in their own tab,
+// where we have no other visibility — every decision is logged so a failed run
+// can be diagnosed from the tab's console.
+function dlog(...args) {
+  try { console.info('[FeedMe builder]', ...args); } catch (_) {}
+}
+
+// One-line description of a DOM element for the log.
+function describeEl(el, doc) {
+  if (!el) return null;
+  const bits = [el.tagName.toLowerCase()];
+  for (const attr of ['data-qa', 'data-testid', 'role', 'href']) {
+    const v = el.getAttribute && el.getAttribute(attr);
+    if (v) bits.push(`${attr}="${String(v).slice(0, 60)}"`);
+  }
+  const name = accessibleName(el, doc || el.ownerDocument);
+  if (name) bits.push(`name="${name.slice(0, 60)}"`);
+  return bits.join(' ');
+}
+
 // Poll fn() until it returns truthy or the timeout elapses. Injectable so tests can
 // resolve synchronously.
 function defaultWait(fn, { timeout = 8000, interval = 150 } = {}) {
@@ -55,11 +75,48 @@ function accessibleName(el, doc) {
   return t;
 }
 
+// Selectors for elements that actually respond to a click. A name match on a
+// container (e.g. a Just Eat search-result <li>) is useless unless we descend to
+// the real clickable overlay inside it.
+const ACTIONABLE_SELECTOR = '[data-qa="item"], [role="button"], button, a';
+
+// Resolve a name-matching element to the control that should be clicked. The most
+// specific real click target is the platform's item overlay ([data-qa="item"] on
+// Just Eat) — always prefer it, whether it IS this element or lives inside it,
+// because a wrapping container may itself be "actionable" yet not open the dialog.
+// Falls back to any actionable descendant, then the element itself. Returns null
+// for a non-actionable container with no actionable descendant (the overlay may
+// not have hydrated yet) so the caller keeps polling rather than clicking nothing.
+function resolveClickable(el, name, doc) {
+  const nameMatches = (c) => accessibleName(c, doc).includes(name);
+  const smallestName = (list) => list.slice().sort(
+    (a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length)[0];
+
+  if (el.matches && el.matches('[data-qa="item"]')) return el;
+  // Prefer the item overlay inside this container. We do NOT re-gate on the
+  // overlay's own accessible name: the container already matched by its visible
+  // text, and the overlay's aria-labelledby may not have wired up yet (the Just
+  // Eat search list re-renders), yet the overlay is still what opens the dialog.
+  // If several overlays match by name, take the tightest; otherwise take the first.
+  const overlays = [...el.querySelectorAll('[data-qa="item"]')];
+  if (overlays.length) {
+    const named = overlays.filter(nameMatches);
+    return named.length ? smallestName(named) : overlays[0];
+  }
+
+  if (el.matches && el.matches(ACTIONABLE_SELECTOR)) return el;
+  const inner = [...el.querySelectorAll(ACTIONABLE_SELECTOR)].filter(nameMatches);
+  return inner.length ? smallestName(inner) : null;
+}
+
 // Find the most specific clickable element representing a menu item. Prefer a
 // native id attribute when the page exposes one, then natively clickable
 // elements matched by accessible name, then looser containers.
-function findItemCard(doc, line) {
-  if (line.id) {
+function findItemCard(doc, line, platform) {
+  // Just Eat tags its search-result <li> with data-item-id = the item's id, but that
+  // row is a decoy — clicking it does nothing; only the [data-qa="item"] overlay
+  // opens the dialog. So skip the id fast path there and match the overlay by name.
+  if (line.id && platform !== 'just-eat') {
     for (const sel of [`[data-item-id="${cssEscape(line.id)}"]`, `[data-test-id="${cssEscape(line.id)}"]`, `[data-testid="${cssEscape(line.id)}"]`]) {
       const el = safeQuery(doc, sel);
       if (el) return el;
@@ -67,15 +124,32 @@ function findItemCard(doc, line) {
   }
   const name = norm(line.name);
   if (!name) return null;
-  // Clickables first: a matching li/container is useless if the click handler
-  // lives on an overlay button (Deliveroo/Just Eat).
-  for (const tier of ['button, a, [role="button"]', 'li, [data-item-id], [data-testid]']) {
+
+  // Just Eat exposes a dedicated [data-qa="item"] overlay as the one element that
+  // opens the customise dialog. Its search results also render role="button" <li>
+  // decoy rows that carry the same name text but do nothing when clicked — and in
+  // the first frames after a search only the decoy exists, before any overlay has
+  // rendered at all. So target ONLY the overlays, matched by resolved name.
+  const itemOverlays = [...doc.querySelectorAll('[data-qa="item"]')]
+    .filter((el) => accessibleName(el, doc).includes(name));
+  if (itemOverlays.length) {
+    itemOverlays.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
+    return itemOverlays[0];
+  }
+  // Wait (return null → keep polling) rather than clicking a decoy: on Just Eat
+  // always, and on any page that already shows overlays but not yet a matching one.
+  if (platform === 'just-eat' || safeQuery(doc, '[data-qa="item"]')) return null;
+
+  // Other platforms (Deliveroo/Uber) have no such overlay — the clickable is a
+  // button/link/[role=button], possibly wrapped in a container we descend into.
+  for (const tier of ['button, a, [role="button"]', '[data-item-id], [data-testid]']) {
     const candidates = [...doc.querySelectorAll(tier)]
       .filter((el) => accessibleName(el, doc).includes(name));
-    if (candidates.length) {
-      // Shortest name = the item itself rather than a section/wrapper around it.
-      candidates.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
-      return candidates[0];
+    // Shortest name = the item itself rather than a section/wrapper around it.
+    candidates.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
+    for (const candidate of candidates) {
+      const clickable = resolveClickable(candidate, name, doc);
+      if (clickable) return clickable;
     }
   }
   return null;
@@ -158,45 +232,82 @@ function setNativeValue(input, value) {
 // Get the item's card into the DOM. Just Eat menus open on a category grid with
 // no items rendered, so when the card isn't found, type the name into the menu
 // search box and wait for the results to render.
-async function surfaceItem(doc, line, wait) {
-  const card = await wait(() => findItemCard(doc, line), { timeout: 2500 });
-  if (card) return card;
+async function surfaceItem(doc, line, wait, platform) {
+  const card = await wait(() => findItemCard(doc, line, platform), { timeout: 2500 });
+  if (card) {
+    dlog(`"${line.name}": card found directly:`, describeEl(card, doc));
+    return card;
+  }
   const box = safeQuery(doc, 'input[type="search"], [data-qa="menu-category-nav-search-element"], input[placeholder*="search" i]');
-  if (!box) return null;
+  if (!box) {
+    dlog(`"${line.name}": no card and no search box — giving up on line`);
+    return null;
+  }
+  dlog(`"${line.name}": not in DOM, typing into search box:`, describeEl(box, doc));
   setNativeValue(box, line.name);
-  return wait(() => findItemCard(doc, line));
+  const found = await wait(() => findItemCard(doc, line, platform));
+  dlog(`"${line.name}": card after search:`, describeEl(found, doc));
+  return found;
+}
+
+// Click the item's card and wait for its customise dialog to open. The Just Eat
+// search results are a transient list that re-renders (the matched element can be
+// swapped out from under a single click), so re-find the card and retry a few
+// times before giving up. Returns the open dialog, or null if none appeared.
+async function openItemDialog(doc, line, wait, surface, platform) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const card = attempt === 0 && surface
+      ? await surfaceItem(doc, line, wait, platform)
+      : await wait(() => findItemCard(doc, line, platform), { timeout: 2500 });
+    if (!card) continue;
+    dlog(`"${line.name}": clicking card (attempt ${attempt + 1}):`, describeEl(card, doc));
+    clickEl(card);
+    // Match the dialog by the item name (its heading) so an unrelated dialog — e.g.
+    // the Just Eat location panel — is never mistaken for the customise dialog.
+    const dialog = await wait(() => {
+      const all = [...doc.querySelectorAll(DIALOG_SELECTOR)];
+      return all.find((d) => norm(d.textContent).includes(norm(line.name))) || null;
+    }, { timeout: 1500 });
+    if (dialog) return dialog;
+    dlog(`"${line.name}": no dialog after click (attempt ${attempt + 1})`);
+  }
+  return null;
 }
 
 // Add a single plan line (respecting its quantity). Returns a per-line result; it
 // never throws — failures simply leave `added` short of `requested`.
 async function addLine(line, ctx) {
-  const { doc, wait } = ctx;
+  const { doc, wait, platform } = ctx;
   const requested = Math.max(1, line.quantity || 1);
   let added = 0;
   for (let q = 0; q < requested; q++) {
-    const card = q === 0
-      ? await surfaceItem(doc, line, wait)
-      : await wait(() => findItemCard(doc, line));
-    if (!card) break;
-    clickEl(card);
-    // A customise dialog may open; if it does, pick the modifiers and confirm.
-    // Match it by the item name (its heading) so an unrelated dialog — e.g. the
-    // Just Eat location panel — is never mistaken for the customise dialog.
-    const dialog = await wait(() => {
-      const all = [...doc.querySelectorAll(DIALOG_SELECTOR)];
-      return all.find((d) => norm(d.textContent).includes(norm(line.name))) || null;
-    }, { timeout: 1500 });
-    if (dialog) {
-      for (const mod of line.modifiers || []) {
-        try { await selectModifier(dialog, mod, wait); } catch (_) {}
-      }
-      // The add button stays disabled until required choices are made, so this
-      // wait doubles as "wait for it to enable".
-      const addBtn = await wait(() => findAddButton(dialog), { timeout: 3000 });
-      if (!addBtn) { dismissDialog(doc, dialog); break; }
-      clickEl(addBtn);
-      await wait(() => !doc.contains(dialog), { timeout: 3000 });
+    const dialog = await openItemDialog(doc, line, wait, q === 0, platform);
+    // On all three platforms clicking an item card opens a customise dialog (even
+    // for items with no options). No dialog means the click landed on nothing, so
+    // the line is NOT added — reporting it as "add manually" instead of silently
+    // claiming success over an empty basket.
+    if (!dialog) {
+      dlog(`"${line.name}": no customise dialog opened after clicking the item — not counting as added`);
+      break;
     }
+    dlog(`"${line.name}": customise dialog open:`, describeEl(dialog, doc));
+    for (const mod of line.modifiers || []) {
+      let picked = false;
+      try { picked = await selectModifier(dialog, mod, wait); } catch (_) {}
+      dlog(`"${line.name}": modifier "${mod.name}" ${picked ? 'selected' : 'NOT selected'}`);
+    }
+    // The add button stays disabled until required choices are made, so this
+    // wait doubles as "wait for it to enable".
+    const addBtn = await wait(() => findAddButton(dialog), { timeout: 3000 });
+    if (!addBtn) {
+      dlog(`"${line.name}": no enabled add button appeared — dismissing dialog, line failed`);
+      dismissDialog(doc, dialog);
+      break;
+    }
+    dlog(`"${line.name}": clicking add button:`, describeEl(addBtn, doc));
+    clickEl(addBtn);
+    const closed = await wait(() => !doc.contains(dialog), { timeout: 3000 });
+    dlog(`"${line.name}": dialog ${closed ? 'closed' : 'did NOT close'} after add`);
     added += 1;
   }
   return { name: line.name || '', requested, added, ok: added >= requested };
@@ -207,6 +318,9 @@ async function buildBasket(build, opts = {}) {
   const doc = opts.doc || (typeof document !== 'undefined' ? document : null);
   const wait = opts.wait || defaultWait;
   const plan = (build && build.basketPlan) || [];
+  const platform = build && build.platform;
+  dlog('starting on', doc && doc.location ? String(doc.location.href) : '(no doc)',
+    'platform=', platform, 'readyState=', doc && doc.readyState, 'plan=', JSON.stringify(plan));
   const overlay = opts.headless || !doc ? null : createOverlay(doc, plan.length);
 
   const results = [];
@@ -215,12 +329,13 @@ async function buildBasket(build, opts = {}) {
       results.push({ name: (line && line.name) || '', requested: (line && line.quantity) || 1, added: 0, ok: false });
     } else {
       let r;
-      try { r = await addLine(line, { doc, wait }); } catch (_) { r = { name: line.name, requested: line.quantity || 1, added: 0, ok: false }; }
+      try { r = await addLine(line, { doc, wait, platform }); } catch (_) { r = { name: line.name, requested: line.quantity || 1, added: 0, ok: false }; }
       results.push(r);
     }
     if (overlay) overlay.update(results);
   }
   if (overlay) overlay.finish(results);
+  dlog('finished:', JSON.stringify(results));
   return results;
 }
 

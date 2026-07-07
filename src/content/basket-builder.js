@@ -155,6 +155,21 @@ function findItemCard(doc, line, platform) {
   return null;
 }
 
+// Find the container of a modifier group by its heading text, so option matching
+// can be scoped within it. Returns null when the group can't be located.
+function findGroupContainer(dialog, group) {
+  const g = norm(group);
+  if (!g) return null;
+  const heading = [...dialog.querySelectorAll('*')]
+    .find((el) => el.children.length === 0 && norm(el.textContent) === g);
+  let node = heading && heading.parentElement;
+  for (let i = 0; i < 5 && node && node !== dialog; i++) {
+    if (node.querySelector('label, li, button, [role="checkbox"], [role="radio"], pie-radio, pie-checkbox')) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
 // Locate the element representing a modifier option: by id hint first (input
 // values carry the option id on Deliveroo), then by visible name text. Option
 // rows differ per platform: pie-radio/pie-checkbox web components (Just Eat),
@@ -167,7 +182,10 @@ function findModifierTarget(dialog, mod) {
   }
   const name = norm(mod.name);
   if (!name) return null;
-  const candidates = [...dialog.querySelectorAll('label, li, button, [role="checkbox"], [role="radio"]')]
+  // Scope to the option's group when known so a name repeated across groups
+  // (e.g. "No Thanks") lands in the correct one.
+  const scope = findGroupContainer(dialog, mod.group) || dialog;
+  const candidates = [...scope.querySelectorAll('label, li, button, [role="checkbox"], [role="radio"]')]
     .filter((el) => norm(el.textContent).includes(name));
   candidates.sort((a, b) => a.textContent.length - b.textContent.length);
   return candidates[0] || null;

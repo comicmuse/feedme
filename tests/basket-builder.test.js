@@ -290,6 +290,27 @@ describe('selectModifier live dialog shapes', () => {
   });
 });
 
+describe('selectModifier group scoping', () => {
+  test('selects the same-named option inside the requested group only', async () => {
+    document.body.innerHTML = `
+      <div role="dialog">
+        <section><h3>Add a Side?</h3>
+          <label><input type="checkbox" id="side-no"> No Thanks</label>
+          <label><input type="checkbox" id="side-fr"> Fries</label>
+        </section>
+        <section><h3>Add a Shake?</h3>
+          <label><input type="checkbox" id="shake-no"> No Thanks</label>
+          <label><input type="checkbox" id="shake-or"> Oreo Shake</label>
+        </section>
+      </div>`;
+    const dialog = document.querySelector('[role="dialog"]');
+    const ok = await selectModifier(dialog, { name: 'No Thanks', group: 'Add a Shake?' }, pollWait);
+    expect(ok).toBe(true);
+    expect(document.getElementById('shake-no').checked).toBe(true);
+    expect(document.getElementById('side-no').checked).toBe(false);
+  });
+});
+
 describe('findAddButton live dialog shapes', () => {
   test('finds a custom-element submit (Just Eat pie-button)', () => {
     document.body.innerHTML = `

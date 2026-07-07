@@ -72,19 +72,24 @@ async function extractUberEats(doc) {
           );
           const quantity = qtyEl ? parseInt(qtyEl.textContent.trim(), 10) : 1;
           // Selections render as [group label ending ":"] then [option value] span
-          // pairs; paid values carry "(£price)", free ones don't; a bare-price span
-          // is the line total. Capture every option (free included) with its group
-          // so cross-platform fill can satisfy the target's required groups.
+          // pairs (or, on some cart rows, group + value packed into a single span
+          // as "Group: Value (£price)"); paid values carry "(£price)", free ones
+          // don't; a bare-price span is the line total. Capture every option (free
+          // included) with its group so cross-platform fill can satisfy the
+          // target's required groups.
           const options = [];
           let currentGroup = '';
           for (const s of el.querySelectorAll('span')) {
             const text = s.textContent.trim();
             if (!text || /^£\d+(\.\d+)?$/.test(text)) continue; // skip blanks + line total
             if (text.endsWith(':')) { currentGroup = text.slice(0, -1).trim(); continue; }
-            const priced = text.match(/^(.*)\(£(\d+(?:\.\d+)?)\)$/);
-            const name = (priced ? priced[1] : text).trim();
+            const labelled = text.match(/^([^():]+):\s*(.+)$/);
+            const group = labelled ? labelled[1].trim() : currentGroup;
+            const rest = labelled ? labelled[2] : text;
+            const priced = rest.match(/^(.*)\(£(\d+(?:\.\d+)?)\)$/);
+            const name = (priced ? priced[1] : rest).trim();
             const price = priced ? parseFloat(priced[2]) : 0;
-            if (name) options.push({ group: currentGroup, name, price });
+            if (name) options.push({ group, name, price });
           }
           const optionsTotal = options.reduce((sum, o) => sum + o.price, 0);
           return {

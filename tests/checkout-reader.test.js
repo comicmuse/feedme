@@ -38,6 +38,14 @@ describe('extractOrder - Uber Eats', () => {
   test('captures paid options total from parenthesised modifier prices', () => {
     expect(order.items[0].optionsTotal).toBeCloseTo(1.00);
   });
+  test('splits a single-span "Group: Value (£price)" modifier into group and name', () => {
+    // The live fixture packs the group label and value into one span
+    // ("Add: Cheese (£1.00)"), unlike the two-span group/value layout used
+    // elsewhere — both must resolve to the same { group, name, price } shape.
+    expect(order.items[0].options).toEqual([
+      { group: 'Add', name: 'Cheese', price: 1.00 },
+    ]);
+  });
   test('second item name, price, and zero options', () => {
     expect(order.items[1].name).toBe('Large Fries');
     expect(order.items[1].unitPrice).toBeCloseTo(2.50);

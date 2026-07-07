@@ -336,8 +336,17 @@ function justEatItemModifiers(item, groupsById, modifierBySetId) {
     .map(({ setId, gid }) => ({ m: modifierBySetId[setId], setId, gid }))
     .filter(({ m }) => m)
     // id/setId/groupId let a basket-builder target the exact modifier; matching keys on name.
-    .map(({ m, setId, gid }) => ({ name: m.name, price: m.additionPrice ?? 0, id: m.id, setId, groupId: gid }))
-    .filter((o) => o.name && o.price > 0);
+    // Carry the group name (for group-aware matching) and keep FREE options too:
+    // the target's required groups are often satisfied by £0 choices ("No Thanks").
+    .map(({ m, setId, gid }) => ({
+      name: m.name,
+      price: m.additionPrice ?? 0,
+      id: m.id,
+      setId,
+      groupId: gid,
+      group: groupsById[gid]?.name ?? '',
+    }))
+    .filter((o) => o.name);
 }
 
 // Recursively lower-case the first letter of every object key. Large Just Eat
@@ -487,4 +496,4 @@ function justEatItemDeal(offer, minSpend, itemNameById) {
   };
 }
 
-module.exports = { classifyResponse, parseMenuResponse, parseUberStore };
+module.exports = { classifyResponse, parseMenuResponse, parseUberStore, justEatItemModifiers };

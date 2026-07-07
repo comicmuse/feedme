@@ -1,4 +1,4 @@
-const { classifyResponse, parseMenuResponse, parseUberStore } = require('../src/shared/parsers');
+const { classifyResponse, parseMenuResponse, parseUberStore, justEatItemModifiers } = require('../src/shared/parsers');
 const { matchItems, computeTotal } = require('../src/shared/matcher');
 const { PLATFORM } = require('../src/shared/constants');
 
@@ -273,8 +273,11 @@ describe('parseMenuResponse - Just Eat', () => {
   test('extracts postcode', () => { expect(result.postcode).toBe('SW1E 5JE'); });
   test('extracts items from the cdn map', () => { expect(result.items).toHaveLength(4); });
   test('first item unitPrice in pounds', () => { expect(result.items[0].unitPrice).toBeCloseTo(5.69); });
-  test('resolves the item\'s paid modifier options via modifierSets', () => {
-    expect(result.items[0].modifiers).toMatchObject([{ name: 'Regular Fries', price: 2.50 }]);
+  test('resolves the item\'s modifier options via modifierSets, including free ones', () => {
+    expect(result.items[0].modifiers).toMatchObject([
+      { name: 'Regular Fries', price: 2.50, group: 'Add Fries?' },
+      { name: 'No Thanks', price: 0, group: 'Add Fries?' },
+    ]);
   });
   test('retains native item + modifier ids for basket pre-fill', () => {
     expect(result.items[0].id).toBe('je-1');
@@ -338,5 +341,22 @@ describe('Just Eat item-level deal applied end-to-end', () => {
     const result = computeTotal(matches, 0, 0, parsed.offers);
     expect(result.discountTotal).toBe(0);
     expect(result.appliedDeals).toEqual([]);
+  });
+});
+
+describe('justEatItemModifiers', () => {
+  test('includes free options and their group name', () => {
+    const item = { variations: [{ modifierGroupsIds: ['g1'] }] };
+    const groupsById = { g1: { id: 'g1', name: 'Add a Side?' } };
+    const modifierBySetId = {
+      s1: { id: 'm1', name: 'No Thanks', additionPrice: 0 },
+      s2: { id: 'm2', name: 'Fries', additionPrice: 1.5 },
+    };
+    groupsById.g1.modifiers = ['s1', 's2'];
+    const mods = justEatItemModifiers(item, groupsById, modifierBySetId);
+    expect(mods).toEqual([
+      { name: 'No Thanks', price: 0, id: 'm1', setId: 's1', groupId: 'g1', group: 'Add a Side?' },
+      { name: 'Fries', price: 1.5, id: 'm2', setId: 's2', groupId: 'g1', group: 'Add a Side?' },
+    ]);
   });
 });

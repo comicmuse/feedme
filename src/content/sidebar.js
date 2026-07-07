@@ -81,6 +81,7 @@ styleEl.textContent = `
 .tag.cu { background:#eef2ff; color:#4f46e5; }
 .det { border-top:1px dashed #e5e7eb; padding:6px 9px; font-size:10px; color:#6b7280; display:flex; flex-direction:column; gap:2px; }
 .det .r { display:flex; justify-content:space-between; }
+.det .r .approx { text-decoration:underline dotted; text-underline-offset:2px; cursor:help; }
 .collrow { padding:6px 9px; display:flex; align-items:center; justify-content:space-between; font-size:10px; color:#6b7280; cursor:pointer; }
 .collrow:hover { background:#fafafa; }
 /* Switch CTA on a branch card: opens that branch and fills its basket. */
@@ -209,7 +210,12 @@ function buildBranchCard(branch, isCheapest) {
   det.className = 'det';
   const t = branch.result.total;
   appendDetRow(det, 'Subtotal', fmt(t.itemsTotal));
-  appendDetRow(det, 'Delivery', fmt(t.deliveryFee));
+  // Just Eat's delivery fee varies with demand (busy surge) and by basket band, so
+  // the value we snapshot at comparison time can differ at checkout — flag it.
+  const deliveryNote = branch.platform === PLATFORM.JUST_EAT
+    ? { marker: 'approx.', tooltip: "Just Eat's delivery fee varies with demand, so it may differ at checkout." }
+    : null;
+  appendDetRow(det, 'Delivery', fmt(t.deliveryFee), deliveryNote);
   appendDetRow(det, `Service${t.serviceFeeEstimated ? ' (est.)' : ''}`, fmt(t.serviceFee));
   if (t.discountTotal > 0) appendDetRow(det, 'Discounts', `-${fmt(t.discountTotal)}`);
   card.appendChild(det);
@@ -254,10 +260,19 @@ function appendTag(parent, text, cls) {
   t.textContent = text;
   parent.appendChild(t);
 }
-function appendDetRow(parent, label, value) {
+// `note`, when given, appends an "(approx.)"-style marker after the label carrying
+// a hover tooltip — used where a fee we show is not the exact amount at checkout.
+function appendDetRow(parent, label, value, note) {
   const r = document.createElement('div');
   r.className = 'r';
   const l = document.createElement('span'); l.textContent = label;
+  if (note) {
+    const marker = document.createElement('span');
+    marker.className = 'approx';
+    marker.textContent = ` (${note.marker})`;
+    marker.title = note.tooltip;
+    l.appendChild(marker);
+  }
   const v = document.createElement('span'); v.textContent = value;
   r.appendChild(l); r.appendChild(v); parent.appendChild(r);
 }

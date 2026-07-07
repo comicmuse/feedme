@@ -31,10 +31,14 @@ function pickBestPricedMatch(results, referenceName) {
 
 /**
  * Cost of the reference item's selected options on a platform. Each option is
- * fuzzy-matched against that platform's own modifiers and priced at its rate; an
- * option the platform doesn't list falls back to the source price and is flagged.
- * @param {{options?: Array<{name: string, price: number}>, optionsTotal?: number}} ref
- * @param {Array<{name: string, price: number, id?: string, groupId?: string}>} [platformModifiers]
+ * fuzzy-matched against that platform's own modifiers (first within its own group,
+ * when both sides carry a group name, to disambiguate names repeated across groups
+ * e.g. "No Thanks" in both "Add a Side?" and "Add a Shake?") and priced at its rate;
+ * an option the platform doesn't list falls back to the source price and is flagged
+ * (unless the fallback price is £0, since a free-option miss shouldn't make the
+ * total look estimated).
+ * @param {{options?: Array<{group?: string, name: string, price: number}>, optionsTotal?: number}} ref
+ * @param {Array<{name: string, price: number, id?: string, groupId?: string, group?: string}>} [platformModifiers]
  * @returns {{cost: number, estimated: boolean, matched: Array, unresolved: number}}
  *   `matched` holds the platform modifier objects (with ids) for the selected options
  *   that resolved; `unresolved` counts selected options with no platform modifier.
@@ -47,21 +51,39 @@ function priceOptions(ref, platformModifiers) {
     const total = ref.optionsTotal || 0;
     return { cost: total, estimated: total > 0, matched: [], unresolved: total > 0 ? 1 : 0 };
   }
-  const fuse = platformModifiers && platformModifiers.length
-    ? new Fuse(platformModifiers, { keys: ['name'], threshold: 0.4 })
+  const mods = platformModifiers ?? [];
+  // Index target modifiers by group name so a source option is matched within its
+  // own group first — this disambiguates option names repeated across groups.
+  const byGroup = new Map();
+  for (const m of mods) {
+    const g = m.group ?? '';
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push(m);
+  }
+  const groupNames = [...byGroup.keys()].filter((g) => g);
+  const groupFuse = groupNames.length
+    ? new Fuse(groupNames.map((name) => ({ name })), { keys: ['name'], threshold: 0.4 })
     : null;
+
   let cost = 0;
   let estimated = false;
   let unresolved = 0;
   const matched = [];
   for (const opt of options) {
-    const hit = fuse ? fuse.search(opt.name)[0]?.item : null;
+    // Candidate pool: the option's own group when we can match it, else all mods.
+    let pool = mods;
+    if (opt.group && groupFuse) {
+      const gName = groupFuse.search(opt.group)[0]?.item.name;
+      if (gName != null) pool = byGroup.get(gName);
+    }
+    const optFuse = pool.length ? new Fuse(pool, { keys: ['name'], threshold: 0.4 }) : null;
+    const hit = optFuse ? optFuse.search(opt.name)[0]?.item : null;
     if (hit) {
       cost += hit.price;
       matched.push(hit);
     } else {
       cost += opt.price;
-      estimated = true;
+      if (opt.price > 0) estimated = true; // a £0 miss doesn't flag the total as estimated
       unresolved += 1;
     }
   }
@@ -74,7 +96,7 @@ function priceOptions(ref, platformModifiers) {
 // option couldn't be resolved to a platform modifier — those lines fall back to
 // being added manually by the user.
 function buildBasketLine(ref, item, matchedModifiers, unresolved) {
-  const modifiers = matchedModifiers.map((m) => ({ id: m.id, groupId: m.groupId, name: m.name }));
+  const modifiers = matchedModifiers.map((m) => ({ id: m.id, groupId: m.groupId, group: m.group ?? '', name: m.name }));
   return {
     id: item.id,
     variationId: item.variationId,

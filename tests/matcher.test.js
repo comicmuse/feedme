@@ -147,7 +147,34 @@ describe('matchItems basketLine (for scripted basket pre-fill)', () => {
     }];
     const [result] = matchItems(ref, platform);
     expect(result.basketLine.prefillable).toBe(true);
-    expect(result.basketLine.modifiers).toEqual([{ id: 'opt-1', groupId: 'mg-1', name: 'Regular Fries' }]);
+    expect(result.basketLine.modifiers).toEqual([{ id: 'opt-1', groupId: 'mg-1', group: '', name: 'Regular Fries' }]);
+  });
+
+  test('resolves repeated option names to distinct groups (No Thanks x2)', () => {
+    const reference = [{
+      name: 'Box Meal', quantity: 1, unitPrice: 13.29, optionsTotal: 0,
+      options: [
+        { group: 'Add a Side?', name: 'No Thanks', price: 0 },
+        { group: 'Add a Shake?', name: 'No Thanks', price: 0 },
+      ],
+    }];
+    const platform = [{
+      id: 'je-1', name: 'Box Meal', description: '', unitPrice: 13.29,
+      modifiers: [
+        { name: 'No Thanks', price: 0, id: 'side-no', groupId: 'gs', group: 'Add a Side?' },
+        { name: 'Fries',     price: 0, id: 'side-fr', groupId: 'gs', group: 'Add a Side?' },
+        { name: 'No Thanks', price: 0, id: 'shake-no', groupId: 'gk', group: 'Add a Shake?' },
+        { name: 'Oreo Shake', price: 3, id: 'shake-or', groupId: 'gk', group: 'Add a Shake?' },
+      ],
+    }];
+    const [result] = matchItems(reference, platform);
+    expect(result.basketLine.prefillable).toBe(true);
+    expect(result.basketLine.modifiers).toEqual([
+      { id: 'side-no', groupId: 'gs', group: 'Add a Side?', name: 'No Thanks' },
+      { id: 'shake-no', groupId: 'gk', group: 'Add a Shake?', name: 'No Thanks' },
+    ]);
+    // Free options add nothing to the priced total.
+    expect(result.platformItem.unitPrice).toBeCloseTo(13.29);
   });
 
   test('is not prefillable when a selected option has no matching platform modifier', () => {

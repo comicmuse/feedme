@@ -80,6 +80,58 @@ describe('extractOrder - Uber Eats quantities (real DOM)', () => {
   });
 });
 
+describe('extractOrder - Uber Eats free & grouped options', () => {
+  function boxMealDoc() {
+    const html = `<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£13.29</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Spicy Chicken Sandwich Box Meal" />
+          <span>Spicy Chicken Sandwich:</span><span>Spicy Chicken Sandwich</span>
+          <span>Choose Your Chicken:</span><span>3 Hot Wings</span>
+          <span>Choose Your Fries:</span><span>Regular Fries</span>
+          <span>Add a Side?:</span><span>No Thanks</span>
+          <span>Add a Shake?:</span><span>No Thanks</span>
+          <span>£13.29</span>
+        </div></li>
+      </div></body></html>`;
+    return new JSDOM(html).window.document;
+  }
+
+  test('captures free options with their group, keeps optionsTotal at 0', async () => {
+    const order = await extractOrder(PLATFORM.UBER_EATS, boxMealDoc());
+    expect(order.items[0].optionsTotal).toBe(0);
+    expect(order.items[0].options).toEqual([
+      { group: 'Spicy Chicken Sandwich', name: 'Spicy Chicken Sandwich', price: 0 },
+      { group: 'Choose Your Chicken', name: '3 Hot Wings', price: 0 },
+      { group: 'Choose Your Fries', name: 'Regular Fries', price: 0 },
+      { group: 'Add a Side?', name: 'No Thanks', price: 0 },
+      { group: 'Add a Shake?', name: 'No Thanks', price: 0 },
+    ]);
+  });
+
+  test('still captures a paid option with its price and group', async () => {
+    const html = `<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£8.49</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="6 Boneless & a dip" />
+          <span>6 Boneless:</span><span>6 Boneless</span>
+          <span>Choose Dips:</span><span>The Big Ranch (£1.00)</span>
+          <span>£8.49</span>
+        </div></li>
+      </div></body></html>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, new JSDOM(html).window.document);
+    expect(order.items[0].optionsTotal).toBeCloseTo(1.0);
+    expect(order.items[0].options).toEqual([
+      { group: '6 Boneless', name: '6 Boneless', price: 0 },
+      { group: 'Choose Dips', name: 'The Big Ranch', price: 1.0 },
+    ]);
+  });
+});
+
 describe('extractOrder - Deliveroo', () => {
   let order;
   beforeAll(async () => {

@@ -71,15 +71,21 @@ async function extractUberEats(doc) {
             (n) => !el.contains(n) && /^\d+$/.test(n.textContent.trim())
           );
           const quantity = qtyEl ? parseInt(qtyEl.textContent.trim(), 10) : 1;
-          // Paid options/modifiers render as "{name} (£{price})" (a group label
-          // like "Add:" may prefix it). Capturing name + price lets comparison
-          // platforms be priced using their OWN cost for the same option, falling
-          // back to this price only when a platform doesn't list it.
-          const options = [...el.querySelectorAll('span')]
-            .map((s) => s.textContent.trim().match(/^(?:[^():]*:\s*)?(.+?)\s*\(£(\d+(?:\.\d+)?)\)$/))
-            .filter(Boolean)
-            .map((m) => ({ name: m[1].trim(), price: parseFloat(m[2]) }))
-            .filter((o) => o.name && o.price > 0);
+          // Selections render as [group label ending ":"] then [option value] span
+          // pairs; paid values carry "(£price)", free ones don't; a bare-price span
+          // is the line total. Capture every option (free included) with its group
+          // so cross-platform fill can satisfy the target's required groups.
+          const options = [];
+          let currentGroup = '';
+          for (const s of el.querySelectorAll('span')) {
+            const text = s.textContent.trim();
+            if (!text || /^£\d+(\.\d+)?$/.test(text)) continue; // skip blanks + line total
+            if (text.endsWith(':')) { currentGroup = text.slice(0, -1).trim(); continue; }
+            const priced = text.match(/^(.*)\(£(\d+(?:\.\d+)?)\)$/);
+            const name = (priced ? priced[1] : text).trim();
+            const price = priced ? parseFloat(priced[2]) : 0;
+            if (name) options.push({ group: currentGroup, name, price });
+          }
           const optionsTotal = options.reduce((sum, o) => sum + o.price, 0);
           return {
             name,

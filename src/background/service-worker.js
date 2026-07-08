@@ -1,4 +1,4 @@
-const { PLATFORM, CHECKOUT_PATTERNS, MSG, buildSearchUrl, isAllowedMenuUrl, getConfig, browser } = require('../shared/constants');
+const { PLATFORM, CHECKOUT_PATTERNS, MSG, buildSearchUrl, isAllowedMenuUrl, isMenuPageUrl, getConfig, browser } = require('../shared/constants');
 const { matchItems, computeTotal, estimateUberFees } = require('../shared/matcher');
 const { buildSnapshot } = require('../shared/snapshot');
 const { createScheduler } = require('../shared/pool');
@@ -66,16 +66,24 @@ browser.tabs.onUpdated.addListener((tabId, info) => {
   injectForTab(tabId, owner);
 });
 
-// When a tab opened by a "switch" click finishes loading, inject the basket-builder
-// once with its plan. The builder polls for readiness itself, so a single injection
-// on the first complete is enough; clear it so SPA re-completes don't re-add items.
+// When a tab opened by a "switch" click finishes loading the branch's MENU page,
+// inject the basket-builder once with its plan. A consent/login/location
+// interstitial can fire status:complete first — consuming the plan there would
+// inject the builder into the wrong document and lose the build — so the plan
+// stays pending (cleared on tab close) until a complete lands on a menu URL.
+// Once it does, clear it so SPA re-completes don't re-add items; the builder
+// polls for readiness itself, so a single injection is enough.
 browser.tabs.onUpdated.addListener(async (tabId, info) => {
   if (info.status !== 'complete') return;
   const build = pendingBuilds.get(tabId);
   if (!build) return;
-  pendingBuilds.delete(tabId);
   let url = '';
   try { url = (await browser.tabs.get(tabId)).url ?? ''; } catch (_) {}
+  if (!isMenuPageUrl(build.platform, url)) {
+    console.info('[FeedMe switch] tab', tabId, 'completed on a non-menu page — keeping build pending. url=', url);
+    return;
+  }
+  pendingBuilds.delete(tabId);
   console.info('[FeedMe switch] injecting basket-builder into tab', tabId, 'url=', url,
     'plan lines=', build.basketPlan.map((l) => `${l.quantity}x ${l.name}`).join(', '));
   await injectInto(tabId, 'dist/basket-builder.js', 'ISOLATED', build, '__feedmeBuild');

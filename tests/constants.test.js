@@ -1,4 +1,4 @@
-const { MSG, DEFAULT_BRANCH_COUNT, DEFAULT_MAX_CONCURRENT, getConfig, buildSearchUrl, isAllowedMenuUrl, PLATFORM } = require('../src/shared/constants');
+const { MSG, DEFAULT_BRANCH_COUNT, DEFAULT_MAX_CONCURRENT, getConfig, buildSearchUrl, isAllowedMenuUrl, isMenuPageUrl, PLATFORM } = require('../src/shared/constants');
 
 describe('isAllowedMenuUrl', () => {
   test('allows the platform\'s own origin (www and apex)', () => {
@@ -18,6 +18,29 @@ describe('isAllowedMenuUrl', () => {
   });
   test('rejects a malformed URL', () => {
     expect(isAllowedMenuUrl(PLATFORM.UBER_EATS, 'not a url')).toBe(false);
+  });
+});
+
+// A switch tab can complete on a consent/login/location interstitial (often on
+// the platform's own host) before the menu ever loads — the basket build must
+// only be claimed once the tab is really on a menu page.
+describe('isMenuPageUrl', () => {
+  test('accepts each platform\'s menu page shape', () => {
+    expect(isMenuPageUrl(PLATFORM.UBER_EATS, 'https://www.ubereats.com/gb/store/kfc-london-mile-end-road/g_s9XoGVSkmubs6Lk1hziA')).toBe(true);
+    expect(isMenuPageUrl(PLATFORM.DELIVEROO, 'https://deliveroo.co.uk/menu/london/stepney/popeyes-whitechapel?item-id=123')).toBe(true);
+    expect(isMenuPageUrl(PLATFORM.JUST_EAT, 'https://www.just-eat.co.uk/restaurants-kfc-mile-end-bow/menu')).toBe(true);
+  });
+  test('rejects same-host interstitials (home, area listing, consent, login)', () => {
+    expect(isMenuPageUrl(PLATFORM.JUST_EAT, 'https://www.just-eat.co.uk/')).toBe(false);
+    expect(isMenuPageUrl(PLATFORM.JUST_EAT, 'https://www.just-eat.co.uk/area/e147lg/restaurants')).toBe(false);
+    expect(isMenuPageUrl(PLATFORM.DELIVEROO, 'https://deliveroo.co.uk/login')).toBe(false);
+    expect(isMenuPageUrl(PLATFORM.UBER_EATS, 'https://www.ubereats.com/gb/login-redirect')).toBe(false);
+  });
+  test('rejects a menu-shaped path on the wrong host', () => {
+    expect(isMenuPageUrl(PLATFORM.JUST_EAT, 'https://evil.com/restaurants-x/menu')).toBe(false);
+  });
+  test('rejects a malformed URL', () => {
+    expect(isMenuPageUrl(PLATFORM.JUST_EAT, 'not a url')).toBe(false);
   });
 });
 

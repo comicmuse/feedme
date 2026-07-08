@@ -104,6 +104,23 @@ function isAllowedMenuUrl(platform, url) {
   return host === suffix || host.endsWith('.' + suffix);
 }
 
+// Path shape of each platform's restaurant menu page. Interstitials (consent,
+// login, area listing) often live on the SAME host, so a host check alone can't
+// tell "the menu finished loading" from "a redirect stopped short of it".
+const MENU_URL_PATHS = {
+  [PLATFORM.UBER_EATS]: /\/store\//,
+  [PLATFORM.DELIVEROO]: /^\/menu\//,
+  [PLATFORM.JUST_EAT]: /^\/restaurants-[^/]+\/menu/,
+};
+
+// True only when the URL is a restaurant menu page on the platform's own host —
+// the signal that a switch tab is ready for the basket-builder.
+function isMenuPageUrl(platform, url) {
+  if (!isAllowedMenuUrl(platform, url)) return false;
+  const re = MENU_URL_PATHS[platform];
+  return re ? re.test(new URL(url).pathname) : false;
+}
+
 function buildSearchUrl(platform, restaurantName, postcode) {
   const template = SEARCH_URL_TEMPLATES[platform];
   if (!template) return null;
@@ -130,6 +147,7 @@ module.exports = {
   platformFromUrl,
   buildSearchUrl,
   isAllowedMenuUrl,
+  isMenuPageUrl,
   getConfig,
   browser,
 };

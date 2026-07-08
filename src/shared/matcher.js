@@ -31,12 +31,15 @@ function pickBestPricedMatch(results, referenceName) {
 
 /**
  * Cost of the reference item's selected options on a platform. Each option is
- * fuzzy-matched against that platform's own modifiers (first within its own group,
- * when both sides carry a group name, to disambiguate names repeated across groups
- * e.g. "No Thanks" in both "Add a Side?" and "Add a Shake?") and priced at its rate;
- * an option the platform doesn't list falls back to the source price and is flagged
- * (unless the fallback price is £0, since a free-option miss shouldn't make the
- * total look estimated).
+ * fuzzy-matched against that platform's own modifiers and priced at its rate:
+ * within its own group first, when both sides carry a group name, to disambiguate
+ * names repeated across groups (e.g. "No Thanks" in both "Add a Side?" and "Add a
+ * Shake?"), retrying the whole pool on an in-group miss since platforms group the
+ * same option differently. Hits prefer the option's price band (paid↔paid,
+ * free↔free) so a paid selection isn't priced by a free negation, and each
+ * platform modifier resolves at most one selection. An option the platform
+ * doesn't list falls back to the source price and is flagged (unless the fallback
+ * price is £0, since a free-option miss shouldn't make the total look estimated).
  * @param {{options?: Array<{group?: string, name: string, price: number}>, optionsTotal?: number}} ref
  * @param {Array<{name: string, price: number, id?: string, groupId?: string, group?: string}>} [platformModifiers]
  * @returns {{cost: number, estimated: boolean, matched: Array, unresolved: number}}
@@ -62,13 +65,18 @@ function priceOptions(ref, platformModifiers) {
   }
   const groupNames = [...byGroup.keys()].filter((g) => g);
   const groupFuse = groupNames.length
-    ? new Fuse(groupNames.map((name) => ({ name })), { keys: ['name'], threshold: 0.4 })
+    ? new Fuse(groupNames.map((name) => ({ name })), { keys: ['name'], threshold: FUSE_THRESHOLD })
     : null;
+  const fuseByPool = new Map(); // candidate pool -> Fuse index, reused across options
 
   let cost = 0;
   let estimated = false;
   let unresolved = 0;
   const matched = [];
+  // Each platform modifier resolves at most one selection: the builder can only
+  // tick it once, so letting duplicates share a hit would double-count its price
+  // while the basket silently ends up with a single selection.
+  const used = new Set();
   for (const opt of options) {
     // Candidate pool: the option's own group when we can match it, else all mods.
     let pool = mods;
@@ -76,9 +84,27 @@ function priceOptions(ref, platformModifiers) {
       const gName = groupFuse.search(opt.group)[0]?.item.name;
       if (gName != null) pool = byGroup.get(gName);
     }
-    const optFuse = pool.length ? new Fuse(pool, { keys: ['name'], threshold: 0.4 }) : null;
-    const hit = optFuse ? optFuse.search(opt.name)[0]?.item : null;
+    // Prefer a hit in the option's own price band (paid↔paid, free↔free): fuzzy
+    // scores rank a free negation ("No Cheese") above the paid variant ("Extra
+    // Cheese") for a query like "Cheese", which would price a paid selection at £0
+    // and put the negation's id in the basket plan.
+    const bestHit = (candidates) => {
+      if (!candidates.length) return null;
+      let fuse = fuseByPool.get(candidates);
+      if (!fuse) {
+        fuse = new Fuse(candidates, { keys: ['name'], threshold: FUSE_THRESHOLD });
+        fuseByPool.set(candidates, fuse);
+      }
+      const results = fuse.search(opt.name).filter((r) => !used.has(r.item));
+      const wantPaid = opt.price > 0;
+      return (results.find((r) => (r.item.price > 0) === wantPaid) ?? results[0])?.item ?? null;
+    };
+    let hit = bestHit(pool);
+    // Platforms group the same option differently, so an in-group miss retries the
+    // whole pool before the option is declared unresolved.
+    if (!hit && pool !== mods) hit = bestHit(mods);
     if (hit) {
+      used.add(hit);
       cost += hit.price;
       matched.push(hit);
     } else {

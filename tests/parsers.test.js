@@ -41,6 +41,26 @@ describe('parseUberStore (Uber store-page JSON-LD)', () => {
     const m = parseUberStore(uberStoreLd);
     expect(m.items.every((i) => i.id === undefined)).toBe(true);
   });
+
+  test('a name carried by two different uuids gets no id; a repeated identical uuid keeps its id', () => {
+    // The blob walk indexes ANY uuid-bearing node (sections, offers, modifier
+    // options) — first-wins on a collision would tag the item with whichever
+    // node the walk reached first, and the builder's id fast-path would click
+    // the wrong element. Ambiguous names must stay open-only.
+    const ld = { name: 'S', hasMenu: { hasMenuSection: [{ hasMenuItem: [
+      { name: 'Regular Fries', offers: { price: '2.49' } },
+      { name: 'Whopper', offers: { price: '5.89' } },
+    ] }] } };
+    const catalog = { sections: [
+      { title: 'Regular Fries', uuid: 'item-1' },
+      { nested: { title: 'Regular Fries', uuid: 'option-9' } }, // modifier option sharing the name
+      { title: 'Whopper', uuid: 'item-2' },
+      { again: { title: 'Whopper', uuid: 'item-2' } }, // same uuid twice is not a collision
+    ] };
+    const m = parseUberStore(ld, catalog);
+    expect(m.items.find((i) => i.name === 'Regular Fries').id).toBeUndefined();
+    expect(m.items.find((i) => i.name === 'Whopper').id).toBe('item-2');
+  });
 });
 
 describe('parseUberStore item-level deals (catalog blob)', () => {

@@ -110,12 +110,25 @@ function uberStoreOffers(catalog) {
 // the blob doesn't list (or any name collision) simply get no id and stay open-only.
 function uberCatalogIdByName(catalog) {
   const byName = new Map();
+  // The walk indexes ANY uuid-bearing node (sections, offers, modifier options
+  // included), so a name seen with two DIFFERENT uuids is ambiguous — drop it
+  // rather than tag the item with whichever node the walk reached first. The
+  // same uuid re-encountered under the same name is just another reference.
+  const ambiguous = new Set();
   const seen = new Set();
   const walk = (node) => {
     if (!node || typeof node !== 'object' || seen.has(node)) return;
     seen.add(node);
     const name = node.title || node.name;
-    if (name && node.uuid && !byName.has(name)) byName.set(name, node.uuid);
+    if (name && node.uuid && !ambiguous.has(name)) {
+      const existing = byName.get(name);
+      if (existing == null) {
+        byName.set(name, node.uuid);
+      } else if (existing !== node.uuid) {
+        byName.delete(name);
+        ambiguous.add(name);
+      }
+    }
     for (const k of Object.keys(node)) walk(node[k]);
   };
   walk(catalog);

@@ -142,8 +142,14 @@ describe('parseMenuResponse - Deliveroo', () => {
     expect(result.items[0].name).toBe('Whopper');
     expect(result.items[0].unitPrice).toBeCloseTo(5.89);
   });
-  test('resolves the item\'s paid modifier options', () => {
-    expect(result.items[0].modifiers).toMatchObject([{ name: 'Regular Fries', price: 2.50 }]);
+  test('resolves the item\'s modifier options, keeping free choices and the group name', () => {
+    // Same contract as Just Eat: £0 options stay (required groups are often
+    // satisfied by "No thanks") and each option carries its group's display name
+    // for group-aware matching.
+    expect(result.items[0].modifiers).toMatchObject([
+      { name: 'Regular Fries', price: 2.50, group: 'Add a side?' },
+      { name: 'No thanks', price: 0, group: 'Add a side?' },
+    ]);
   });
   test('retains native item + modifier ids for basket pre-fill', () => {
     expect(result.items[0].id).toBe('dr-1');

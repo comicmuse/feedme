@@ -231,16 +231,24 @@ function deliverooOffers(root, itemNameById = {}) {
   });
 }
 
-// Paid options available for a Deliveroo item: its modifier groups' options each
-// carry their own price inline. Returned as [{name, price}] so the same option a
-// user picked elsewhere can be priced here.
+// Options available for a Deliveroo item: its modifier groups' options each
+// carry their own price inline. Returned as [{name, price, group}] so the same
+// option a user picked elsewhere can be priced here.
 function deliverooItemModifiers(item, groupsById) {
   return (item.modifierGroupIds ?? [])
     .flatMap((gid) => (groupsById[gid]?.modifierOptions ?? []).map((o) => ({ o, gid })))
     // id/groupId are retained alongside name/price so a basket-builder can target the
     // exact option in the menu DOM; matching/pricing still key on name.
-    .map(({ o, gid }) => ({ name: o.name, price: (o.price?.fractional ?? 0) / 100, id: o.id, groupId: gid }))
-    .filter((o) => o.name && o.price > 0);
+    // Carry the group name (for group-aware matching) and keep FREE options too:
+    // required groups are often satisfied by £0 choices ("No thanks").
+    .map(({ o, gid }) => ({
+      name: o.name,
+      price: (o.price?.fractional ?? 0) / 100,
+      id: o.id,
+      groupId: gid,
+      group: groupsById[gid]?.name ?? '',
+    }))
+    .filter((o) => o.name);
 }
 
 function parseDeliveroo(data) {

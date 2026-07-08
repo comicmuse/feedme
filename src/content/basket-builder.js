@@ -137,8 +137,10 @@ function findItemCard(doc, line, platform) {
     return itemOverlays[0];
   }
   // Wait (return null → keep polling) rather than clicking a decoy: on Just Eat
-  // always, and on any page that already shows overlays but not yet a matching one.
-  if (platform === 'just-eat' || safeQuery(doc, '[data-qa="item"]')) return null;
+  // always, and — only when the platform is unknown — on any page already showing
+  // overlays but not yet a matching one. On a known other platform a stray
+  // [data-qa="item"] element must not suppress the generic tier below.
+  if (platform === 'just-eat' || (!platform && safeQuery(doc, '[data-qa="item"]'))) return null;
 
   // Other platforms (Deliveroo/Uber) have no such overlay — the clickable is a
   // button/link/[role=button], possibly wrapped in a container we descend into.
@@ -326,6 +328,14 @@ async function addLine(line, ctx) {
     clickEl(addBtn);
     const closed = await wait(() => !doc.contains(dialog), { timeout: 3000 });
     dlog(`"${line.name}": dialog ${closed ? 'closed' : 'did NOT close'} after add`);
+    // The dialog closing is the only observable sign the add landed; a swallowed
+    // click (button replaced mid-click, unmet server-side validation) leaves it
+    // open — counting that unit would report a filled basket the platform never
+    // received, and the stale dialog would be re-matched on the next unit.
+    if (!closed) {
+      dismissDialog(doc, dialog);
+      break;
+    }
     added += 1;
   }
   return { name: line.name || '', requested, added, ok: added >= requested };

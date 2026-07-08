@@ -89,6 +89,23 @@ describe('buildBasket engine', () => {
   // A click that opens no customise dialog (a dead click on the wrong element, or an
   // item that never renders) must NOT be reported as added — the earlier bug counted
   // it as success and the overlay lied "basket filled" over an empty basket.
+  // The dialog closing after the add click is the only observable sign the item
+  // actually landed — a swallowed click (React re-render, server-side validation
+  // keeping the dialog open) must not count the unit.
+  test('does not count a unit whose add click leaves the dialog open', async () => {
+    document.body.innerHTML = `
+      <button class="item" data-item-id="dr-1">Whopper <span>£5.89</span></button>
+      <div id="dialog-root"></div>`;
+    document.querySelector('.item').addEventListener('click', () => {
+      // The add button has no handler: clicking it neither adds nor closes.
+      document.getElementById('dialog-root').innerHTML = `
+        <div role="dialog"><h2>Whopper</h2><button class="add">Add to basket</button></div>`;
+    });
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ name: 'Whopper', added: 0, ok: false });
+  });
+
   test('does not report success when clicking the item opens no dialog', async () => {
     document.body.innerHTML = `
       <button class="item" data-item-id="dead-1">Ghost Meal <span>£1.00</span></button>`;
@@ -191,6 +208,17 @@ describe('findItemCard accessible-name matching', () => {
   // In the first frames after a Just Eat search only the role=button decoy exists —
   // no [data-qa="item"] overlay yet. With platform="just-eat" we must still wait for
   // the overlay rather than clicking the decoy (which does nothing on the live site).
+  // The [data-qa="item"] decoy-wait is a Just Eat behaviour: a stray element with
+  // that attribute on another platform must not suppress the generic button/link
+  // tier that would find the item.
+  test('still uses the generic tier on Deliveroo when an unrelated data-qa item exists', () => {
+    document.body.innerHTML = `
+      <div data-qa="item" aria-label="Unrelated promo tile"></div>
+      <button>Whopper £5.89</button>`;
+    const el = findItemCard(document, { name: 'Whopper' }, 'deliveroo');
+    expect(el).toBe(document.querySelector('button'));
+  });
+
   test('waits for the overlay on Just Eat even when only the decoy exists', () => {
     document.body.innerHTML = `
       <li role="button" class="item-search-list-style_item" aria-labelledby="d1">

@@ -96,11 +96,11 @@ describe('extractOrder - Uber Eats free & grouped options', () => {
       <div data-testid="cart-items-list">
         <li><div data-testid="cart-item-1">
           <img alt="Spicy Chicken Sandwich Box Meal" />
-          <span>Spicy Chicken Sandwich:</span><span>Spicy Chicken Sandwich</span>
-          <span>Choose Your Chicken:</span><span>3 Hot Wings</span>
-          <span>Choose Your Fries:</span><span>Regular Fries</span>
-          <span>Add a Side?:</span><span>No Thanks</span>
-          <span>Add a Shake?:</span><span>No Thanks</span>
+          <span data-testid="rich-text">Spicy Chicken Sandwich:</span><span data-testid="rich-text">Spicy Chicken Sandwich</span>
+          <span data-testid="rich-text">Choose Your Chicken:</span><span data-testid="rich-text">3 Hot Wings</span>
+          <span data-testid="rich-text">Choose Your Fries:</span><span data-testid="rich-text">Regular Fries</span>
+          <span data-testid="rich-text">Add a Side?:</span><span data-testid="rich-text">No Thanks</span>
+          <span data-testid="rich-text">Add a Shake?:</span><span data-testid="rich-text">No Thanks</span>
           <span>£13.29</span>
         </div></li>
       </div></body></html>`;
@@ -119,6 +119,63 @@ describe('extractOrder - Uber Eats free & grouped options', () => {
     ]);
   });
 
+  test('ignores non-selection spans (promo badges, notes, packed strikethrough prices)', async () => {
+    // Live selections always render as rich-text spans; other cart-row text
+    // (promo badges, "Add note", price displays) must not become phantom free
+    // options that block prefill or fuzzy-match paid modifiers on other branches.
+    const html = `<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£25.71</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Classic B.M.T.®" />
+          <span data-testid="rich-text">Extras: </span><span data-testid="rich-text">Philly-Style Steak (£3.99)</span>
+          <span>Buy 1, Get 1 Free</span>
+          <span>Add note</span>
+          <span data-testid="rich-text">£25.71 £34.96</span>
+          <span>£25.71</span>
+        </div></li>
+      </div></body></html>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, new JSDOM(html).window.document);
+    expect(order.items[0].options).toEqual([
+      { group: 'Extras', name: 'Philly-Style Steak', price: 3.99 },
+    ]);
+  });
+
+  test('splits a single-span label whose group name contains parentheses', async () => {
+    const html = `<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£5.49</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Meal Deal" />
+          <span data-testid="rich-text">Choose Drink (Large): Coke (Zero) (£0.50)</span>
+          <span>£5.49</span>
+        </div></li>
+      </div></body></html>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, new JSDOM(html).window.document);
+    expect(order.items[0].options).toEqual([
+      { group: 'Choose Drink (Large)', name: 'Coke (Zero)', price: 0.5 },
+    ]);
+  });
+
+  test('captures a single-span free option with its group (no price suffix)', async () => {
+    const html = `<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£5.49</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Kebab" />
+          <span data-testid="rich-text">Add: Extra Sauce</span>
+          <span>£5.49</span>
+        </div></li>
+      </div></body></html>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, new JSDOM(html).window.document);
+    expect(order.items[0].options).toEqual([
+      { group: 'Add', name: 'Extra Sauce', price: 0 },
+    ]);
+  });
+
   test('still captures a paid option with its price and group', async () => {
     const html = `<!DOCTYPE html><html><body>
       <div data-testid="cart-summary-panel"></div>
@@ -126,8 +183,8 @@ describe('extractOrder - Uber Eats free & grouped options', () => {
       <div data-testid="cart-items-list">
         <li><div data-testid="cart-item-1">
           <img alt="6 Boneless & a dip" />
-          <span>6 Boneless:</span><span>6 Boneless</span>
-          <span>Choose Dips:</span><span>The Big Ranch (£1.00)</span>
+          <span data-testid="rich-text">6 Boneless:</span><span data-testid="rich-text">6 Boneless</span>
+          <span data-testid="rich-text">Choose Dips:</span><span data-testid="rich-text">The Big Ranch (£1.00)</span>
           <span>£8.49</span>
         </div></li>
       </div></body></html>`;

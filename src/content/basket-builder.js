@@ -358,6 +358,10 @@ async function buildBasket(build, opts = {}) {
     } else {
       let r;
       try { r = await addLine(line, { doc, wait, platform }); } catch (_) { r = { name: line.name, requested: line.quantity || 1, added: 0, ok: false }; }
+      // A line the matcher couldn't fully resolve (prefillable: false) is still
+      // attempted, but a successful add may be missing one of the user's source
+      // selections — surface it for review rather than presenting a clean fill.
+      if (r.ok && line.prefillable === false) r.review = true;
       results.push(r);
     }
     if (overlay) overlay.update(results);
@@ -408,19 +412,25 @@ function createOverlay(doc, total) {
     },
     finish(results) {
       const failed = results.filter((r) => !r.ok);
+      const review = results.filter((r) => r.ok && r.review);
       title.textContent = failed.length ? 'FeedMe — almost there' : '✅ FeedMe — basket filled';
-      if (failed.length) {
-        list.textContent = '';
+      list.textContent = '';
+      const section = (label, rows, color) => {
+        const wrap = doc.createElement('div');
+        wrap.style.cssText = `color:${color};`;
         const lead = doc.createElement('div');
-        lead.textContent = 'Add these manually:';
-        list.appendChild(lead);
-        failed.forEach((r) => {
+        lead.textContent = label;
+        wrap.appendChild(lead);
+        rows.forEach((r) => {
           const li = doc.createElement('div');
           li.textContent = `• ${r.name || 'item'}`;
-          list.appendChild(li);
+          wrap.appendChild(li);
         });
-      }
-      setTimeout(() => host.remove(), failed.length ? 12000 : 4000);
+        list.appendChild(wrap);
+      };
+      if (failed.length) section('Add these manually:', failed, '#ef4444');
+      if (review.length) section('Check the options on:', review, '#d97706');
+      setTimeout(() => host.remove(), failed.length || review.length ? 12000 : 4000);
     },
   };
 }

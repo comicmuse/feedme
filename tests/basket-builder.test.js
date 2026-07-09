@@ -114,6 +114,66 @@ describe('buildBasket engine', () => {
     const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
     expect(results[0]).toMatchObject({ name: 'Ghost Meal', added: 0, ok: false });
   });
+
+  // A line the matcher couldn't fully resolve (prefillable: false) is still worth
+  // attempting — the builder selects what it can and the add often works. But the
+  // basket may then be missing a selection the user made on the source platform,
+  // so a successful add on such a line must be flagged for review, never presented
+  // as a clean fill.
+  test('flags a filled line as review when its plan line was not fully resolved', async () => {
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: false }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ name: 'Whopper', added: 1, ok: true, review: true });
+  });
+
+  test('does not flag a fully resolved line as review', async () => {
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0].review).toBeFalsy();
+  });
+});
+
+describe('overlay honesty', () => {
+  beforeEach(() => mountMenu());
+
+  const overlayText = () =>
+    document.getElementById('feedme-builder').shadowRoot.textContent;
+
+  test('lists a review line separately from manual lines and qualifies the title', async () => {
+    const plan = [
+      { id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true },
+      { id: 'dr-9', name: 'Honey BBQ Sandwich', quantity: 1, modifiers: [], prefillable: false },
+      { id: 'x', name: 'Vegan Flatbread', quantity: 1, modifiers: [], prefillable: true },
+    ];
+    await buildBasket({ basketPlan: plan }, { wait: fastWait });
+    const text = overlayText();
+    expect(text).toContain('Added 2 of 3');
+    expect(text).toContain('Add these manually:');
+    expect(text).toContain('Vegan Flatbread');
+    expect(text).toContain('Check the options on:');
+    expect(text).toContain('Honey BBQ Sandwich');
+    document.getElementById('feedme-builder').remove();
+  });
+
+  test('a clean full fill keeps the unqualified success title', async () => {
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    await buildBasket({ basketPlan: plan }, { wait: fastWait });
+    const text = overlayText();
+    expect(text).toContain('basket filled');
+    expect(text).not.toContain('Check the options on:');
+    expect(text).not.toContain('Add these manually:');
+    document.getElementById('feedme-builder').remove();
+  });
+
+  test('review-only results report filled but ask for an options check', async () => {
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: false }];
+    await buildBasket({ basketPlan: plan }, { wait: fastWait });
+    const text = overlayText();
+    expect(text).toContain('basket filled');
+    expect(text).toContain('Check the options on:');
+    expect(text).toContain('Whopper');
+    document.getElementById('feedme-builder').remove();
+  });
 });
 
 // Live DOM shapes verified on the real platforms (2026-07-06): the clickable item

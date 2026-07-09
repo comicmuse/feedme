@@ -195,11 +195,14 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
 
   const tab = await browser.tabs.create({ url: branch.switchUrl, active: true }).catch(() => null);
   if (!tab) return;
-  // Stash the (prefillable) plan for the builder to claim once the tab has loaded.
-  const fullPlan = branch.result?.basketPlan ?? [];
-  const basketPlan = fullPlan.filter((l) => l.prefillable);
+  // Stash the whole plan for the builder to claim once the tab has loaded. Lines
+  // the matcher couldn't fully resolve (prefillable: false) are attempted too —
+  // the builder fills what it can and flags them for review; dropping them here
+  // made the overlay claim a complete fill over a short basket.
+  const basketPlan = branch.result?.basketPlan ?? [];
   console.info('[FeedMe switch] to', branch.platform, branch.switchUrl,
-    '— plan', basketPlan.length, 'prefillable of', fullPlan.length, 'lines:', JSON.stringify(fullPlan));
+    '— plan', basketPlan.filter((l) => l.prefillable).length, 'prefillable of',
+    basketPlan.length, 'lines:', JSON.stringify(basketPlan));
   if (basketPlan.length) pendingBuilds.set(tab.id, { platform: branch.platform, basketPlan });
 });
 

@@ -126,6 +126,146 @@ describe('matchItems', () => {
     expect(result.platformItem.unitPrice).toBeCloseTo(4.59);
     expect(result.platformItem.optionsEstimated).toBeUndefined();
   });
+});
+
+describe('matchItems basketLine (for scripted basket pre-fill)', () => {
+  test('carries the platform item id and quantity, prefillable when no options', () => {
+    const ref = [{ name: 'Whopper', quantity: 2, unitPrice: 5.49 }];
+    const platform = [{ id: 'dr-1', name: 'Whopper', description: '', unitPrice: 5.89, modifiers: [] }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine).toMatchObject({ id: 'dr-1', quantity: 2, modifiers: [], prefillable: true });
+  });
+
+  test('resolves a selected option to the platform modifier id/groupId', () => {
+    const ref = [{
+      name: 'Honey BBQ Sandwich', quantity: 1, unitPrice: 12.68,
+      options: [{ name: 'Regular Fries', price: 2.69 }], optionsTotal: 2.69,
+    }];
+    const platform = [{
+      id: 'dr-9', name: 'Honey BBQ Sandwich', description: '', unitPrice: 9.99,
+      modifiers: [{ name: 'Regular Fries', price: 2.50, id: 'opt-1', groupId: 'mg-1' }],
+    }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.prefillable).toBe(true);
+    expect(result.basketLine.modifiers).toEqual([{ id: 'opt-1', groupId: 'mg-1', group: '', name: 'Regular Fries' }]);
+  });
+
+  test('resolves repeated option names to distinct groups (No Thanks x2)', () => {
+    const reference = [{
+      name: 'Box Meal', quantity: 1, unitPrice: 13.29, optionsTotal: 0,
+      options: [
+        { group: 'Add a Side?', name: 'No Thanks', price: 0 },
+        { group: 'Add a Shake?', name: 'No Thanks', price: 0 },
+      ],
+    }];
+    const platform = [{
+      id: 'je-1', name: 'Box Meal', description: '', unitPrice: 13.29,
+      modifiers: [
+        { name: 'No Thanks', price: 0, id: 'side-no', groupId: 'gs', group: 'Add a Side?' },
+        { name: 'Fries',     price: 0, id: 'side-fr', groupId: 'gs', group: 'Add a Side?' },
+        { name: 'No Thanks', price: 0, id: 'shake-no', groupId: 'gk', group: 'Add a Shake?' },
+        { name: 'Oreo Shake', price: 3, id: 'shake-or', groupId: 'gk', group: 'Add a Shake?' },
+      ],
+    }];
+    const [result] = matchItems(reference, platform);
+    expect(result.basketLine.prefillable).toBe(true);
+    expect(result.basketLine.modifiers).toEqual([
+      { id: 'side-no', groupId: 'gs', group: 'Add a Side?', name: 'No Thanks' },
+      { id: 'shake-no', groupId: 'gk', group: 'Add a Shake?', name: 'No Thanks' },
+    ]);
+    // Free options add nothing to the priced total.
+    expect(result.platformItem.unitPrice).toBeCloseTo(13.29);
+  });
+
+  test('a paid option resolves to the paid platform modifier, not a free negation of the same words', () => {
+    // Fuse ranks 'No Cheese' above 'Extra Cheese' for the query 'Cheese', so without
+    // a price-band preference the paid selection is priced at £0 and the builder
+    // would tick 'No Cheese' on the real basket.
+    const ref = [{
+      name: 'Whopper', quantity: 1, unitPrice: 6.99,
+      options: [{ name: 'Cheese', price: 1.00 }], optionsTotal: 1.00,
+    }];
+    const platform = [{
+      id: 'je-2', name: 'Whopper', description: '', unitPrice: 5.99,
+      modifiers: [
+        { name: 'No Cheese', price: 0, id: 'no-cheese' },
+        { name: 'Extra Cheese', price: 1.00, id: 'extra-cheese' },
+      ],
+    }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.modifiers).toEqual([expect.objectContaining({ id: 'extra-cheese' })]);
+    expect(result.platformItem.unitPrice).toBeCloseTo(6.99); // 5.99 + the platform's own £1.00
+  });
+
+  test('an option missing from its matched group falls back to the full modifier pool', () => {
+    // Platforms group the same option differently — scoping must not turn a
+    // present-but-elsewhere modifier into an unresolved (non-prefillable) line.
+    const ref = [{
+      name: 'Box Meal', quantity: 1, unitPrice: 13.29, optionsTotal: 3,
+      options: [{ group: 'Add a Side?', name: 'Oreo Shake', price: 3 }],
+    }];
+    const platform = [{
+      id: 'je-1', name: 'Box Meal', description: '', unitPrice: 13.29,
+      modifiers: [
+        { name: 'No Thanks', price: 0, id: 'side-no', groupId: 'gs', group: 'Add a Side?' },
+        { name: 'Fries', price: 1, id: 'side-fr', groupId: 'gs', group: 'Add a Side?' },
+        { name: 'Oreo Shake', price: 2.79, id: 'shake-or', groupId: 'gk', group: 'Add a Shake?' },
+      ],
+    }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.prefillable).toBe(true);
+    expect(result.basketLine.modifiers).toEqual([expect.objectContaining({ id: 'shake-or' })]);
+    expect(result.platformItem.unitPrice).toBeCloseTo(16.08); // 13.29 + the platform's own 2.79
+  });
+
+  test('duplicate selections do not resolve to the same platform modifier twice', () => {
+    // The builder can only tick a modifier once, so a second identical selection
+    // must count as unresolved (honest manual-add) rather than silently pricing
+    // and "filling" a modifier that ends up in the basket only once.
+    const ref = [{
+      name: 'Wrap Deal', quantity: 1, unitPrice: 10.99, optionsTotal: 1.98,
+      options: [
+        { name: 'The Big Ranch', price: 0.99 },
+        { name: 'The Big Ranch', price: 0.99 },
+      ],
+    }];
+    const platform = [{
+      id: 'je-3', name: 'Wrap Deal', description: '', unitPrice: 9.5,
+      modifiers: [{ name: 'The Big Ranch', price: 0.89, id: 'dip-ranch' }],
+    }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.modifiers).toEqual([expect.objectContaining({ id: 'dip-ranch' })]);
+    expect(result.basketLine.prefillable).toBe(false);
+    // First dup at the platform's own £0.89; the unresolved second falls back to
+    // the source £0.99 and flags the total estimated.
+    expect(result.platformItem.unitPrice).toBeCloseTo(11.38); // 9.5 + 0.89 + 0.99
+    expect(result.platformItem.optionsEstimated).toBe(true);
+  });
+
+  test('is not prefillable when a selected option has no matching platform modifier', () => {
+    const ref = [{
+      name: 'Honey BBQ Sandwich', quantity: 1, unitPrice: 12.68,
+      options: [{ name: 'Regular Fries', price: 2.69 }], optionsTotal: 2.69,
+    }];
+    const platform = [{ id: 'dr-9', name: 'Honey BBQ Sandwich', description: '', unitPrice: 9.99, modifiers: [] }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.prefillable).toBe(false);
+  });
+
+  test('is not prefillable when the matched item carries no id (e.g. Uber JSON-LD)', () => {
+    const ref = [{ name: 'Whopper', quantity: 1, unitPrice: 5.49 }];
+    const platform = [{ name: 'Whopper', description: '', unitPrice: 5.89 }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.prefillable).toBe(false);
+    expect(result.basketLine.id).toBeUndefined();
+  });
+
+  test('unmatched lines carry no basketLine', () => {
+    const ref = [{ name: 'Vegan Artisan Flatbread', quantity: 1, unitPrice: 9 }];
+    const platform = [{ id: 'x', name: 'Whopper', unitPrice: 5.89 }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine).toBeNull();
+  });
 
   test('returns one result per reference item', () => {
     const ref = [

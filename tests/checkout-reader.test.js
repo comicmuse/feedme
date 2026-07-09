@@ -38,6 +38,14 @@ describe('extractOrder - Uber Eats', () => {
   test('captures paid options total from parenthesised modifier prices', () => {
     expect(order.items[0].optionsTotal).toBeCloseTo(1.00);
   });
+  test('splits a single-span "Group: Value (£price)" modifier into group and name', () => {
+    // The live fixture packs the group label and value into one span
+    // ("Add: Cheese (£1.00)"), unlike the two-span group/value layout used
+    // elsewhere — both must resolve to the same { group, name, price } shape.
+    expect(order.items[0].options).toEqual([
+      { group: 'Add', name: 'Cheese', price: 1.00 },
+    ]);
+  });
   test('second item name, price, and zero options', () => {
     expect(order.items[1].name).toBe('Large Fries');
     expect(order.items[1].unitPrice).toBeCloseTo(2.50);
@@ -77,6 +85,115 @@ describe('extractOrder - Uber Eats quantities (real DOM)', () => {
     // Line total £34.96 (pre-deal, the strikethrough) / 2 = £17.48 per sandwich.
     expect(order.items[0].unitPrice).toBeCloseTo(17.48);
     expect(order.items[1].unitPrice).toBeCloseTo(2.59);
+  });
+});
+
+describe('extractOrder - Uber Eats free & grouped options', () => {
+  function boxMealDoc() {
+    const html = `<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£13.29</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Spicy Chicken Sandwich Box Meal" />
+          <span data-testid="rich-text">Spicy Chicken Sandwich:</span><span data-testid="rich-text">Spicy Chicken Sandwich</span>
+          <span data-testid="rich-text">Choose Your Chicken:</span><span data-testid="rich-text">3 Hot Wings</span>
+          <span data-testid="rich-text">Choose Your Fries:</span><span data-testid="rich-text">Regular Fries</span>
+          <span data-testid="rich-text">Add a Side?:</span><span data-testid="rich-text">No Thanks</span>
+          <span data-testid="rich-text">Add a Shake?:</span><span data-testid="rich-text">No Thanks</span>
+          <span>£13.29</span>
+        </div></li>
+      </div></body></html>`;
+    return new JSDOM(html).window.document;
+  }
+
+  test('captures free options with their group, keeps optionsTotal at 0', async () => {
+    const order = await extractOrder(PLATFORM.UBER_EATS, boxMealDoc());
+    expect(order.items[0].optionsTotal).toBe(0);
+    expect(order.items[0].options).toEqual([
+      { group: 'Spicy Chicken Sandwich', name: 'Spicy Chicken Sandwich', price: 0 },
+      { group: 'Choose Your Chicken', name: '3 Hot Wings', price: 0 },
+      { group: 'Choose Your Fries', name: 'Regular Fries', price: 0 },
+      { group: 'Add a Side?', name: 'No Thanks', price: 0 },
+      { group: 'Add a Shake?', name: 'No Thanks', price: 0 },
+    ]);
+  });
+
+  test('ignores non-selection spans (promo badges, notes, packed strikethrough prices)', async () => {
+    // Live selections always render as rich-text spans; other cart-row text
+    // (promo badges, "Add note", price displays) must not become phantom free
+    // options that block prefill or fuzzy-match paid modifiers on other branches.
+    const html = `<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£25.71</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Classic B.M.T.®" />
+          <span data-testid="rich-text">Extras: </span><span data-testid="rich-text">Philly-Style Steak (£3.99)</span>
+          <span>Buy 1, Get 1 Free</span>
+          <span>Add note</span>
+          <span data-testid="rich-text">£25.71 £34.96</span>
+          <span>£25.71</span>
+        </div></li>
+      </div></body></html>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, new JSDOM(html).window.document);
+    expect(order.items[0].options).toEqual([
+      { group: 'Extras', name: 'Philly-Style Steak', price: 3.99 },
+    ]);
+  });
+
+  test('splits a single-span label whose group name contains parentheses', async () => {
+    const html = `<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£5.49</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Meal Deal" />
+          <span data-testid="rich-text">Choose Drink (Large): Coke (Zero) (£0.50)</span>
+          <span>£5.49</span>
+        </div></li>
+      </div></body></html>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, new JSDOM(html).window.document);
+    expect(order.items[0].options).toEqual([
+      { group: 'Choose Drink (Large)', name: 'Coke (Zero)', price: 0.5 },
+    ]);
+  });
+
+  test('captures a single-span free option with its group (no price suffix)', async () => {
+    const html = `<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£5.49</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Kebab" />
+          <span data-testid="rich-text">Add: Extra Sauce</span>
+          <span>£5.49</span>
+        </div></li>
+      </div></body></html>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, new JSDOM(html).window.document);
+    expect(order.items[0].options).toEqual([
+      { group: 'Add', name: 'Extra Sauce', price: 0 },
+    ]);
+  });
+
+  test('still captures a paid option with its price and group', async () => {
+    const html = `<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£8.49</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="6 Boneless & a dip" />
+          <span data-testid="rich-text">6 Boneless:</span><span data-testid="rich-text">6 Boneless</span>
+          <span data-testid="rich-text">Choose Dips:</span><span data-testid="rich-text">The Big Ranch (£1.00)</span>
+          <span>£8.49</span>
+        </div></li>
+      </div></body></html>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, new JSDOM(html).window.document);
+    expect(order.items[0].optionsTotal).toBeCloseTo(1.0);
+    expect(order.items[0].options).toEqual([
+      { group: '6 Boneless', name: '6 Boneless', price: 0 },
+      { group: 'Choose Dips', name: 'The Big Ranch', price: 1.0 },
+    ]);
   });
 });
 

@@ -71,15 +71,34 @@ async function extractUberEats(doc) {
             (n) => !el.contains(n) && /^\d+$/.test(n.textContent.trim())
           );
           const quantity = qtyEl ? parseInt(qtyEl.textContent.trim(), 10) : 1;
-          // Paid options/modifiers render as "{name} (£{price})" (a group label
-          // like "Add:" may prefix it). Capturing name + price lets comparison
-          // platforms be priced using their OWN cost for the same option, falling
-          // back to this price only when a platform doesn't list it.
-          const options = [...el.querySelectorAll('span')]
-            .map((s) => s.textContent.trim().match(/^(?:[^():]*:\s*)?(.+?)\s*\(£(\d+(?:\.\d+)?)\)$/))
-            .filter(Boolean)
-            .map((m) => ({ name: m[1].trim(), price: parseFloat(m[2]) }))
-            .filter((o) => o.name && o.price > 0);
+          // Selections render as rich-text spans: [group label ending ":"] then
+          // [option value] pairs (or, on some cart rows, group + value packed into
+          // a single span as "Group: Value (£price)"); paid values carry
+          // "(£price)", free ones don't. Only rich-text spans are selections —
+          // other cart-row text (promo badges, "Add note", price displays) must
+          // not become phantom free options. Capture every option (free included)
+          // with its group so cross-platform fill can satisfy the target's
+          // required groups.
+          const options = [];
+          let currentGroup = '';
+          for (const s of el.querySelectorAll('span[data-testid="rich-text"]')) {
+            const text = s.textContent.trim();
+            if (!text || /^£\d+(\.\d+)?$/.test(text)) continue; // skip blanks + line total
+            // Two or more £-amounts in one span is a price display (e.g. a
+            // strikethrough pair), never a selection.
+            if ((text.match(/£\d/g) || []).length >= 2) continue;
+            if (text.endsWith(':')) { currentGroup = text.slice(0, -1).trim(); continue; }
+            // Group = everything before the FIRST ": " — a character class can't
+            // be used here because group names may contain parentheses
+            // ("Choose Drink (Large): Coke (£0.50)").
+            const labelled = text.match(/^(.+?):\s*(.+)$/);
+            const group = labelled ? labelled[1].trim() : currentGroup;
+            const rest = labelled ? labelled[2] : text;
+            const priced = rest.match(/^(.*)\(£(\d+(?:\.\d+)?)\)$/);
+            const name = (priced ? priced[1] : rest).trim();
+            const price = priced ? parseFloat(priced[2]) : 0;
+            if (name) options.push({ group, name, price });
+          }
           const optionsTotal = options.reduce((sum, o) => sum + o.price, 0);
           return {
             name,

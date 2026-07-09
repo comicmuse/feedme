@@ -1,4 +1,4 @@
-const { classifyResponse, parseMenuResponse, parseUberStore } = require('../src/shared/parsers');
+const { classifyResponse, parseMenuResponse, parseUberStore, justEatItemModifiers } = require('../src/shared/parsers');
 const { matchItems, computeTotal } = require('../src/shared/matcher');
 const { PLATFORM } = require('../src/shared/constants');
 
@@ -25,6 +25,41 @@ describe('parseUberStore (Uber store-page JSON-LD)', () => {
 
   test('without a catalog blob there are no offers (back-compat)', () => {
     expect(parseUberStore(uberStoreLd).offers).toEqual([]);
+  });
+
+  test('attaches catalog item ids to JSON-LD items by name when a blob is present', () => {
+    const m = parseUberStore(uberStoreLd, uberStoreCatalog);
+    const bites = m.items.find((i) => i.name === 'Chipotle Cheesy Bites - 5 pieces');
+    expect(bites.id).toBe('i1');
+  });
+  test('items absent from the catalog blob carry no id (open-only fallback)', () => {
+    const m = parseUberStore(uberStoreLd, uberStoreCatalog);
+    const notInBlob = m.items.find((i) => i.name === 'Hash Browns - 9 pieces');
+    expect(notInBlob.id).toBeUndefined();
+  });
+  test('without a catalog blob items carry no ids (back-compat)', () => {
+    const m = parseUberStore(uberStoreLd);
+    expect(m.items.every((i) => i.id === undefined)).toBe(true);
+  });
+
+  test('a name carried by two different uuids gets no id; a repeated identical uuid keeps its id', () => {
+    // The blob walk indexes ANY uuid-bearing node (sections, offers, modifier
+    // options) — first-wins on a collision would tag the item with whichever
+    // node the walk reached first, and the builder's id fast-path would click
+    // the wrong element. Ambiguous names must stay open-only.
+    const ld = { name: 'S', hasMenu: { hasMenuSection: [{ hasMenuItem: [
+      { name: 'Regular Fries', offers: { price: '2.49' } },
+      { name: 'Whopper', offers: { price: '5.89' } },
+    ] }] } };
+    const catalog = { sections: [
+      { title: 'Regular Fries', uuid: 'item-1' },
+      { nested: { title: 'Regular Fries', uuid: 'option-9' } }, // modifier option sharing the name
+      { title: 'Whopper', uuid: 'item-2' },
+      { again: { title: 'Whopper', uuid: 'item-2' } }, // same uuid twice is not a collision
+    ] };
+    const m = parseUberStore(ld, catalog);
+    expect(m.items.find((i) => i.name === 'Regular Fries').id).toBeUndefined();
+    expect(m.items.find((i) => i.name === 'Whopper').id).toBe('item-2');
   });
 });
 
@@ -111,6 +146,9 @@ describe('parseMenuResponse - Uber Eats', () => {
     expect(result.items[0].unitPrice).toBeCloseTo(5.49);
   });
   test('extracts delivery fee in pounds', () => { expect(result.deliveryFee).toBe(0); });
+  test('retains the native item uuid as id for basket pre-fill', () => {
+    expect(result.items[0].id).toBe('ue-1');
+  });
 });
 
 describe('parseMenuResponse - Deliveroo', () => {
@@ -124,8 +162,18 @@ describe('parseMenuResponse - Deliveroo', () => {
     expect(result.items[0].name).toBe('Whopper');
     expect(result.items[0].unitPrice).toBeCloseTo(5.89);
   });
-  test('resolves the item\'s paid modifier options', () => {
-    expect(result.items[0].modifiers).toEqual([{ name: 'Regular Fries', price: 2.50 }]);
+  test('resolves the item\'s modifier options, keeping free choices and the group name', () => {
+    // Same contract as Just Eat: £0 options stay (required groups are often
+    // satisfied by "No thanks") and each option carries its group's display name
+    // for group-aware matching.
+    expect(result.items[0].modifiers).toMatchObject([
+      { name: 'Regular Fries', price: 2.50, group: 'Add a side?' },
+      { name: 'No thanks', price: 0, group: 'Add a side?' },
+    ]);
+  });
+  test('retains native item + modifier ids for basket pre-fill', () => {
+    expect(result.items[0].id).toBe('dr-1');
+    expect(result.items[0].modifiers[0]).toMatchObject({ id: 'opt-1', groupId: 'mg-1' });
   });
   test('extracts standard delivery fee from the header', () => {
     expect(result.deliveryFee).toBeCloseTo(1.29);
@@ -235,7 +283,11 @@ describe('parseMenuResponse - Just Eat deferred (large menu) catalogue', () => {
     expect(result.items[0].unitPrice).toBeCloseTo(14.99);
   });
   test('resolves modifiers from the deferred item details', () => {
-    expect(result.items[0].modifiers).toEqual([{ name: 'Extra Cheese', price: 1.50 }]);
+    expect(result.items[0].modifiers).toMatchObject([{ name: 'Extra Cheese', price: 1.50 }]);
+  });
+  test('retains native item + modifier ids from the deferred catalogue', () => {
+    expect(result.items[0].id).toBe('p1');
+    expect(result.items[0].modifiers[0]).toMatchObject({ id: 'm1', setId: 's1', groupId: 'mg1' });
   });
 });
 
@@ -247,8 +299,15 @@ describe('parseMenuResponse - Just Eat', () => {
   test('extracts postcode', () => { expect(result.postcode).toBe('SW1E 5JE'); });
   test('extracts items from the cdn map', () => { expect(result.items).toHaveLength(4); });
   test('first item unitPrice in pounds', () => { expect(result.items[0].unitPrice).toBeCloseTo(5.69); });
-  test('resolves the item\'s paid modifier options via modifierSets', () => {
-    expect(result.items[0].modifiers).toEqual([{ name: 'Regular Fries', price: 2.50 }]);
+  test('resolves the item\'s modifier options via modifierSets, including free ones', () => {
+    expect(result.items[0].modifiers).toMatchObject([
+      { name: 'Regular Fries', price: 2.50, group: 'Add Fries?' },
+      { name: 'No Thanks', price: 0, group: 'Add Fries?' },
+    ]);
+  });
+  test('retains native item + modifier ids for basket pre-fill', () => {
+    expect(result.items[0].id).toBe('je-1');
+    expect(result.items[0].modifiers[0]).toMatchObject({ id: 'm4', setId: 's4', groupId: 'mg-1' });
   });
   test('uses the cheapest variation for multi-variation items', () => {
     const fries = result.items.find((i) => i.name === 'Large Fries');
@@ -308,5 +367,22 @@ describe('Just Eat item-level deal applied end-to-end', () => {
     const result = computeTotal(matches, 0, 0, parsed.offers);
     expect(result.discountTotal).toBe(0);
     expect(result.appliedDeals).toEqual([]);
+  });
+});
+
+describe('justEatItemModifiers', () => {
+  test('includes free options and their group name', () => {
+    const item = { variations: [{ modifierGroupsIds: ['g1'] }] };
+    const groupsById = { g1: { id: 'g1', name: 'Add a Side?' } };
+    const modifierBySetId = {
+      s1: { id: 'm1', name: 'No Thanks', additionPrice: 0 },
+      s2: { id: 'm2', name: 'Fries', additionPrice: 1.5 },
+    };
+    groupsById.g1.modifiers = ['s1', 's2'];
+    const mods = justEatItemModifiers(item, groupsById, modifierBySetId);
+    expect(mods).toEqual([
+      { name: 'No Thanks', price: 0, id: 'm1', setId: 's1', groupId: 'g1', group: 'Add a Side?' },
+      { name: 'Fries', price: 1.5, id: 'm2', setId: 's2', groupId: 'g1', group: 'Add a Side?' },
+    ]);
   });
 });

@@ -31,39 +31,112 @@ function pickBestPricedMatch(results, referenceName) {
 
 /**
  * Cost of the reference item's selected options on a platform. Each option is
- * fuzzy-matched against that platform's own modifiers and priced at its rate; an
- * option the platform doesn't list falls back to the source price and is flagged.
- * @param {{options?: Array<{name: string, price: number}>, optionsTotal?: number}} ref
- * @param {Array<{name: string, price: number}>} [platformModifiers]
- * @returns {{cost: number, estimated: boolean}}
+ * fuzzy-matched against that platform's own modifiers and priced at its rate:
+ * within its own group first, when both sides carry a group name, to disambiguate
+ * names repeated across groups (e.g. "No Thanks" in both "Add a Side?" and "Add a
+ * Shake?"), retrying the whole pool on an in-group miss since platforms group the
+ * same option differently. Hits prefer the option's price band (paid↔paid,
+ * free↔free) so a paid selection isn't priced by a free negation, and each
+ * platform modifier resolves at most one selection. An option the platform
+ * doesn't list falls back to the source price and is flagged (unless the fallback
+ * price is £0, since a free-option miss shouldn't make the total look estimated).
+ * @param {{options?: Array<{group?: string, name: string, price: number}>, optionsTotal?: number}} ref
+ * @param {Array<{name: string, price: number, id?: string, groupId?: string, group?: string}>} [platformModifiers]
+ * @returns {{cost: number, estimated: boolean, matched: Array, unresolved: number}}
+ *   `matched` holds the platform modifier objects (with ids) for the selected options
+ *   that resolved; `unresolved` counts selected options with no platform modifier.
  */
 function priceOptions(ref, platformModifiers) {
   const options = ref.options ?? [];
   // No per-option names captured (e.g. a non-Uber source) — fall back to the sum.
+  // Such options can't be targeted for pre-fill, so count them as unresolved.
   if (!options.length) {
-    return { cost: ref.optionsTotal || 0, estimated: (ref.optionsTotal || 0) > 0 };
+    const total = ref.optionsTotal || 0;
+    return { cost: total, estimated: total > 0, matched: [], unresolved: total > 0 ? 1 : 0 };
   }
-  const fuse = platformModifiers && platformModifiers.length
-    ? new Fuse(platformModifiers, { keys: ['name'], threshold: 0.4 })
+  const mods = platformModifiers ?? [];
+  // Index target modifiers by group name so a source option is matched within its
+  // own group first — this disambiguates option names repeated across groups.
+  const byGroup = new Map();
+  for (const m of mods) {
+    const g = m.group ?? '';
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push(m);
+  }
+  const groupNames = [...byGroup.keys()].filter((g) => g);
+  const groupFuse = groupNames.length
+    ? new Fuse(groupNames.map((name) => ({ name })), { keys: ['name'], threshold: FUSE_THRESHOLD })
     : null;
+  const fuseByPool = new Map(); // candidate pool -> Fuse index, reused across options
+
   let cost = 0;
   let estimated = false;
+  let unresolved = 0;
+  const matched = [];
+  // Each platform modifier resolves at most one selection: the builder can only
+  // tick it once, so letting duplicates share a hit would double-count its price
+  // while the basket silently ends up with a single selection.
+  const used = new Set();
   for (const opt of options) {
-    const hit = fuse ? fuse.search(opt.name)[0]?.item : null;
+    // Candidate pool: the option's own group when we can match it, else all mods.
+    let pool = mods;
+    if (opt.group && groupFuse) {
+      const gName = groupFuse.search(opt.group)[0]?.item.name;
+      if (gName != null) pool = byGroup.get(gName);
+    }
+    // Prefer a hit in the option's own price band (paid↔paid, free↔free): fuzzy
+    // scores rank a free negation ("No Cheese") above the paid variant ("Extra
+    // Cheese") for a query like "Cheese", which would price a paid selection at £0
+    // and put the negation's id in the basket plan.
+    const bestHit = (candidates) => {
+      if (!candidates.length) return null;
+      let fuse = fuseByPool.get(candidates);
+      if (!fuse) {
+        fuse = new Fuse(candidates, { keys: ['name'], threshold: FUSE_THRESHOLD });
+        fuseByPool.set(candidates, fuse);
+      }
+      const results = fuse.search(opt.name).filter((r) => !used.has(r.item));
+      const wantPaid = opt.price > 0;
+      return (results.find((r) => (r.item.price > 0) === wantPaid) ?? results[0])?.item ?? null;
+    };
+    let hit = bestHit(pool);
+    // Platforms group the same option differently, so an in-group miss retries the
+    // whole pool before the option is declared unresolved.
+    if (!hit && pool !== mods) hit = bestHit(mods);
     if (hit) {
+      used.add(hit);
       cost += hit.price;
+      matched.push(hit);
     } else {
       cost += opt.price;
-      estimated = true;
+      if (opt.price > 0) estimated = true; // a £0 miss doesn't flag the total as estimated
+      unresolved += 1;
     }
   }
-  return { cost, estimated };
+  return { cost, estimated, matched, unresolved };
+}
+
+// Instructions a basket-builder needs to add one matched line on the target
+// platform: the item id, the quantity ordered, and the resolved modifier options
+// (with their ids). `prefillable` is false when the item has no id, or any selected
+// option couldn't be resolved to a platform modifier — those lines fall back to
+// being added manually by the user.
+function buildBasketLine(ref, item, matchedModifiers, unresolved) {
+  const modifiers = matchedModifiers.map((m) => ({ id: m.id, groupId: m.groupId, group: m.group ?? '', name: m.name }));
+  return {
+    id: item.id,
+    variationId: item.variationId,
+    name: item.name,
+    quantity: ref.quantity ?? 1,
+    modifiers,
+    prefillable: item.id != null && unresolved === 0,
+  };
 }
 
 /**
  * @param {Array<{name: string, quantity: number, unitPrice: number}>} referenceItems
  * @param {Array<{name: string, description?: string, unitPrice: number}>} platformItems
- * @returns {Array<{referenceItem, platformItem, matched: boolean}>}
+ * @returns {Array<{referenceItem, platformItem, matched: boolean, basketLine}>}
  */
 function matchItems(referenceItems, platformItems) {
   const fuse = new Fuse(platformItems, {
@@ -84,16 +157,16 @@ function matchItems(referenceItems, platformItems) {
     // lowering the total with a £0 (or wildly inflating it with a meal deal).
     const item = pickBestPricedMatch(results, ref.name);
     if (!item) {
-      return { referenceItem: ref, platformItem: null, matched: false };
+      return { referenceItem: ref, platformItem: null, matched: false, basketLine: null };
     }
     // Price the user's selected options using THIS platform's own modifier prices
     // where it lists them (exact); fall back to the source price and flag as an
     // estimate only for options this platform doesn't have.
-    const { cost, estimated } = priceOptions(ref, item.modifiers);
+    const { cost, estimated, matched, unresolved } = priceOptions(ref, item.modifiers);
     const platformItem = cost
       ? { ...item, unitPrice: item.unitPrice + cost, optionsEstimated: estimated }
       : item;
-    return { referenceItem: ref, platformItem, matched: true };
+    return { referenceItem: ref, platformItem, matched: true, basketLine: buildBasketLine(ref, item, matched, unresolved) };
   });
 }
 

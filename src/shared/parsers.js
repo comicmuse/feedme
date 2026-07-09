@@ -39,6 +39,7 @@ function parseUberEats(data) {
     restaurantName: store.title,
     postcode: store.location?.address?.postalCode ?? '',
     items: data.data.catalogSectionsMap.items.map((i) => ({
+      id: i.uuid,
       name: i.title,
       description: i.itemDescription ?? '',
       unitPrice: (i.price ?? 0) / 100,
@@ -103,17 +104,53 @@ function uberStoreOffers(catalog) {
   return [...byTerms.values()];
 }
 
+// Uber's JSON-LD menu carries no item ids, but the same store page's catalog blob
+// does (each catalog node has a `uuid`). Walk the blob once and index uuid by item
+// name so the JSON-LD items can be tagged with the id a basket-builder needs. Items
+// the blob doesn't list (or any name collision) simply get no id and stay open-only.
+function uberCatalogIdByName(catalog) {
+  const byName = new Map();
+  // The walk indexes ANY uuid-bearing node (sections, offers, modifier options
+  // included), so a name seen with two DIFFERENT uuids is ambiguous — drop it
+  // rather than tag the item with whichever node the walk reached first. The
+  // same uuid re-encountered under the same name is just another reference.
+  const ambiguous = new Set();
+  const seen = new Set();
+  const walk = (node) => {
+    if (!node || typeof node !== 'object' || seen.has(node)) return;
+    seen.add(node);
+    const name = node.title || node.name;
+    if (name && node.uuid && !ambiguous.has(name)) {
+      const existing = byName.get(name);
+      if (existing == null) {
+        byName.set(name, node.uuid);
+      } else if (existing !== node.uuid) {
+        byName.delete(name);
+        ambiguous.add(name);
+      }
+    }
+    for (const k of Object.keys(node)) walk(node[k]);
+  };
+  walk(catalog);
+  return byName;
+}
+
 function parseUberStore(ld, catalog) {
+  const idByName = catalog ? uberCatalogIdByName(catalog) : null;
   const sections = asArray(ld?.hasMenu?.hasMenuSection ?? ld?.hasMenu);
   const items = [];
   for (const section of sections) {
     for (const it of asArray(section?.hasMenuItem)) {
       const offer = asArray(it?.offers)[0] ?? it?.offers;
-      items.push({
-        name: it?.name ?? '',
+      const name = it?.name ?? '';
+      const item = {
+        name,
         description: it?.description ?? '',
         unitPrice: parseFloat(offer?.price ?? 0) || 0,
-      });
+      };
+      const id = idByName?.get(name);
+      if (id) item.id = id;
+      items.push(item);
     }
   }
   return {
@@ -207,14 +244,24 @@ function deliverooOffers(root, itemNameById = {}) {
   });
 }
 
-// Paid options available for a Deliveroo item: its modifier groups' options each
-// carry their own price inline. Returned as [{name, price}] so the same option a
-// user picked elsewhere can be priced here.
+// Options available for a Deliveroo item: its modifier groups' options each
+// carry their own price inline. Returned as [{name, price, group}] so the same
+// option a user picked elsewhere can be priced here.
 function deliverooItemModifiers(item, groupsById) {
   return (item.modifierGroupIds ?? [])
-    .flatMap((gid) => groupsById[gid]?.modifierOptions ?? [])
-    .map((o) => ({ name: o.name, price: (o.price?.fractional ?? 0) / 100 }))
-    .filter((o) => o.name && o.price > 0);
+    .flatMap((gid) => (groupsById[gid]?.modifierOptions ?? []).map((o) => ({ o, gid })))
+    // id/groupId are retained alongside name/price so a basket-builder can target the
+    // exact option in the menu DOM; matching/pricing still key on name.
+    // Carry the group name (for group-aware matching) and keep FREE options too:
+    // required groups are often satisfied by £0 choices ("No thanks").
+    .map(({ o, gid }) => ({
+      name: o.name,
+      price: (o.price?.fractional ?? 0) / 100,
+      id: o.id,
+      groupId: gid,
+      group: groupsById[gid]?.name ?? '',
+    }))
+    .filter((o) => o.name);
 }
 
 function parseDeliveroo(data) {
@@ -227,6 +274,7 @@ function parseDeliveroo(data) {
   // items is a map keyed by item id, each with price.fractional (pence).
   const items = Object.values(root.items ?? {})
     .map((i) => ({
+      id: i.id,
       name: i.name,
       description: i.description ?? '',
       unitPrice: (i.price?.fractional ?? 0) / 100,
@@ -305,11 +353,21 @@ function justEatServiceFee(dynamic) {
 function justEatItemModifiers(item, groupsById, modifierBySetId) {
   const groupIds = (item.variations ?? []).flatMap((v) => v.modifierGroupsIds ?? []);
   return groupIds
-    .flatMap((gid) => groupsById[gid]?.modifiers ?? [])
-    .map((setId) => modifierBySetId[setId])
-    .filter(Boolean)
-    .map((m) => ({ name: m.name, price: m.additionPrice ?? 0 }))
-    .filter((o) => o.name && o.price > 0);
+    .flatMap((gid) => (groupsById[gid]?.modifiers ?? []).map((setId) => ({ setId, gid })))
+    .map(({ setId, gid }) => ({ m: modifierBySetId[setId], setId, gid }))
+    .filter(({ m }) => m)
+    // id/setId/groupId let a basket-builder target the exact modifier; matching keys on name.
+    // Carry the group name (for group-aware matching) and keep FREE options too:
+    // the target's required groups are often satisfied by £0 choices ("No Thanks").
+    .map(({ m, setId, gid }) => ({
+      name: m.name,
+      price: m.additionPrice ?? 0,
+      id: m.id,
+      setId,
+      groupId: gid,
+      group: groupsById[gid]?.name ?? '',
+    }))
+    .filter((o) => o.name);
 }
 
 // Recursively lower-case the first letter of every object key. Large Just Eat
@@ -359,14 +417,18 @@ function parseJustEat(data) {
     .map((i) => {
       // dealOnly variations are deal-component placeholders (often £0/£1), not
       // standalone-orderable, so exclude them and price from real variations only.
-      const prices = (i.variations ?? [])
-        .filter((v) => !v.dealOnly)
-        .map((v) => v.basePrice)
-        .filter((p) => typeof p === 'number' && p > 0);
+      const orderable = (i.variations ?? [])
+        .filter((v) => !v.dealOnly && typeof v.basePrice === 'number' && v.basePrice > 0)
+        .sort((a, b) => a.basePrice - b.basePrice);
+      const cheapest = orderable[0];
       return {
+        id: i.id,
+        // The orderable unit on Just Eat is a variation; retain its id (when the
+        // catalogue carries one) so a basket-builder can add the right size.
+        variationId: cheapest?.id,
         name: i.name,
         description: i.description ?? '',
-        unitPrice: prices.length ? Math.min(...prices) : 0,
+        unitPrice: cheapest ? cheapest.basePrice : 0,
         modifiers: justEatItemModifiers(i, groupsById, modifierBySetId),
       };
     });
@@ -455,4 +517,4 @@ function justEatItemDeal(offer, minSpend, itemNameById) {
   };
 }
 
-module.exports = { classifyResponse, parseMenuResponse, parseUberStore };
+module.exports = { classifyResponse, parseMenuResponse, parseUberStore, justEatItemModifiers };

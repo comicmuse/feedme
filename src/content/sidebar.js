@@ -81,8 +81,18 @@ styleEl.textContent = `
 .tag.cu { background:#eef2ff; color:#4f46e5; }
 .det { border-top:1px dashed #e5e7eb; padding:6px 9px; font-size:10px; color:#6b7280; display:flex; flex-direction:column; gap:2px; }
 .det .r { display:flex; justify-content:space-between; }
+.det .r .approx { text-decoration:underline dotted; text-underline-offset:2px; cursor:help; }
 .collrow { padding:6px 9px; display:flex; align-items:center; justify-content:space-between; font-size:10px; color:#6b7280; cursor:pointer; }
 .collrow:hover { background:#fafafa; }
+/* Switch CTA on a branch card: opens that branch and fills its basket. */
+.swbtn { margin:6px 9px 9px; background:#f97316; color:#fff; border:none; border-radius:7px;
+  padding:8px; font-size:11px; font-weight:700; cursor:pointer; width:calc(100% - 18px); }
+.swbtn:hover { background:#ea580c; }
+.swbtn.plain { background:#f3f4f6; color:#374151; }
+.swbtn.plain:hover { background:#e5e7eb; }
+.ft.sw.clk { cursor:pointer; }
+.ft.sw.clk:hover { background:#ffedd5; }
+.ft .arr { margin-left:4px; }
 `;
 
 const bar = document.createElement('div');
@@ -136,6 +146,22 @@ shadow.appendChild(bar);
 const expanded = new Set();
 const fmt = (n) => `£${(+n || 0).toFixed(2)}`;
 
+// Ask the worker to open this branch in a foreground tab and build its basket.
+function switchToBranch(branchKey) {
+  browser.runtime.sendMessage({ type: MSG.SWITCH_TO_BRANCH, branchKey });
+}
+
+// Label for a branch's switch button, reflecting how much of the basket can be
+// pre-filled (vs. opened for manual add). Returns null when there's no usable URL.
+function switchButtonLabel(branch) {
+  if (!branch.switchUrl) return null;
+  const plan = branch.result?.basketPlan ?? [];
+  const fillable = plan.filter((l) => l.prefillable).length;
+  if (!plan.length || fillable === 0) return { text: 'Open menu ↗', plain: true };
+  if (fillable === plan.length) return { text: 'Switch & fill basket ↗', plain: false };
+  return { text: `Switch & fill ${fillable} of ${plan.length} ↗`, plain: false };
+}
+
 const PLATFORM_LABEL = {
   [PLATFORM.UBER_EATS]: { emoji: '🟠', name: 'Uber Eats' },
   [PLATFORM.DELIVEROO]: { emoji: '🔵', name: 'Deliveroo' },
@@ -184,10 +210,27 @@ function buildBranchCard(branch, isCheapest) {
   det.className = 'det';
   const t = branch.result.total;
   appendDetRow(det, 'Subtotal', fmt(t.itemsTotal));
-  appendDetRow(det, 'Delivery', fmt(t.deliveryFee));
+  // Just Eat's delivery fee varies with demand (busy surge) and by basket band, so
+  // the value we snapshot at comparison time can differ at checkout — flag it.
+  const deliveryNote = branch.platform === PLATFORM.JUST_EAT
+    ? { marker: 'approx.', tooltip: "Just Eat's delivery fee varies with demand, so it may differ at checkout." }
+    : null;
+  appendDetRow(det, 'Delivery', fmt(t.deliveryFee), deliveryNote);
   appendDetRow(det, `Service${t.serviceFeeEstimated ? ' (est.)' : ''}`, fmt(t.serviceFee));
   if (t.discountTotal > 0) appendDetRow(det, 'Discounts', `-${fmt(t.discountTotal)}`);
   card.appendChild(det);
+
+  // Non-current branches get a CTA to open them and fill the basket.
+  if (!branch.isCurrent) {
+    const label = switchButtonLabel(branch);
+    if (label) {
+      const btn = document.createElement('button');
+      btn.className = `swbtn${label.plain ? ' plain' : ''}`;
+      btn.textContent = label.text;
+      btn.addEventListener('click', (e) => { e.stopPropagation(); switchToBranch(branch.key); });
+      card.appendChild(btn);
+    }
+  }
   return card;
 }
 
@@ -217,10 +260,19 @@ function appendTag(parent, text, cls) {
   t.textContent = text;
   parent.appendChild(t);
 }
-function appendDetRow(parent, label, value) {
+// `note`, when given, appends an "(approx.)"-style marker after the label carrying
+// a hover tooltip — used where a fee we show is not the exact amount at checkout.
+function appendDetRow(parent, label, value, note) {
   const r = document.createElement('div');
   r.className = 'r';
   const l = document.createElement('span'); l.textContent = label;
+  if (note) {
+    const marker = document.createElement('span');
+    marker.className = 'approx';
+    marker.textContent = ` (${note.marker})`;
+    marker.title = note.tooltip;
+    l.appendChild(marker);
+  }
   const v = document.createElement('span'); v.textContent = value;
   r.appendChild(l); r.appendChild(v); parent.appendChild(r);
 }
@@ -295,7 +347,8 @@ function renderFooter(snapshot) {
   const ft = document.createElement('div');
   const f = snapshot.footer;
   if (f.kind === 'switch') {
-    ft.className = 'ft sw';
+    // Clickable only when the cheapest branch has a validated URL to open.
+    ft.className = `ft sw${f.switchUrl ? ' clk' : ''}`;
     ft.textContent = 'Switch to ';
     const who = document.createElement('span'); who.className = 'save';
     who.textContent = `${PLATFORM_LABEL[f.platform].name}${f.label ? ` (${f.label})` : ''}`;
@@ -304,6 +357,11 @@ function renderFooter(snapshot) {
     const amt = document.createElement('span'); amt.className = 'save';
     amt.textContent = fmt(f.saving);
     ft.appendChild(amt);
+    if (f.switchUrl) {
+      const arr = document.createElement('span'); arr.className = 'arr'; arr.textContent = '↗';
+      ft.appendChild(arr);
+      ft.addEventListener('click', () => switchToBranch(f.key));
+    }
   } else if (f.kind === 'best') {
     ft.className = 'ft';
     ft.textContent = "✅ You're already on the cheapest branch";

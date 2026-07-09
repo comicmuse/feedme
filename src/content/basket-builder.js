@@ -88,7 +88,7 @@ const ACTIONABLE_SELECTOR = '[data-qa="item"], [role="button"], button, a';
 // for a non-actionable container with no actionable descendant (the overlay may
 // not have hydrated yet) so the caller keeps polling rather than clicking nothing.
 function resolveClickable(el, name, doc) {
-  const nameMatches = (c) => accessibleName(c, doc).includes(name);
+  const nameMatches = (c) => accessibleName(c, doc).startsWith(name);
   const smallestName = (list) => list.slice().sort(
     (a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length)[0];
 
@@ -131,7 +131,7 @@ function findItemCard(doc, line, platform) {
   // the first frames after a search only the decoy exists, before any overlay has
   // rendered at all. So target ONLY the overlays, matched by resolved name.
   const itemOverlays = [...doc.querySelectorAll('[data-qa="item"]')]
-    .filter((el) => accessibleName(el, doc).includes(name));
+    .filter((el) => accessibleName(el, doc).startsWith(name));
   if (itemOverlays.length) {
     itemOverlays.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
     return itemOverlays[0];
@@ -146,7 +146,7 @@ function findItemCard(doc, line, platform) {
   // button/link/[role=button], possibly wrapped in a container we descend into.
   for (const tier of ['button, a, [role="button"]', '[data-item-id], [data-testid]']) {
     const candidates = [...doc.querySelectorAll(tier)]
-      .filter((el) => accessibleName(el, doc).includes(name));
+      .filter((el) => accessibleName(el, doc).startsWith(name));
     // Shortest name = the item itself rather than a section/wrapper around it.
     candidates.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
     for (const candidate of candidates) {

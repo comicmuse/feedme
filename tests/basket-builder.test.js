@@ -240,6 +240,38 @@ describe('findItemCard accessible-name matching', () => {
     expect(findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' })).toBeNull();
   });
 
+  // Live regression (Popeyes JE, 2026-07-10): searching "Spicy Chicken Sandwich
+  // Box Meal" rendered the DELUXE variant's card first; substring matching
+  // committed to it and the +£1 Deluxe landed in the basket under a green
+  // "basket filled". On every platform the accessible name STARTS with the item
+  // name, so a card whose name merely contains the wanted name is a different
+  // item — keep waiting for the right card instead.
+  test('never matches a card whose name merely contains the wanted name (superstring variant)', () => {
+    document.body.innerHTML = `
+      <div class="wrapper">
+        <span role="button" data-qa="item" aria-labelledby="d1"></span>
+        <span id="d1">Deluxe Spicy Chicken Sandwich Box Meal</span>
+      </div>`;
+    expect(findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' })).toBeNull();
+  });
+
+  test('picks the exact item when it renders alongside a superstring variant', () => {
+    document.body.innerHTML = `
+      <div class="wrapper">
+        <span role="button" data-qa="item" aria-labelledby="d1"></span>
+        <span id="d1">Deluxe Spicy Chicken Sandwich Box Meal</span>
+        <span role="button" data-qa="item" aria-labelledby="p1"></span>
+        <span id="p1">Spicy Chicken Sandwich Box Meal</span>
+      </div>`;
+    const card = findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' });
+    expect(card && card.getAttribute('aria-labelledby')).toBe('p1');
+  });
+
+  test('generic tiers also reject a superstring variant (Uber/Deliveroo shapes)', () => {
+    document.body.innerHTML = '<a href="#">Deluxe Spicy Chicken Sandwich Box Meal£14.29 • desc</a>';
+    expect(findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' })).toBeNull();
+  });
+
   // The live Just Eat search row is itself role="button" (a decoy that carries the
   // name text but does nothing on click); the real target is the [data-qa="item"]
   // overlay. findItemCard must pick the overlay, never the decoy.

@@ -465,10 +465,26 @@ describe('computeTotal — item-level deals', () => {
     expect(result.total).toBeCloseTo(9.0);
   });
 
-  test('eligibility matches fuzzily so wording differences still qualify', () => {
-    const matches = [line('Footlong Sub', 6.0), line('Footlong Sub', 5.0)];
+  // Eligible names and matched item names both come from the SAME platform's
+  // catalogue (offer item ids resolved to names), so eligibility is exact — a
+  // similar-but-different product must not qualify. Live regression (Popeyes JE,
+  // 2026-07-10): "6 Boneless & a dip" fuzzy-matched the 50%-off eligible item
+  // "6 boneless saucin' wings" and the sidebar invented a -£4.25 discount the
+  // real basket didn't have.
+  test('eligibility is exact: a similar-but-different item does not qualify', () => {
+    const matches = [line('6 Boneless & a dip', 8.49)];
     const offers = [
-      { type: 'item-deal', rule: 'cheapest-free', eligibleItems: ['Footlong'], quantity: 2, description: 'BOGOF on footlongs' },
+      { type: 'item-deal', rule: 'percent-off-items', eligibleItems: ["6 boneless saucin' wings"], percent: 0.5, cap: Infinity, description: '50% off selected items' },
+    ];
+    const result = computeTotal(matches, 0, 0, offers);
+    expect(result.discountTotal).toBe(0);
+    expect(result.appliedDeals).toEqual([]);
+  });
+
+  test('eligibility ignores case and whitespace differences', () => {
+    const matches = [line('Footlong  Sub', 6.0), line('footlong sub', 5.0)];
+    const offers = [
+      { type: 'item-deal', rule: 'cheapest-free', eligibleItems: ['Footlong Sub'], quantity: 2, description: 'BOGOF on footlongs' },
     ];
     const result = computeTotal(matches, 0, 0, offers);
     expect(result.discountTotal).toBeCloseTo(5.0);

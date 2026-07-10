@@ -208,19 +208,18 @@ function applyOffers(offers, itemsTotal, deliveryFee, matches = []) {
 }
 
 // Unit prices of the matched lines whose branch item is eligible for a deal,
-// each expanded by the line's ordered quantity. Eligibility is fuzzy (same Fuse
-// settings as item matching) so platform wording differences ("Footlong" vs
-// "Footlong Sub") still qualify.
+// each expanded by the line's ordered quantity. Eligible names come from the SAME
+// platform's catalogue as the matched item names (offer item ids resolved to
+// names), so eligibility is exact equality (case/whitespace-insensitive) — fuzzy
+// matching here invented discounts for similar-but-different products
+// ("6 Boneless & a dip" qualifying for a deal on "6 boneless saucin' wings").
 function eligibleUnitPrices(offer, matches) {
-  const eligible = offer.eligibleItems ?? [];
-  if (!eligible.length) return [];
-  const fuse = new Fuse(
-    eligible.map((name) => ({ name })),
-    { keys: ['name'], threshold: FUSE_THRESHOLD }
-  );
+  const normalize = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const eligible = new Set((offer.eligibleItems ?? []).map(normalize));
+  if (!eligible.size) return [];
   const units = [];
   for (const m of matches) {
-    if (!m.matched || !fuse.search(m.platformItem.name).length) continue;
+    if (!m.matched || !eligible.has(normalize(m.platformItem.name))) continue;
     for (let q = 0; q < m.referenceItem.quantity; q++) units.push(m.platformItem.unitPrice);
   }
   return units;

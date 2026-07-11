@@ -269,10 +269,22 @@ function dismissDialog(doc, dialog) {
 // are candidates until the live-verification pass pins them.
 const CLEAR_HOOKS = {
   'just-eat': {
-    surface: (doc) => [...doc.querySelectorAll('button, [role="button"]')]
-      .find((b) => /view basket/i.test(accessibleName(b, doc))) || null,
+    // Live shapes 2026-07-11: toggle button [data-qa="cart-modal-toggle-element"];
+    // decrease control is an EMPTY span[role=button][data-qa=
+    // "cart-item-amount-action-decrement"]; close is [data-qa=
+    // "cart-modal-header-action-close"]. The aria-label variants are kept as a
+    // drift fallback.
+    surface: (doc) => doc.querySelector('[data-qa="cart-modal-toggle-element"]')
+      || [...doc.querySelectorAll('button, [role="button"]')]
+        .find((b) => /view basket/i.test(accessibleName(b, doc))) || null,
     removeButtons: (doc) => [...doc.querySelectorAll(
-      'button[aria-label^="Decrease quantity"], pie-icon-button[aria-label^="Decrease quantity"]')],
+      '[data-qa="cart-item-amount-action-decrement"],'
+      + ' button[aria-label^="Decrease quantity"], [role="button"][aria-label^="Decrease quantity"]')],
+    dismiss: (doc) => {
+      const close = doc.querySelector(
+        '[data-qa="cart-modal-header-action-close"], [data-qa="cart-modal"] [aria-label*="close" i]');
+      if (close) clickEl(close);
+    },
   },
   deliveroo: {
     surface: null,
@@ -297,6 +309,7 @@ async function clearBasket(doc, platform, wait = defaultWait) {
   const hooks = CLEAR_HOOKS[platform];
   const result = { hadItems: false, cleared: true, removed: 0 };
   if (!hooks || !doc) return result;
+  let surfaced = false;
   try {
     // A removal is confirmed by the control set changing (a button vanishing or
     // its "from N to M" label decrementing) — the platform's own signal.
@@ -306,6 +319,7 @@ async function clearBasket(doc, platform, wait = defaultWait) {
       if (s) {
         dlog('clear: surfacing basket view via', describeEl(s, doc));
         clickEl(s);
+        surfaced = true;
         await wait(() => hooks.removeButtons(doc).length, { timeout: 3000 });
       }
     }
@@ -313,25 +327,47 @@ async function clearBasket(doc, platform, wait = defaultWait) {
       const buttons = hooks.removeButtons(doc);
       if (!buttons.length) {
         if (result.removed) dlog(`clear: basket empty after ${result.removed} removal(s)`);
-        return result;
+        break;
       }
       result.hadItems = true;
+      if (i === MAX_CLEAR_CLICKS - 1) {
+        dlog('clear: hit the click bound with items remaining');
+        result.cleared = false;
+        break;
+      }
+      // Just Eat keeps a decremented row's control mounted for a beat at
+      // quantity 0 ("from 0 to -1") — clicking that is a wasted click that
+      // inflates the removed count. Wait for it to unmount instead.
+      const live = buttons.filter((b) => !/\bfrom\s+(0|-\d+)\s+to\b/i.test(accessibleName(b, doc)));
+      if (!live.length) {
+        const stale = state();
+        const gone = await wait(() => state() !== stale, { timeout: 4000 });
+        if (!gone) {
+          dlog('clear: quantity-0 control never unmounted — stopping');
+          result.cleared = false;
+          break;
+        }
+        continue;
+      }
       const before = state();
-      dlog('clear: removing via', describeEl(buttons[0], doc));
-      clickEl(buttons[0]);
+      dlog('clear: removing via', describeEl(live[0], doc));
+      clickEl(live[0]);
       const settled = await wait(() => state() !== before, { timeout: 4000 });
       if (!settled) {
         dlog('clear: removal did not register — stopping with items left');
         result.cleared = false;
-        return result;
+        break;
       }
       result.removed += 1;
     }
-    dlog('clear: hit the click bound with items remaining');
-    result.cleared = false;
   } catch (e) {
     dlog('clear: failed —', e && e.message);
     result.cleared = false;
+  }
+  // Close whatever the surface click opened: a lingering cart view's text (the
+  // stale items) would otherwise be mistaken for an item's customise dialog.
+  if (surfaced && hooks.dismiss) {
+    try { hooks.dismiss(doc); } catch (_) {}
   }
   return result;
 }
@@ -383,8 +419,11 @@ async function openItemDialog(doc, line, wait, surface, platform) {
     clickEl(card);
     // Match the dialog by the item name (its heading) so an unrelated dialog — e.g.
     // the Just Eat location panel — is never mistaken for the customise dialog.
+    // The Just Eat CART modal is also role=dialog and lists the basket's items by
+    // name (live failure 2026-07-11), so it is excluded explicitly.
     const dialog = await wait(() => {
-      const all = [...doc.querySelectorAll(DIALOG_SELECTOR)];
+      const all = [...doc.querySelectorAll(DIALOG_SELECTOR)]
+        .filter((d) => !(d.matches && d.matches('[data-qa="cart-modal"]')));
       return all.find((d) => norm(d.textContent).includes(norm(line.name))) || null;
     }, { timeout: 1500 });
     if (dialog) return dialog;

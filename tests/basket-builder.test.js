@@ -638,7 +638,11 @@ function mountBasketPane(rows) {
   pane.id = 'pane';
   document.body.appendChild(pane);
   rows.forEach(({ name, qty }) => {
-    const btn = document.createElement('button');
+    // LIVE shape (2026-07-11): an empty span[role=button] with
+    // data-qa="cart-item-amount-action-decrement" — NOT a <button>.
+    const btn = document.createElement('span');
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('data-qa', 'cart-item-amount-action-decrement');
     let n = qty;
     const label = () => `Decrease quantity of ${name} from ${n} to ${n - 1}`;
     btn.setAttribute('aria-label', label());
@@ -659,7 +663,7 @@ describe('clearBasket', () => {
     mountBasketPane([{ name: 'Spicy Mayo Dip', qty: 2 }, { name: 'Big Mac Sauce', qty: 1 }]);
     const r = await clearBasket(document, 'just-eat', fastWait);
     expect(r).toEqual({ hadItems: true, cleared: true, removed: 3 });
-    expect(document.querySelectorAll('#pane button')).toHaveLength(0);
+    expect(document.querySelectorAll('#pane [role="button"]')).toHaveLength(0);
   });
 
   test('is a no-op on an empty basket', async () => {
@@ -671,7 +675,7 @@ describe('clearBasket', () => {
     mountBasketPane([{ name: 'Stray', qty: 1 }]);
     const r = await clearBasket(document, 'unknown-platform', fastWait);
     expect(r).toEqual({ hadItems: false, cleared: true, removed: 0 });
-    expect(document.querySelectorAll('#pane button')).toHaveLength(1);
+    expect(document.querySelectorAll('#pane [role="button"]')).toHaveLength(1);
   });
 
   test('stops and reports cleared:false when a removal does not register', async () => {
@@ -692,6 +696,90 @@ describe('clearBasket', () => {
     document.body.appendChild(view);
     const r = await clearBasket(document, 'just-eat', fastWait);
     expect(r).toEqual({ hadItems: true, cleared: true, removed: 1 });
+  });
+
+  // Live finding 2026-07-11: after the final decrement Just Eat keeps the
+  // control mounted for a beat with the label "from 0 to -1" — clicking it is a
+  // wasted click that inflated the removed count (4 reported for 3 units).
+  // The builder must wait for it to unmount instead.
+  test('does not click or count the lingering quantity-0 control', async () => {
+    const pollWait = (fn, { timeout = 500 } = {}) => new Promise((resolve) => {
+      const start = Date.now();
+      const tick = () => {
+        let v = null; try { v = fn(); } catch (_) {}
+        if (v) return resolve(v);
+        if (Date.now() - start > timeout) return resolve(null);
+        setTimeout(tick, 10);
+      };
+      tick();
+    });
+    const pane = document.createElement('aside');
+    pane.id = 'pane';
+    document.body.appendChild(pane);
+    const btn = document.createElement('span');
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('data-qa', 'cart-item-amount-action-decrement');
+    btn.setAttribute('aria-label', 'Decrease quantity of Old Fries from 1 to 0');
+    let clicks = 0;
+    btn.addEventListener('click', () => {
+      clicks += 1;
+      btn.setAttribute('aria-label', 'Decrease quantity of Old Fries from 0 to -1');
+      setTimeout(() => btn.remove(), 20); // unmounts a beat later, as live
+    });
+    pane.appendChild(btn);
+    const r = await clearBasket(document, 'just-eat', pollWait);
+    expect(clicks).toBe(1);
+    expect(r).toEqual({ hadItems: true, cleared: true, removed: 1 });
+  });
+
+  // Live finding 2026-07-11: the surfaced cart modal stays open and its text
+  // (the stale items) then hijacks the customise-dialog matcher — the builder
+  // must close what it opened.
+  test('dismisses the surfaced Just Eat cart modal after clearing', async () => {
+    const view = document.createElement('button');
+    view.setAttribute('data-qa', 'cart-modal-toggle-element');
+    view.textContent = 'View basket';
+    view.addEventListener('click', () => {
+      const modal = document.createElement('div');
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('data-qa', 'cart-modal');
+      const close = document.createElement('span');
+      close.setAttribute('role', 'button');
+      close.setAttribute('data-qa', 'cart-modal-header-action-close');
+      close.setAttribute('aria-label', 'Close');
+      close.addEventListener('click', () => modal.remove());
+      modal.appendChild(close);
+      document.body.appendChild(modal);
+      const pane = mountBasketPane([{ name: 'Old Fries', qty: 1 }]);
+      modal.appendChild(pane);
+    });
+    document.body.appendChild(view);
+    const r = await clearBasket(document, 'just-eat', fastWait);
+    expect(r).toEqual({ hadItems: true, cleared: true, removed: 1 });
+    expect(document.querySelector('[data-qa="cart-modal"]')).toBeNull();
+  });
+});
+
+// Live finding 2026-07-11: the Just Eat cart modal is role=dialog and its text
+// contains the stale basket items' names — clicking an item card while it is
+// open made openItemDialog treat the CART as the customise dialog (no add
+// button → line failed). The customise-dialog matcher must skip it.
+describe('cart modal never mistaken for the customise dialog', () => {
+  const fastWait = (fn) => Promise.resolve(fn());
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('fills a line whose name also appears in an open cart modal', async () => {
+    mountMenu();
+    const cart = document.createElement('div');
+    cart.setAttribute('role', 'dialog');
+    cart.setAttribute('data-qa', 'cart-modal');
+    cart.textContent = 'Basket: Whopper £5.89 — 1 item';
+    // Prepend: on the live page the cart modal can precede the customise dialog
+    // in document order, which is what made find() return it first.
+    document.body.prepend(cart);
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ name: 'Whopper', added: 1, ok: true });
   });
 });
 

@@ -694,3 +694,67 @@ describe('clearBasket', () => {
     expect(r).toEqual({ hadItems: true, cleared: true, removed: 1 });
   });
 });
+
+// A synthetic Deliveroo basket sidebar: one "Remove X" button per row, removed
+// on click (one-shot rows, unlike Just Eat's per-unit decrease).
+function mountRooPane(names) {
+  const pane = document.createElement('aside');
+  pane.id = 'roo-pane';
+  document.body.appendChild(pane);
+  names.forEach((name) => {
+    const btn = document.createElement('button');
+    btn.setAttribute('aria-label', `Remove ${name}`);
+    btn.addEventListener('click', () => btn.remove());
+    pane.appendChild(btn);
+  });
+  return pane;
+}
+
+describe('buildBasket clears the basket first', () => {
+  const fastWait = (fn) => Promise.resolve(fn());
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('empties pre-existing items before adding the plan (order matters)', async () => {
+    mountMenu();
+    const events = [];
+    const pane = mountRooPane(['Stale Hot Honey']);
+    pane.querySelector('button').addEventListener('click', () => events.push('removed'));
+    document.querySelector('[data-item-id="dr-1"]').addEventListener('click', () => events.push('add-clicked'));
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ platform: 'deliveroo', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ ok: true });
+    expect(events[0]).toBe('removed');
+    expect(events).toContain('add-clicked');
+    expect(document.querySelectorAll('#roo-pane button')).toHaveLength(0);
+  });
+
+  test('does not clear when the plan is empty', async () => {
+    mountRooPane(['Keep Me']);
+    await buildBasket({ platform: 'deliveroo', basketPlan: [] }, { wait: fastWait, headless: true });
+    expect(document.querySelectorAll('#roo-pane button')).toHaveLength(1);
+  });
+
+  test('overlay reports how many pre-existing items were removed', async () => {
+    mountMenu();
+    mountRooPane(['Stale A', 'Stale B']);
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    await buildBasket({ platform: 'deliveroo', basketPlan: plan }, { wait: fastWait });
+    const shadow = document.getElementById('feedme-builder').shadowRoot;
+    expect(shadow.textContent).toContain('Removed 2 item(s) already in the basket');
+  });
+
+  test('overlay warns in amber when clearing fails, and the fill still runs', async () => {
+    mountMenu();
+    // Stuck removal: click changes nothing.
+    const pane = document.createElement('aside');
+    const btn = document.createElement('button');
+    btn.setAttribute('aria-label', 'Remove Stuck Item');
+    pane.appendChild(btn);
+    document.body.appendChild(pane);
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ platform: 'deliveroo', basketPlan: plan }, { wait: fastWait });
+    expect(results[0]).toMatchObject({ ok: true });
+    const shadow = document.getElementById('feedme-builder').shadowRoot;
+    expect(shadow.textContent).toContain("Couldn't clear pre-existing items — check your basket.");
+  });
+});

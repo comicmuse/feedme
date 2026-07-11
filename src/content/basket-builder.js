@@ -450,6 +450,14 @@ async function buildBasket(build, opts = {}) {
     'platform=', platform, 'readyState=', doc && doc.readyState, 'plan=', JSON.stringify(plan));
   const overlay = opts.headless || !doc ? null : createOverlay(doc, plan.length);
 
+  // Pre-existing basket items would sit under the plan and skew the total away
+  // from the sidebar's comparison — empty the basket first (issue #24). A failed
+  // clear warns and proceeds: most of a fill is better than none (user-confirmed).
+  if (plan.length) {
+    const clear = await clearBasket(doc, platform, wait);
+    if (overlay) overlay.setClear(clear);
+  }
+
   const results = [];
   for (const line of plan) {
     if (!line || !line.name) {
@@ -498,13 +506,27 @@ function createOverlay(doc, total) {
   title.style.cssText = 'font-weight:800;margin-bottom:6px;color:#111;';
   title.textContent = 'FeedMe — filling basket…';
   const status = doc.createElement('div');
+  const clearLine = doc.createElement('div');
+  clearLine.style.cssText = 'margin-top:4px;font-size:11px;color:#6b7280;display:none;';
   const list = doc.createElement('div');
   list.style.cssText = 'margin-top:6px;color:#ef4444;font-size:11px;';
-  box.appendChild(title); box.appendChild(status); box.appendChild(list);
+  box.appendChild(title); box.appendChild(status); box.appendChild(clearLine); box.appendChild(list);
+  let uncleared = false;
   shadow.appendChild(box);
   doc.body.appendChild(host);
 
   return {
+    setClear(clear) {
+      if (!clear.hadItems) return;
+      clearLine.style.display = 'block';
+      if (clear.cleared) {
+        clearLine.textContent = `Removed ${clear.removed} item(s) already in the basket`;
+      } else {
+        uncleared = true;
+        clearLine.style.color = '#d97706';
+        clearLine.textContent = "Couldn't clear pre-existing items — check your basket.";
+      }
+    },
     update(results) {
       const done = results.filter((r) => r.ok).length;
       status.textContent = `Added ${done} of ${total}`;
@@ -529,7 +551,7 @@ function createOverlay(doc, total) {
       };
       if (failed.length) section('Add these manually:', failed, '#ef4444');
       if (review.length) section('Check the options on:', review, '#d97706');
-      setTimeout(() => host.remove(), failed.length || review.length ? 12000 : 4000);
+      setTimeout(() => host.remove(), failed.length || review.length || uncleared ? 12000 : 4000);
     },
   };
 }

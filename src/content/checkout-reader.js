@@ -79,7 +79,8 @@ async function extractUberEats(doc) {
           // not become phantom free options. Capture every option (free included)
           // with its group so cross-platform fill can satisfy the target's
           // required groups.
-          const options = [];
+          const allOptions = [];
+          const groupLabels = new Set();
           let currentGroup = '';
           for (const s of el.querySelectorAll('span[data-testid="rich-text"]')) {
             const text = s.textContent.trim();
@@ -87,18 +88,34 @@ async function extractUberEats(doc) {
             // Two or more £-amounts in one span is a price display (e.g. a
             // strikethrough pair), never a selection.
             if ((text.match(/£\d/g) || []).length >= 2) continue;
-            if (text.endsWith(':')) { currentGroup = text.slice(0, -1).trim(); continue; }
+            if (text.endsWith(':')) {
+              currentGroup = text.slice(0, -1).trim();
+              groupLabels.add(currentGroup);
+              continue;
+            }
             // Group = everything before the FIRST ": " — a character class can't
             // be used here because group names may contain parentheses
             // ("Choose Drink (Large): Coke (£0.50)").
             const labelled = text.match(/^(.+?):\s*(.+)$/);
             const group = labelled ? labelled[1].trim() : currentGroup;
+            if (labelled) groupLabels.add(group);
             const rest = labelled ? labelled[2] : text;
             const priced = rest.match(/^(.*)\(£(\d+(?:\.\d+)?)\)$/);
             const name = (priced ? priced[1] : rest).trim();
             const price = priced ? parseFloat(priced[2]) : 0;
-            if (name) options.push({ group, name, price });
+            if (name) allOptions.push({ group, name, price });
           }
+          // Two row kinds are not selections (live McDonald's, issue #29):
+          //  - "X Comes With:" groups list the composition's kept defaults
+          //    (comma-joined), which no target platform models as a modifier;
+          //  - nested group headers whose free value is exactly ANOTHER group's
+          //    label ("Large Drink: Bottled Drink" then "Bottled Drink: …").
+          // Captured as options they'd stay unresolved forever and review-flag
+          // the line, so drop them here. A value that repeats its OWN group name
+          // ("6 Boneless: 6 Boneless") is a real selection and stays.
+          const options = allOptions.filter((o) =>
+            !/comes with$/i.test(o.group)
+            && !(o.price === 0 && o.name !== o.group && groupLabels.has(o.name)));
           const optionsTotal = options.reduce((sum, o) => sum + o.price, 0);
           return {
             name,

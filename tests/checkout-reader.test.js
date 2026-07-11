@@ -119,6 +119,59 @@ describe('extractOrder - Uber Eats free & grouped options', () => {
     ]);
   });
 
+  // Live McDonald's shapes (2026-07-11, issue #29): the cart also renders rows
+  // that are not selections — "X Comes With:" ingredient-composition lists (the
+  // group's kept defaults, comma-joined) and nested group headers whose value is
+  // itself the next group's label ("Large Drink: Bottled Drink" followed by
+  // "Bottled Drink: Robinsons® Fruit Shoot"). Captured as options they can never
+  // resolve on a target platform and chronically review-flag the line.
+  test('drops "Comes With" composition rows and nested group-header rows', async () => {
+    const html = `<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£14.78</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Big Mac® FIFA World Cup™ Medium Meal" />
+          <span data-testid="rich-text">Select Option:</span><span data-testid="rich-text">Big Mac® FIFA World Cup™ Large Meal (£1.10)</span>
+          <span data-testid="rich-text">Large Side:</span><span data-testid="rich-text">Side Salad</span>
+          <span data-testid="rich-text">Side Salad Comes With:</span><span data-testid="rich-text">Crispy Onion, Cucumber, Tomato, Lettuce</span>
+          <span data-testid="rich-text">Large Drink:</span><span data-testid="rich-text">Bottled Drink</span>
+          <span data-testid="rich-text">Bottled Drink:</span><span data-testid="rich-text">Robinsons® Fruit Shoot</span>
+          <span data-testid="rich-text">Big Mac® Comes With:</span><span data-testid="rich-text">Sauce, Pickles, Lettuce, Onions, Cheese, 2 Beef Patty, Bun</span>
+          <span data-testid="rich-text">Big Mac® Additions:</span><span data-testid="rich-text">2x Bacon (£1.00)</span>
+          <span>£14.78</span>
+        </div></li>
+      </div></body></html>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, new JSDOM(html).window.document);
+    expect(order.items[0].options).toEqual([
+      { group: 'Select Option', name: 'Big Mac® FIFA World Cup™ Large Meal', price: 1.10 },
+      { group: 'Large Side', name: 'Side Salad', price: 0 },
+      { group: 'Bottled Drink', name: 'Robinsons® Fruit Shoot', price: 0 },
+      { group: 'Big Mac® Additions', name: '2x Bacon', price: 1.00 },
+    ]);
+  });
+
+  test('an option merely sharing words with a group label is kept (only exact header rows drop)', async () => {
+    const html = `<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£9.99</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Wrap Meal" />
+          <span data-testid="rich-text">Choose Drink:</span><span data-testid="rich-text">Coke</span>
+          <span data-testid="rich-text">Coke Extras:</span><span data-testid="rich-text">Ice</span>
+          <span>£9.99</span>
+        </div></li>
+      </div></body></html>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, new JSDOM(html).window.document);
+    // "Coke" is a real selection even though a later group ("Coke Extras")
+    // shares its words — only a value exactly equal to a group label drops.
+    expect(order.items[0].options).toEqual([
+      { group: 'Choose Drink', name: 'Coke', price: 0 },
+      { group: 'Coke Extras', name: 'Ice', price: 0 },
+    ]);
+  });
+
   test('ignores non-selection spans (promo badges, notes, packed strikethrough prices)', async () => {
     // Live selections always render as rich-text spans; other cart-row text
     // (promo badges, "Add note", price displays) must not become phantom free

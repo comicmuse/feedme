@@ -370,6 +370,28 @@ function justEatItemModifiers(item, groupsById, modifierBySetId) {
     .filter((o) => o.name);
 }
 
+// Choices for a Just Eat "deal" item (meals/box meals): the variation carries
+// dealGroupsIds instead of modifierGroupsIds, and each deal group's options
+// reference dealOnly VARIATIONS of other catalogue items — the option's display
+// name lives on that referenced item. additionPrice is the option's surcharge.
+// (Live shape: Popeyes box meals, 2026-07-10; KFC models the same UI as plain
+// modifier groups, so both walks are needed.)
+function justEatDealModifiers(item, dealGroupById, itemNameByVariationId) {
+  const groupIds = (item.variations ?? []).flatMap((v) => v.dealGroupsIds ?? []);
+  return groupIds
+    .flatMap((gid) => {
+      const group = dealGroupById[gid];
+      return (group?.dealItemVariations ?? []).map((dv) => ({
+        name: itemNameByVariationId[dv.dealItemVariationId] ?? '',
+        price: dv.additionPrice ?? 0,
+        id: dv.dealItemVariationId,
+        groupId: gid,
+        group: group.name ?? '',
+      }));
+    })
+    .filter((o) => o.name);
+}
+
 // Recursively lower-case the first letter of every object key. Large Just Eat
 // menus defer the catalogue to a CDN file that uses PascalCase keys; this maps it
 // onto the camelCase shape the SSR (and this parser) use.
@@ -393,12 +415,14 @@ function parseJustEat(data) {
   let itemSource = cdn.items;
   let modifierGroups = cdn.modifierGroups ?? [];
   let modifierSets = cdn.modifierSets ?? [];
+  let dealGroups = cdn.dealGroups ?? [];
   if (!Object.keys(itemSource ?? {}).length) {
     if (data._feedmeItems) {
       itemSource = camelizeKeys(data._feedmeItems);
       const details = camelizeKeys(data._feedmeItemDetails ?? {});
       modifierGroups = details.modifierGroups ?? [];
       modifierSets = details.modifierSets ?? [];
+      dealGroups = details.dealGroups ?? [];
     } else if (Object.keys(cdn.truncatedItems ?? {}).length) {
       itemSource = cdn.truncatedItems;
     }
@@ -408,6 +432,13 @@ function parseJustEat(data) {
   for (const g of modifierGroups) groupsById[g.id] = g;
   const modifierBySetId = {};
   for (const s of modifierSets) if (s.modifier) modifierBySetId[s.id] = s.modifier;
+  const dealGroupById = {};
+  for (const g of dealGroups) dealGroupById[g.id] = g;
+  // Deal-group options are variation references; resolve them to display names.
+  const itemNameByVariationId = {};
+  for (const i of Object.values(itemSource ?? {})) {
+    for (const v of i?.variations ?? []) if (v?.id && i.name) itemNameByVariationId[v.id] = i.name;
+  }
 
   // Include deals (meals/bundles) as well as plain items so a "... Meal" reference
   // can match the real meal rather than a bare burger. Sizes are separate items,
@@ -429,7 +460,10 @@ function parseJustEat(data) {
         name: i.name,
         description: i.description ?? '',
         unitPrice: cheapest ? cheapest.basePrice : 0,
-        modifiers: justEatItemModifiers(i, groupsById, modifierBySetId),
+        modifiers: [
+          ...justEatItemModifiers(i, groupsById, modifierBySetId),
+          ...justEatDealModifiers(i, dealGroupById, itemNameByVariationId),
+        ],
       };
     });
 

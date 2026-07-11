@@ -114,6 +114,66 @@ describe('buildBasket engine', () => {
     const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
     expect(results[0]).toMatchObject({ name: 'Ghost Meal', added: 0, ok: false });
   });
+
+  // A line the matcher couldn't fully resolve (prefillable: false) is still worth
+  // attempting — the builder selects what it can and the add often works. But the
+  // basket may then be missing a selection the user made on the source platform,
+  // so a successful add on such a line must be flagged for review, never presented
+  // as a clean fill.
+  test('flags a filled line as review when its plan line was not fully resolved', async () => {
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: false }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ name: 'Whopper', added: 1, ok: true, review: true });
+  });
+
+  test('does not flag a fully resolved line as review', async () => {
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0].review).toBeFalsy();
+  });
+});
+
+describe('overlay honesty', () => {
+  beforeEach(() => mountMenu());
+
+  const overlayText = () =>
+    document.getElementById('feedme-builder').shadowRoot.textContent;
+
+  test('lists a review line separately from manual lines and qualifies the title', async () => {
+    const plan = [
+      { id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true },
+      { id: 'dr-9', name: 'Honey BBQ Sandwich', quantity: 1, modifiers: [], prefillable: false },
+      { id: 'x', name: 'Vegan Flatbread', quantity: 1, modifiers: [], prefillable: true },
+    ];
+    await buildBasket({ basketPlan: plan }, { wait: fastWait });
+    const text = overlayText();
+    expect(text).toContain('Added 2 of 3');
+    expect(text).toContain('Add these manually:');
+    expect(text).toContain('Vegan Flatbread');
+    expect(text).toContain('Check the options on:');
+    expect(text).toContain('Honey BBQ Sandwich');
+    document.getElementById('feedme-builder').remove();
+  });
+
+  test('a clean full fill keeps the unqualified success title', async () => {
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    await buildBasket({ basketPlan: plan }, { wait: fastWait });
+    const text = overlayText();
+    expect(text).toContain('basket filled');
+    expect(text).not.toContain('Check the options on:');
+    expect(text).not.toContain('Add these manually:');
+    document.getElementById('feedme-builder').remove();
+  });
+
+  test('review-only results report filled but ask for an options check', async () => {
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: false }];
+    await buildBasket({ basketPlan: plan }, { wait: fastWait });
+    const text = overlayText();
+    expect(text).toContain('basket filled');
+    expect(text).toContain('Check the options on:');
+    expect(text).toContain('Whopper');
+    document.getElementById('feedme-builder').remove();
+  });
 });
 
 // Live DOM shapes verified on the real platforms (2026-07-06): the clickable item
@@ -177,6 +237,38 @@ describe('findItemCard accessible-name matching', () => {
         Box Meals Spicy Chicken Sandwich Box Meal £13.29 Bring the heat...
         <span role="button" data-qa="item" aria-labelledby="not-here-yet"></span>
       </li>`;
+    expect(findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' })).toBeNull();
+  });
+
+  // Live regression (Popeyes JE, 2026-07-10): searching "Spicy Chicken Sandwich
+  // Box Meal" rendered the DELUXE variant's card first; substring matching
+  // committed to it and the +£1 Deluxe landed in the basket under a green
+  // "basket filled". On every platform the accessible name STARTS with the item
+  // name, so a card whose name merely contains the wanted name is a different
+  // item — keep waiting for the right card instead.
+  test('never matches a card whose name merely contains the wanted name (superstring variant)', () => {
+    document.body.innerHTML = `
+      <div class="wrapper">
+        <span role="button" data-qa="item" aria-labelledby="d1"></span>
+        <span id="d1">Deluxe Spicy Chicken Sandwich Box Meal</span>
+      </div>`;
+    expect(findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' })).toBeNull();
+  });
+
+  test('picks the exact item when it renders alongside a superstring variant', () => {
+    document.body.innerHTML = `
+      <div class="wrapper">
+        <span role="button" data-qa="item" aria-labelledby="d1"></span>
+        <span id="d1">Deluxe Spicy Chicken Sandwich Box Meal</span>
+        <span role="button" data-qa="item" aria-labelledby="p1"></span>
+        <span id="p1">Spicy Chicken Sandwich Box Meal</span>
+      </div>`;
+    const card = findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' });
+    expect(card && card.getAttribute('aria-labelledby')).toBe('p1');
+  });
+
+  test('generic tiers also reject a superstring variant (Uber/Deliveroo shapes)', () => {
+    document.body.innerHTML = '<a href="#">Deluxe Spicy Chicken Sandwich Box Meal£14.29 • desc</a>';
     expect(findItemCard(document, { name: 'Spicy Chicken Sandwich Box Meal' })).toBeNull();
   });
 
@@ -297,6 +389,116 @@ describe('selectModifier live dialog shapes', () => {
     const ok = await selectModifier(dialog, { id: '2610419456', name: 'Bold BBQ Sauce Dip' }, pollWait);
     expect(ok).toBe(true);
     expect(dialog.querySelector('input').checked).toBe(true);
+  });
+
+  // Live regression (McDonald's JE, 2026-07-11): checkbox options are bare
+  // pie-checkbox hosts with NO role attribute (unlike pie-radio[role=radio]), so
+  // the candidate query missed every multi-select option in the dialog.
+  test('matches a role-less pie-checkbox host by its text (Just Eat multi-select)', async () => {
+    document.body.innerHTML = '<div role="dialog"></div>';
+    const dialog = document.querySelector('[role="dialog"]');
+    const host = document.createElement('pie-checkbox');
+    host.setAttribute('data-qa', 'item-choices-options-multi-check');
+    host.textContent = 'Extra 2x Bacon +£1.49';
+    const shadow = host.attachShadow({ mode: 'open' });
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    shadow.appendChild(input);
+    input.addEventListener('click', () => { input.checked = true; });
+    dialog.appendChild(host);
+
+    const ok = await selectModifier(dialog, { name: 'Extra 2x Bacon' }, pollWait);
+    expect(ok).toBe(true);
+    expect(input.checked).toBe(true);
+  });
+
+  // Live regression (McDonald's JE, 2026-07-11): "Extra 2x Bacon" lives behind the
+  // group's "Show N more" toggle, so it isn't in the DOM until the toggle is
+  // clicked — the builder reported it NOT selected and the paid extra was lost.
+  test('expands a "show more" toggle to reach a collapsed option (Just Eat shape)', async () => {
+    document.body.innerHTML = `
+      <div role="dialog">
+        <p>Add extra</p>
+        <label><input type="checkbox"> Extra Cheese</label>
+        <button data-qa="item-choices-options-multi-action-toggle">Show 2 more</button>
+      </div>`;
+    const dialog = document.querySelector('[role="dialog"]');
+    dialog.querySelector('[data-qa="item-choices-options-multi-action-toggle"]').addEventListener('click', (e) => {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(' Extra 2x Bacon'));
+      dialog.insertBefore(label, e.target);
+    });
+    const ok = await selectModifier(dialog, { name: 'Extra 2x Bacon', group: 'Add extra' }, pollWait);
+    expect(ok).toBe(true);
+    expect([...dialog.querySelectorAll('input')].some((i) => i.checked && i.parentElement.textContent.includes('Extra 2x Bacon'))).toBe(true);
+  });
+
+  // A group can render only after an earlier selection (McDonald's "Salad Dressing
+  // Choice" appears once Side Salad is picked) — wait for the row, don't give up
+  // on the first miss.
+  test('waits for an option row that renders late (conditional group)', async () => {
+    document.body.innerHTML = '<div role="dialog"></div>';
+    const dialog = document.querySelector('[role="dialog"]');
+    setTimeout(() => {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = 'radio';
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(' Balsamic Dressing'));
+      dialog.appendChild(label);
+    }, 20);
+    const ok = await selectModifier(dialog, { name: 'Balsamic Dressing' }, pollWait);
+    expect(ok).toBe(true);
+    expect(dialog.querySelector('input').checked).toBe(true);
+  });
+
+  // Expanded toggles flip to "Show N less" (same data-qa). A later miss must NOT
+  // re-click them — live, the second unfound modifier collapsed the group the
+  // first miss had just expanded, hiding the option again.
+  test('does not re-click an already-expanded toggle ("Show N less")', async () => {
+    document.body.innerHTML = `
+      <div role="dialog">
+        <label><input type="checkbox"> Extra Cheese</label>
+        <span role="button" data-qa="item-choices-options-multi-action-toggle">Show 4 more</span>
+      </div>`;
+    const dialog = document.querySelector('[role="dialog"]');
+    const toggle = dialog.querySelector('[data-qa*="action-toggle"]');
+    toggle.addEventListener('click', () => {
+      const expanded = toggle.textContent.includes('more');
+      if (expanded) {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        label.appendChild(input);
+        label.appendChild(document.createTextNode(' Extra 2x Bacon'));
+        label.id = 'hidden-option';
+        dialog.insertBefore(label, toggle);
+        toggle.textContent = 'Show 4 less';
+      } else {
+        dialog.querySelector('#hidden-option').remove();
+        toggle.textContent = 'Show 4 more';
+      }
+    });
+    // First miss expands the group…
+    const ok1 = await selectModifier(dialog, { name: 'Extra 2x Bacon' }, pollWait);
+    expect(ok1).toBe(true);
+    // …a second unfindable modifier must not collapse it again.
+    await selectModifier(dialog, { name: 'Unicorn Dust' }, pollWait);
+    expect(dialog.querySelector('#hidden-option')).not.toBeNull();
+  });
+
+  test('still reports false for an option that never appears (after expanding toggles)', async () => {
+    document.body.innerHTML = `
+      <div role="dialog">
+        <label><input type="checkbox"> Extra Cheese</label>
+        <button data-qa="item-choices-options-multi-action-toggle">Show 2 more</button>
+      </div>`;
+    const dialog = document.querySelector('[role="dialog"]');
+    const ok = await selectModifier(dialog, { name: 'Unicorn Dust' }, pollWait);
+    expect(ok).toBe(false);
   });
 
   test('resolves only after the selection has settled (async aria-checked)', async () => {

@@ -258,6 +258,81 @@ describe('parseMenuResponse - Just Eat dealOnly placeholders and deals', () => {
   });
 });
 
+// Just Eat models some meals/box-meals as type "deal": the variation carries
+// dealGroupsIds (modifierGroupsIds is null) and each deal group's choices
+// reference dealOnly VARIATIONS of other items. Live shape: Popeyes Whitechapel
+// "Spicy Chicken Sandwich Box Meal" (2026-07-10) — 5 required groups incl. two
+// "No Thanks" declines, invisible to a modifierGroups-only walk.
+describe('parseMenuResponse - Just Eat deal-group (box meal) choices', () => {
+  const data = {
+    props: { appProps: { preloadedState: { menu: { restaurant: { cdn: {
+      restaurant: { restaurantInfo: { name: 'Popeyes', location: { postCode: 'E1 4UT' } } },
+      items: {
+        'deal-1': {
+          id: 'deal-1', name: 'Spicy Chicken Sandwich Box Meal', type: 'deal',
+          variations: [{ id: 'v-deal-1', basePrice: 13.29, dealOnly: false, modifierGroupsIds: null, dealGroupsIds: ['dg-fries', 'dg-side'] }],
+        },
+        'i-fries': {
+          id: 'i-fries', name: 'Regular Fries', type: 'menuitem',
+          variations: [
+            { id: 'v-fries-deal', basePrice: 0, dealOnly: true },
+            { id: 'v-fries', basePrice: 3.49, dealOnly: false },
+          ],
+        },
+        'i-lfries': {
+          id: 'i-lfries', name: 'Large Fries', type: 'menuitem',
+          variations: [{ id: 'v-lfries-deal', basePrice: 0, dealOnly: true }],
+        },
+        'i-nothanks': {
+          id: 'i-nothanks', name: 'No Thanks', type: 'menuitem',
+          variations: [{ id: 'v-nothanks-deal', basePrice: 0, dealOnly: true }],
+        },
+      },
+      dealGroups: [
+        { id: 'dg-fries', name: 'Choose Your Fries', numberOfChoices: 1, dealItemVariations: [
+          { dealItemVariationId: 'v-fries-deal', additionPrice: 0 },
+          { dealItemVariationId: 'v-lfries-deal', additionPrice: 1 },
+        ] },
+        { id: 'dg-side', name: 'Add a Side?', numberOfChoices: 1, dealItemVariations: [
+          { dealItemVariationId: 'v-nothanks-deal', additionPrice: 0 },
+        ] },
+      ],
+      modifierGroups: [],
+      modifierSets: [],
+    } } } } } },
+  };
+  let result;
+  beforeAll(() => { result = parseMenuResponse(PLATFORM.JUST_EAT, data); });
+
+  test('exposes deal-group choices as modifiers with group names and surcharges', () => {
+    const meal = result.items.find((i) => i.name === 'Spicy Chicken Sandwich Box Meal');
+    expect(meal.unitPrice).toBeCloseTo(13.29);
+    expect(meal.modifiers).toMatchObject([
+      { name: 'Regular Fries', price: 0, group: 'Choose Your Fries' },
+      { name: 'Large Fries', price: 1, group: 'Choose Your Fries' },
+      { name: 'No Thanks', price: 0, group: 'Add a Side?' },
+    ]);
+  });
+  test('deal-choice modifiers carry the deal variation id and group id for pre-fill', () => {
+    const meal = result.items.find((i) => i.name === 'Spicy Chicken Sandwich Box Meal');
+    expect(meal.modifiers[0]).toMatchObject({ id: 'v-fries-deal', groupId: 'dg-fries' });
+  });
+  test('a source order with free deal selections resolves to a prefillable line', () => {
+    const [m] = matchItems([{
+      name: 'Spicy Chicken Sandwich Box Meal', quantity: 1,
+      options: [
+        { group: 'Choose Your Fries', name: 'Regular Fries', price: 0 },
+        { group: 'Add a Side?', name: 'No Thanks', price: 0 },
+      ],
+    }], result.items);
+    expect(m.basketLine.prefillable).toBe(true);
+    expect(m.basketLine.modifiers).toMatchObject([
+      { id: 'v-fries-deal', group: 'Choose Your Fries' },
+      { id: 'v-nothanks-deal', group: 'Add a Side?' },
+    ]);
+  });
+});
+
 describe('parseMenuResponse - Just Eat deferred (large menu) catalogue', () => {
   // Large menus ship empty cdn.items + a PascalCase CDN catalogue the scraper attaches.
   const data = {
@@ -268,19 +343,29 @@ describe('parseMenuResponse - Just Eat deferred (large menu) catalogue', () => {
     _feedmeItems: [
       { Id: 'p1', Name: 'Pepperoni Feast', Description: '', Type: 'menuitem',
         Variations: [{ BasePrice: 14.99, ModifierGroupsIds: ['mg1'] }] },
+      { Id: 'p2', Name: 'Pepperoni Feast Box Meal', Description: '', Type: 'deal',
+        Variations: [{ BasePrice: 18.99, DealGroupsIds: ['dg1'] }] },
+      { Id: 'p3', Name: 'Garlic Bread', Description: '', Type: 'menuitem',
+        Variations: [{ Id: 'v-gb-deal', BasePrice: 0, DealOnly: true }] },
     ],
     _feedmeItemDetails: {
       ModifierGroups: [{ Id: 'mg1', Name: 'Extras', Modifiers: ['s1'] }],
       ModifierSets: [{ Id: 's1', Modifier: { Id: 'm1', Name: 'Extra Cheese', AdditionPrice: 1.50 } }],
+      DealGroups: [{ Id: 'dg1', Name: 'Choose a Side', DealItemVariations: [{ DealItemVariationId: 'v-gb-deal', AdditionPrice: 0 }] }],
     },
   };
   let result;
   beforeAll(() => { result = parseMenuResponse(PLATFORM.JUST_EAT, data); });
 
   test('falls back to the deferred CDN catalogue and normalises PascalCase', () => {
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0].name).toBe('Pepperoni Feast');
+    expect(result.items.map((i) => i.name)).toEqual(['Pepperoni Feast', 'Pepperoni Feast Box Meal', 'Garlic Bread']);
     expect(result.items[0].unitPrice).toBeCloseTo(14.99);
+  });
+  test('resolves deal-group choices from the deferred catalogue', () => {
+    const meal = result.items.find((i) => i.name === 'Pepperoni Feast Box Meal');
+    expect(meal.modifiers).toMatchObject([
+      { name: 'Garlic Bread', price: 0, id: 'v-gb-deal', groupId: 'dg1', group: 'Choose a Side' },
+    ]);
   });
   test('resolves modifiers from the deferred item details', () => {
     expect(result.items[0].modifiers).toMatchObject([{ name: 'Extra Cheese', price: 1.50 }]);

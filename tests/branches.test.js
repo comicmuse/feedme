@@ -93,6 +93,22 @@ describe('justEatCandidates', () => {
     expect(wc.distance).toBeCloseTo(912 / 1609.344); // ~0.567 miles
     expect(wc.menuUrl).toBe('/restaurants-kfc-whitechapelaldgate/menu');
   });
+  // The area listing's per-branch deliveryFees is postcode-adjusted — it is what
+  // the basket actually charges (menu/dynamic bands are the branch's base fee;
+  // live: Popeyes Whitechapel dynamic said £0.59 while both the listing for the
+  // user's postcode and the basket said £0.79). Single-band fees are exact.
+  test('extracts the postcode-adjusted delivery fee (pounds, min/max/bands)', () => {
+    const cands = justEatCandidates(jeListing);
+    const wc = cands.find((c) => c.id === '81738');
+    expect(wc.listedDeliveryFee).toEqual({ min: 0.79, max: 0.79, numBands: 1 });
+    const bg = cands.find((c) => c.id === '73853');
+    expect(bg.listedDeliveryFee).toEqual({ min: 0.49, max: 1.49, numBands: 2 });
+  });
+  test('a record without deliveryFees yields a null listedDeliveryFee', () => {
+    const cands = justEatCandidates(jeListing);
+    const other = cands.find((c) => c.id === '132');
+    expect(other.listedDeliveryFee).toBeNull();
+  });
   test('matches end-to-end through selectNearestBranches', () => {
     // KFC branches sorted by distance: Whitechapel (912m) < Bishopsgate (1562m)
     // < Hackney (3162m); the Aniseed Bar entry is a different chain.

@@ -195,11 +195,14 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
 
   const tab = await browser.tabs.create({ url: branch.switchUrl, active: true }).catch(() => null);
   if (!tab) return;
-  // Stash the (prefillable) plan for the builder to claim once the tab has loaded.
-  const fullPlan = branch.result?.basketPlan ?? [];
-  const basketPlan = fullPlan.filter((l) => l.prefillable);
+  // Stash the whole plan for the builder to claim once the tab has loaded. Lines
+  // the matcher couldn't fully resolve (prefillable: false) are attempted too —
+  // the builder fills what it can and flags them for review; dropping them here
+  // made the overlay claim a complete fill over a short basket.
+  const basketPlan = branch.result?.basketPlan ?? [];
   console.info('[FeedMe switch] to', branch.platform, branch.switchUrl,
-    '— plan', basketPlan.length, 'prefillable of', fullPlan.length, 'lines:', JSON.stringify(fullPlan));
+    '— plan', basketPlan.filter((l) => l.prefillable).length, 'prefillable of',
+    basketPlan.length, 'lines:', JSON.stringify(basketPlan));
   if (basketPlan.length) pendingBuilds.set(tab.id, { platform: branch.platform, basketPlan });
 });
 
@@ -276,7 +279,13 @@ browser.runtime.onMessage.addListener((msg, sender) => {
     // the menu tab for scraping (pump) and to let the user switch to this branch
     // later. An off-platform/look-alike URL yields null and disables both.
     const switchUrl = resolveMenuUrl(platform, b.menuUrl);
-    comparison.branches.set(key, { platform, key, label: b.label, distance: b.distance, isCurrent: false, status: 'pending', result: null, switchUrl });
+    comparison.branches.set(key, {
+      platform, key, label: b.label, distance: b.distance, isCurrent: false,
+      status: 'pending', result: null, switchUrl,
+      // Just Eat only: the area listing's postcode-adjusted delivery fee, which
+      // is what the basket actually charges (menu/dynamic bands are base fees).
+      listedDeliveryFee: b.listedDeliveryFee ?? null,
+    });
     comparison.queued.set(key, { platform });
     keys.push(key);
   }
@@ -344,6 +353,15 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       deliveryFeeBands: msg.parsed.deliveryFeeBands,
     };
     let { deliveryFee, serviceFee } = msg.parsed;
+    // Just Eat: the area listing's postcode-adjusted fee is what the basket
+    // actually charges; menu/dynamic bands are the branch's base fee (observed
+    // live: dynamic £0.59 vs listing+basket £0.79). A single-band listing fee is
+    // exact — use it and drop the base bands. Multi-band listings only summarise
+    // min/max, so keep the dynamic bands (still marked approx in the sidebar).
+    if (branch.listedDeliveryFee && branch.listedDeliveryFee.numBands === 1) {
+      deliveryFee = branch.listedDeliveryFee.min;
+      feeOpts.deliveryFeeBands = null;
+    }
     // Other Uber branches (store-page JSON-LD) have no fees — estimate from the cart.
     if (branch.platform === PLATFORM.UBER_EATS && branchKey !== 'current') {
       const est = estimateUberFees(comparison.order);

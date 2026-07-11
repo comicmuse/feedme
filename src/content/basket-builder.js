@@ -88,7 +88,7 @@ const ACTIONABLE_SELECTOR = '[data-qa="item"], [role="button"], button, a';
 // for a non-actionable container with no actionable descendant (the overlay may
 // not have hydrated yet) so the caller keeps polling rather than clicking nothing.
 function resolveClickable(el, name, doc) {
-  const nameMatches = (c) => accessibleName(c, doc).includes(name);
+  const nameMatches = (c) => accessibleName(c, doc).startsWith(name);
   const smallestName = (list) => list.slice().sort(
     (a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length)[0];
 
@@ -131,7 +131,7 @@ function findItemCard(doc, line, platform) {
   // the first frames after a search only the decoy exists, before any overlay has
   // rendered at all. So target ONLY the overlays, matched by resolved name.
   const itemOverlays = [...doc.querySelectorAll('[data-qa="item"]')]
-    .filter((el) => accessibleName(el, doc).includes(name));
+    .filter((el) => accessibleName(el, doc).startsWith(name));
   if (itemOverlays.length) {
     itemOverlays.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
     return itemOverlays[0];
@@ -146,7 +146,7 @@ function findItemCard(doc, line, platform) {
   // button/link/[role=button], possibly wrapped in a container we descend into.
   for (const tier of ['button, a, [role="button"]', '[data-item-id], [data-testid]']) {
     const candidates = [...doc.querySelectorAll(tier)]
-      .filter((el) => accessibleName(el, doc).includes(name));
+      .filter((el) => accessibleName(el, doc).startsWith(name));
     // Shortest name = the item itself rather than a section/wrapper around it.
     candidates.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
     for (const candidate of candidates) {
@@ -187,7 +187,9 @@ function findModifierTarget(dialog, mod) {
   // Scope to the option's group when known so a name repeated across groups
   // (e.g. "No Thanks") lands in the correct one.
   const scope = findGroupContainer(dialog, mod.group) || dialog;
-  const candidates = [...scope.querySelectorAll('label, li, button, [role="checkbox"], [role="radio"]')]
+  // pie-radio carries role=radio but pie-checkbox has NO role attribute (live
+  // McDonald's multi-select, 2026-07-11) — include the hosts by tag name too.
+  const candidates = [...scope.querySelectorAll('label, li, button, [role="checkbox"], [role="radio"], pie-radio, pie-checkbox')]
     .filter((el) => norm(el.textContent).includes(name));
   candidates.sort((a, b) => a.textContent.length - b.textContent.length);
   return candidates[0] || null;
@@ -216,8 +218,29 @@ function modifierSelected(target) {
 // Within a customise dialog, tick the modifier matching mod and wait for the
 // selection to settle. The settle wait is essential: React-rendered dialogs
 // (Just Eat) drop all but the last of several selections clicked in one task.
+// Option lists can be collapsed behind a "Show N more" toggle (Just Eat:
+// span[data-qa="item-choices-options-multi-action-toggle"]) — expand them so
+// collapsed options become findable. An expanded toggle flips its text to
+// "Show N less" while keeping the same data-qa, so only click while it says
+// "more" — re-clicking would collapse the group a previous miss just expanded.
+function expandCollapsedOptions(dialog) {
+  const toggles = [...dialog.querySelectorAll('button, pie-button, [role="button"], [data-qa*="action-toggle"]')]
+    .filter((el) => (el.getAttribute('data-qa') || '').includes('action-toggle')
+      || /\bshow\s+(\d+\s+)?more\b/i.test(norm(el.textContent)));
+  for (const t of toggles) {
+    if (/\bmore\b/i.test(norm(t.textContent))) clickEl(t);
+  }
+}
+
 async function selectModifier(dialog, mod, wait = defaultWait) {
-  const target = findModifierTarget(dialog, mod);
+  let target = findModifierTarget(dialog, mod);
+  if (!target) {
+    // The option may be collapsed behind a "show more" toggle, or its whole
+    // group may only render after an earlier selection (conditional groups) —
+    // expand and wait for the row instead of giving up on the first miss.
+    expandCollapsedOptions(dialog);
+    target = await wait(() => findModifierTarget(dialog, mod), { timeout: 2000 });
+  }
   if (!target) return false;
   if (modifierSelected(target)) return true;
   clickEl(modifierClickTarget(target));
@@ -358,6 +381,10 @@ async function buildBasket(build, opts = {}) {
     } else {
       let r;
       try { r = await addLine(line, { doc, wait, platform }); } catch (_) { r = { name: line.name, requested: line.quantity || 1, added: 0, ok: false }; }
+      // A line the matcher couldn't fully resolve (prefillable: false) is still
+      // attempted, but a successful add may be missing one of the user's source
+      // selections — surface it for review rather than presenting a clean fill.
+      if (r.ok && line.prefillable === false) r.review = true;
       results.push(r);
     }
     if (overlay) overlay.update(results);
@@ -408,19 +435,25 @@ function createOverlay(doc, total) {
     },
     finish(results) {
       const failed = results.filter((r) => !r.ok);
+      const review = results.filter((r) => r.ok && r.review);
       title.textContent = failed.length ? 'FeedMe — almost there' : '✅ FeedMe — basket filled';
-      if (failed.length) {
-        list.textContent = '';
+      list.textContent = '';
+      const section = (label, rows, color) => {
+        const wrap = doc.createElement('div');
+        wrap.style.cssText = `color:${color};`;
         const lead = doc.createElement('div');
-        lead.textContent = 'Add these manually:';
-        list.appendChild(lead);
-        failed.forEach((r) => {
+        lead.textContent = label;
+        wrap.appendChild(lead);
+        rows.forEach((r) => {
           const li = doc.createElement('div');
           li.textContent = `• ${r.name || 'item'}`;
-          list.appendChild(li);
+          wrap.appendChild(li);
         });
-      }
-      setTimeout(() => host.remove(), failed.length ? 12000 : 4000);
+        list.appendChild(wrap);
+      };
+      if (failed.length) section('Add these manually:', failed, '#ef4444');
+      if (review.length) section('Check the options on:', review, '#d97706');
+      setTimeout(() => host.remove(), failed.length || review.length ? 12000 : 4000);
     },
   };
 }

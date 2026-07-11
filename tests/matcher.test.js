@@ -197,6 +197,44 @@ describe('matchItems basketLine (for scripted basket pre-fill)', () => {
     expect(result.platformItem.unitPrice).toBeCloseTo(6.99); // 5.99 + the platform's own £1.00
   });
 
+  // Live regression (McDonald's JE, 2026-07-11): the user's "Salad Dressing
+  // Choice: No Dressing" decline resolved to "Balsamic Dressing" — the group's
+  // only (positive) option — and the builder added a dressing the user refused.
+  // A decline means "select nothing": it may only resolve to another decline in
+  // its own group, and an unresolvable decline is a clean skip, not a failure.
+  test('a decline never resolves to a positive option — it skips cleanly', () => {
+    const ref = [{
+      name: 'Big Mac Meal', quantity: 1, unitPrice: 10.09, optionsTotal: 0,
+      options: [{ group: 'Salad Dressing Choice', name: 'No Dressing', price: 0 }],
+    }];
+    const platform = [{
+      id: 'je-9', name: 'Big Mac Meal', description: '', unitPrice: 10.09,
+      modifiers: [
+        { name: 'Balsamic Dressing', price: 0, id: 'balsamic', groupId: 'gd', group: 'Salad Dressing Choice' },
+        // another group's decline must not be picked up via the full-pool retry
+        { name: 'No Sauce', price: 0, id: 'no-sauce', groupId: 'gr', group: 'Remove' },
+      ],
+    }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.modifiers).toEqual([]);
+    expect(result.basketLine.prefillable).toBe(true); // skipping IS the decline
+    expect(result.platformItem.unitPrice).toBeCloseTo(10.09);
+  });
+
+  test('a free positive option does not resolve to a decline of the same words', () => {
+    const ref = [{
+      name: 'Whopper', quantity: 1, unitPrice: 6.99, optionsTotal: 0,
+      options: [{ name: 'Cheese', price: 0 }],
+    }];
+    const platform = [{
+      id: 'je-10', name: 'Whopper', description: '', unitPrice: 5.99,
+      modifiers: [{ name: 'No Cheese', price: 0, id: 'no-cheese' }],
+    }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.modifiers).toEqual([]);
+    expect(result.basketLine.prefillable).toBe(false); // a real selection went unresolved
+  });
+
   test('an option missing from its matched group falls back to the full modifier pool', () => {
     // Platforms group the same option differently — scoping must not turn a
     // present-but-elsewhere modifier into an unresolved (non-prefillable) line.
@@ -465,10 +503,26 @@ describe('computeTotal — item-level deals', () => {
     expect(result.total).toBeCloseTo(9.0);
   });
 
-  test('eligibility matches fuzzily so wording differences still qualify', () => {
-    const matches = [line('Footlong Sub', 6.0), line('Footlong Sub', 5.0)];
+  // Eligible names and matched item names both come from the SAME platform's
+  // catalogue (offer item ids resolved to names), so eligibility is exact — a
+  // similar-but-different product must not qualify. Live regression (Popeyes JE,
+  // 2026-07-10): "6 Boneless & a dip" fuzzy-matched the 50%-off eligible item
+  // "6 boneless saucin' wings" and the sidebar invented a -£4.25 discount the
+  // real basket didn't have.
+  test('eligibility is exact: a similar-but-different item does not qualify', () => {
+    const matches = [line('6 Boneless & a dip', 8.49)];
     const offers = [
-      { type: 'item-deal', rule: 'cheapest-free', eligibleItems: ['Footlong'], quantity: 2, description: 'BOGOF on footlongs' },
+      { type: 'item-deal', rule: 'percent-off-items', eligibleItems: ["6 boneless saucin' wings"], percent: 0.5, cap: Infinity, description: '50% off selected items' },
+    ];
+    const result = computeTotal(matches, 0, 0, offers);
+    expect(result.discountTotal).toBe(0);
+    expect(result.appliedDeals).toEqual([]);
+  });
+
+  test('eligibility ignores case and whitespace differences', () => {
+    const matches = [line('Footlong  Sub', 6.0), line('footlong sub', 5.0)];
+    const offers = [
+      { type: 'item-deal', rule: 'cheapest-free', eligibleItems: ['Footlong Sub'], quantity: 2, description: 'BOGOF on footlongs' },
     ];
     const result = computeTotal(matches, 0, 0, offers);
     expect(result.discountTotal).toBeCloseTo(5.0);

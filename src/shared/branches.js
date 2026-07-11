@@ -61,6 +61,20 @@ const METRES_PER_MILE = 1609.344;
 // `driveDistanceMeters`, and an `address` object. There is no brandName /
 // distanceInMiles / cuisineArea. The label uses the street (address.firstLine),
 // falling back to the city; distance is metres converted to miles.
+// The listing's per-branch `deliveryFees` summary is POSTCODE-ADJUSTED — it is
+// the fee the basket actually charges, unlike menu/dynamic's base bands (live:
+// Popeyes Whitechapel dynamic said £0.59 while the listing for the user's
+// postcode and the real basket both said £0.79). Fees arrive in pence.
+function listedDeliveryFee(r) {
+  const df = r.deliveryFees;
+  if (!df || !df.byMinFee) return null;
+  return {
+    min: (df.byMinFee.fee ?? 0) / 100,
+    max: (df.byMaxFee?.fee ?? df.byMinFee.fee ?? 0) / 100,
+    numBands: df.numBands ?? 1,
+  };
+}
+
 function justEatCandidates(nextData) {
   const map = findByKey(nextData, 'restaurantData') || {};
   return Object.values(map)
@@ -71,6 +85,7 @@ function justEatCandidates(nextData) {
       label: (r.address && (r.address.firstLine || r.address.city)) || '',
       distance: typeof r.driveDistanceMeters === 'number' ? r.driveDistanceMeters / METRES_PER_MILE : null,
       menuUrl: `/restaurants-${r.uniqueName}/menu`,
+      listedDeliveryFee: listedDeliveryFee(r),
     }));
 }
 

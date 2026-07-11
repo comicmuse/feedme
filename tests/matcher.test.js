@@ -128,6 +128,90 @@ describe('matchItems', () => {
   });
 });
 
+// Uber models size upgrades as a modifier on the base item ("Select Option:
+// Big Mac® FIFA World Cup™ Large Meal (£1.10)" on the Medium item), while other
+// platforms list each size as its own item. A selected option whose name equals
+// the reference item's name up to size words IS the reference item in another
+// size — retarget the line to that item when the platform lists it (issue #28).
+describe('matchItems variant retargeting (size upgrades)', () => {
+  const mcd = () => [
+    {
+      id: 'je-med', name: 'Big Mac® FIFA World Cup™ Medium Meal', description: '', unitPrice: 10.09,
+      modifiers: [
+        { name: 'Side Salad', price: 0, id: 'm-salad', groupId: 'g-ms', group: 'Medium Side' },
+        { name: '4 Chicken McNuggets®', price: 2.59, id: 'm-nug', groupId: 'g-ma', group: 'Meal Add On' },
+      ],
+    },
+    {
+      id: 'je-lrg', name: 'Big Mac® FIFA World Cup™ Large Meal', description: '', unitPrice: 11.19,
+      modifiers: [
+        { name: 'Side Salad', price: 0, id: 'l-salad', groupId: 'g-ls', group: 'Large Side' },
+        { name: '4 Chicken McNuggets®', price: 2.59, id: 'l-nug', groupId: 'g-la', group: 'Meal Add On' },
+      ],
+    },
+    // a standalone item sharing an add-on option's exact name must never steal the line
+    { id: 'je-nug', name: '4 Chicken McNuggets®', description: '', unitPrice: 3.99, modifiers: [] },
+  ];
+
+  test('retargets the line to the upgraded size item and drops the upgrade option', () => {
+    const ref = [{
+      name: 'Big Mac® FIFA World Cup™ Medium Meal', quantity: 1, unitPrice: 14.78,
+      options: [
+        { group: 'Select Option', name: 'Big Mac® FIFA World Cup™ Large Meal', price: 1.10 },
+        { group: 'Large Side', name: 'Side Salad', price: 0 },
+        { group: 'Meal Add On', name: '4 Chicken McNuggets®', price: 2.59 },
+      ],
+    }];
+    const [result] = matchItems(ref, mcd());
+    expect(result.platformItem.name).toBe('Big Mac® FIFA World Cup™ Large Meal');
+    // Large's own base price + its own option prices; the £1.10 upgrade is gone.
+    expect(result.platformItem.unitPrice).toBeCloseTo(11.19 + 2.59);
+    expect(result.platformItem.optionsEstimated).toBeFalsy();
+    expect(result.basketLine).toMatchObject({ id: 'je-lrg', name: 'Big Mac® FIFA World Cup™ Large Meal', prefillable: true });
+    expect(result.basketLine.modifiers).toEqual([
+      expect.objectContaining({ id: 'l-salad' }),
+      expect.objectContaining({ id: 'l-nug' }),
+    ]);
+  });
+
+  test('falls back to the base item when the platform has no upgraded-size item', () => {
+    const items = mcd().filter((i) => i.id !== 'je-lrg');
+    const ref = [{
+      name: 'Big Mac® FIFA World Cup™ Medium Meal', quantity: 1, unitPrice: 14.78,
+      options: [
+        { group: 'Select Option', name: 'Big Mac® FIFA World Cup™ Large Meal', price: 1.10 },
+        { group: 'Meal Add On', name: '4 Chicken McNuggets®', price: 2.59 },
+      ],
+    }];
+    const [result] = matchItems(ref, items);
+    expect(result.platformItem.name).toBe('Big Mac® FIFA World Cup™ Medium Meal');
+    // upgrade option unresolved: source price carried, flagged estimated, manual line
+    expect(result.platformItem.unitPrice).toBeCloseTo(10.09 + 1.10 + 2.59);
+    expect(result.platformItem.optionsEstimated).toBe(true);
+    expect(result.basketLine.prefillable).toBe(false);
+  });
+
+  test('an add-on option that names another catalogue item does not retarget the line', () => {
+    const ref = [{
+      name: 'Big Mac® FIFA World Cup™ Medium Meal', quantity: 1, unitPrice: 12.68,
+      options: [{ group: 'Meal Add On', name: '4 Chicken McNuggets®', price: 2.59 }],
+    }];
+    const [result] = matchItems(ref, mcd());
+    expect(result.platformItem.name).toBe('Big Mac® FIFA World Cup™ Medium Meal');
+    expect(result.basketLine.modifiers).toEqual([expect.objectContaining({ id: 'm-nug' })]);
+  });
+
+  test('a source without size-variant options is untouched (no upgrade detected)', () => {
+    const ref = [{
+      name: 'Big Mac® FIFA World Cup™ Medium Meal', quantity: 1, unitPrice: 10.09,
+      options: [{ group: 'Medium Side', name: 'Side Salad', price: 0 }],
+    }];
+    const [result] = matchItems(ref, mcd());
+    expect(result.platformItem.name).toBe('Big Mac® FIFA World Cup™ Medium Meal');
+    expect(result.basketLine.prefillable).toBe(true);
+  });
+});
+
 describe('matchItems basketLine (for scripted basket pre-fill)', () => {
   test('carries the platform item id and quantity, prefillable when no options', () => {
     const ref = [{ name: 'Whopper', quantity: 2, unitPrice: 5.49 }];

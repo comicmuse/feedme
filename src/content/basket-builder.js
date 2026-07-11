@@ -304,9 +304,33 @@ const CLEAR_HOOKS = {
     },
   },
   'uber-eats': {
-    surface: (doc) => doc.querySelector('[data-testid="view-carts-badge"]'),
-    removeButtons: (doc) => [...doc.querySelectorAll(
-      '[data-testid*="remove" i], button[aria-label^="Remove" i]')],
+    // Live shapes 2026-07-11 (KFC Mile End): a "BasketN" badge button opens a
+    // per-store cart drawer; each row is an <li> with a mod=editItem link whose
+    // href carries the store path, plus Decrement/Increment steppers — Decrement
+    // at quantity 1 removes the row (trash icon). Rows are scoped to the CURRENT
+    // store via the editItem href so another store's cart is never touched. The
+    // Decrement labels carry no quantity, so settling is detected from the row
+    // text (the `state` hook) instead of the button labels. The old
+    // view-carts-badge testid no longer exists; kept as a drift fallback.
+    surface: (doc) => doc.querySelector('[data-testid="view-carts-badge"]')
+      || [...doc.querySelectorAll('button')].find((b) => /^baskets?\s*\d+$/i.test(norm(b.textContent))) || null,
+    removeButtons: (doc) => {
+      const path = String((doc.location && doc.location.pathname) || '');
+      const scoped = path.includes('/store/');
+      return [...doc.querySelectorAll('a[href*="editItem"]')]
+        .filter((a) => !scoped || (a.getAttribute('href') || '').includes(path))
+        .map((a) => a.closest('li'))
+        .filter(Boolean)
+        .map((li) => [...li.querySelectorAll('button')].find((b) => (b.getAttribute('aria-label') || '') === 'Decrement'))
+        .filter(Boolean);
+    },
+    state: (doc) => [...doc.querySelectorAll('a[href*="editItem"]')]
+      .map((a) => { const li = a.closest('li'); return li ? norm(li.textContent) : ''; })
+      .join('|'),
+    dismiss: (doc) => {
+      const close = [...doc.querySelectorAll('button[aria-label="Close"]')].pop();
+      if (close) clickEl(close);
+    },
   },
 };
 
@@ -349,9 +373,13 @@ async function clearBasket(doc, platform, wait = defaultWait) {
       }
       return result;
     }
-    // A removal is confirmed by the control set changing (a button vanishing or
-    // its "from N to M" label decrementing) — the platform's own signal.
-    const state = () => hooks.removeButtons(doc).map((b) => accessibleName(b, doc)).join('|');
+    // A removal is confirmed by the platform's own signal: the hook's state
+    // string changing — by default the remove controls' accessible names (Just
+    // Eat embeds "from N to M" quantities there); platforms whose labels carry
+    // no quantity (Uber) provide a `state` hook over the row text instead.
+    const state = () => (hooks.state
+      ? hooks.state(doc)
+      : hooks.removeButtons(doc).map((b) => accessibleName(b, doc)).join('|'));
     if (!hooks.removeButtons(doc).length && hooks.surface) {
       const s = hooks.surface(doc);
       if (s) {

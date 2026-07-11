@@ -300,9 +300,11 @@ function itemDealDiscount(offer, matches) {
  * @param {Array<{type?: string, minSpend?: number, percent?: number, cap?: number, amount?: number, description?: string, rule?: 'cheapest-free'|'percent-off-items'|'free-item', eligibleItems?: string[], quantity?: number}>} offers
  *   Order-level offers plus optional `item-deal`s (rule + eligibleItems, applied
  *   against the matched cart). Applied item-deals are listed in result.appliedDeals.
- * @param {{serviceFeePct?: number, serviceFeeMin?: number, serviceFeeMax?: number, serviceFeeEstimated?: boolean, deliveryFeeBands?: Array<{minSubtotal: number, fee: number}>}} [opts]
+ * @param {{serviceFeePct?: number, serviceFeeMin?: number, serviceFeeMax?: number, serviceFeeEstimated?: boolean, deliveryFeeBands?: Array<{minSubtotal: number, fee: number}>, bagFee?: number, smallOrderFeeMax?: number, smallOrderFeeThreshold?: number}} [opts]
  *   deliveryFeeBands, when given, override the flat deliveryFee: the band with the
- *   highest minSubtotal at or below the matched subtotal is used.
+ *   highest minSubtotal at or below the matched subtotal is used. bagFee is a flat
+ *   per-order charge. smallOrderFeeMax is charged in full when the matched subtotal
+ *   is at or below smallOrderFeeThreshold (both must be given).
  */
 function computeTotal(matches, deliveryFee, serviceFee, offers, opts = {}) {
   const serviceFeePct = opts.serviceFeePct ?? 0;
@@ -334,6 +336,16 @@ function computeTotal(matches, deliveryFee, serviceFee, offers, opts = {}) {
     if (applicable) baseDelivery = applicable.fee ?? 0;
   }
 
+  // Just Eat charges the full small-order fee whenever the subtotal is at or
+  // below the threshold (boundary inclusive) — a flat step, not a top-up. The
+  // threshold is per-branch and unpublished, so the caller passes our model's
+  // value and the sidebar marks the row approximate.
+  const bagFee = opts.bagFee ?? 0;
+  const smallOrderFee =
+    opts.smallOrderFeeThreshold != null && itemsTotal <= opts.smallOrderFeeThreshold
+      ? (opts.smallOrderFeeMax ?? 0)
+      : 0;
+
   const { deliveryFee: effectiveDelivery, discountTotal, appliedDeals } = applyOffers(
     offers,
     itemsTotal,
@@ -346,9 +358,11 @@ function computeTotal(matches, deliveryFee, serviceFee, offers, opts = {}) {
     deliveryFee: effectiveDelivery,
     serviceFee: effectiveServiceFee,
     serviceFeeEstimated,
+    bagFee,
+    smallOrderFee,
     discountTotal,
     appliedDeals,
-    total: itemsTotal + effectiveDelivery + effectiveServiceFee - discountTotal,
+    total: itemsTotal + effectiveDelivery + effectiveServiceFee + bagFee + smallOrderFee - discountTotal,
     matchedCount: matches.filter((m) => m.matched).length,
     totalCount: matches.length,
   };

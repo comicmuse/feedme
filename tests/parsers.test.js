@@ -402,6 +402,25 @@ describe('parseMenuResponse - Just Eat', () => {
   test('exposes the delivery fee bands (sorted, in pounds) for basket-dependent selection', () => {
     expect(result.deliveryFeeBands).toEqual([{ minSubtotal: 0, fee: 0.29 }]);
   });
+  test('exposes the delivery bag fee in pounds', () => {
+    expect(result.bagFee).toBeCloseTo(0.10);
+  });
+  test('exposes the small-order fee cap in pounds', () => {
+    expect(result.smallOrderFeeMax).toBeCloseTo(2.00);
+  });
+  test('defaults bag and small-order fees to 0 when the branch has none', () => {
+    const fees = justeat._feedmeDynamic.RestaurantFees;
+    const noFees = {
+      ...justeat,
+      _feedmeDynamic: {
+        ...justeat._feedmeDynamic,
+        RestaurantFees: { ...fees, BagFee: null, SmallOrderFee: null },
+      },
+    };
+    const r = parseMenuResponse(PLATFORM.JUST_EAT, noFees);
+    expect(r.bagFee).toBe(0);
+    expect(r.smallOrderFeeMax).toBe(0);
+  });
   test('exposes the exact service-fee formula (not estimated)', () => {
     expect(result.serviceFeePct).toBeCloseTo(0.11);
     expect(result.serviceFeeMin).toBeCloseTo(0.99);

@@ -187,7 +187,9 @@ function findModifierTarget(dialog, mod) {
   // Scope to the option's group when known so a name repeated across groups
   // (e.g. "No Thanks") lands in the correct one.
   const scope = findGroupContainer(dialog, mod.group) || dialog;
-  const candidates = [...scope.querySelectorAll('label, li, button, [role="checkbox"], [role="radio"]')]
+  // pie-radio carries role=radio but pie-checkbox has NO role attribute (live
+  // McDonald's multi-select, 2026-07-11) — include the hosts by tag name too.
+  const candidates = [...scope.querySelectorAll('label, li, button, [role="checkbox"], [role="radio"], pie-radio, pie-checkbox')]
     .filter((el) => norm(el.textContent).includes(name));
   candidates.sort((a, b) => a.textContent.length - b.textContent.length);
   return candidates[0] || null;
@@ -216,8 +218,29 @@ function modifierSelected(target) {
 // Within a customise dialog, tick the modifier matching mod and wait for the
 // selection to settle. The settle wait is essential: React-rendered dialogs
 // (Just Eat) drop all but the last of several selections clicked in one task.
+// Option lists can be collapsed behind a "Show N more" toggle (Just Eat:
+// span[data-qa="item-choices-options-multi-action-toggle"]) — expand them so
+// collapsed options become findable. An expanded toggle flips its text to
+// "Show N less" while keeping the same data-qa, so only click while it says
+// "more" — re-clicking would collapse the group a previous miss just expanded.
+function expandCollapsedOptions(dialog) {
+  const toggles = [...dialog.querySelectorAll('button, pie-button, [role="button"], [data-qa*="action-toggle"]')]
+    .filter((el) => (el.getAttribute('data-qa') || '').includes('action-toggle')
+      || /\bshow\s+(\d+\s+)?more\b/i.test(norm(el.textContent)));
+  for (const t of toggles) {
+    if (/\bmore\b/i.test(norm(t.textContent))) clickEl(t);
+  }
+}
+
 async function selectModifier(dialog, mod, wait = defaultWait) {
-  const target = findModifierTarget(dialog, mod);
+  let target = findModifierTarget(dialog, mod);
+  if (!target) {
+    // The option may be collapsed behind a "show more" toggle, or its whole
+    // group may only render after an earlier selection (conditional groups) —
+    // expand and wait for the row instead of giving up on the first miss.
+    expandCollapsedOptions(dialog);
+    target = await wait(() => findModifierTarget(dialog, mod), { timeout: 2000 });
+  }
   if (!target) return false;
   if (modifierSelected(target)) return true;
   clickEl(modifierClickTarget(target));

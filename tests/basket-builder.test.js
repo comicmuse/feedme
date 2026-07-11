@@ -391,6 +391,116 @@ describe('selectModifier live dialog shapes', () => {
     expect(dialog.querySelector('input').checked).toBe(true);
   });
 
+  // Live regression (McDonald's JE, 2026-07-11): checkbox options are bare
+  // pie-checkbox hosts with NO role attribute (unlike pie-radio[role=radio]), so
+  // the candidate query missed every multi-select option in the dialog.
+  test('matches a role-less pie-checkbox host by its text (Just Eat multi-select)', async () => {
+    document.body.innerHTML = '<div role="dialog"></div>';
+    const dialog = document.querySelector('[role="dialog"]');
+    const host = document.createElement('pie-checkbox');
+    host.setAttribute('data-qa', 'item-choices-options-multi-check');
+    host.textContent = 'Extra 2x Bacon +£1.49';
+    const shadow = host.attachShadow({ mode: 'open' });
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    shadow.appendChild(input);
+    input.addEventListener('click', () => { input.checked = true; });
+    dialog.appendChild(host);
+
+    const ok = await selectModifier(dialog, { name: 'Extra 2x Bacon' }, pollWait);
+    expect(ok).toBe(true);
+    expect(input.checked).toBe(true);
+  });
+
+  // Live regression (McDonald's JE, 2026-07-11): "Extra 2x Bacon" lives behind the
+  // group's "Show N more" toggle, so it isn't in the DOM until the toggle is
+  // clicked — the builder reported it NOT selected and the paid extra was lost.
+  test('expands a "show more" toggle to reach a collapsed option (Just Eat shape)', async () => {
+    document.body.innerHTML = `
+      <div role="dialog">
+        <p>Add extra</p>
+        <label><input type="checkbox"> Extra Cheese</label>
+        <button data-qa="item-choices-options-multi-action-toggle">Show 2 more</button>
+      </div>`;
+    const dialog = document.querySelector('[role="dialog"]');
+    dialog.querySelector('[data-qa="item-choices-options-multi-action-toggle"]').addEventListener('click', (e) => {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(' Extra 2x Bacon'));
+      dialog.insertBefore(label, e.target);
+    });
+    const ok = await selectModifier(dialog, { name: 'Extra 2x Bacon', group: 'Add extra' }, pollWait);
+    expect(ok).toBe(true);
+    expect([...dialog.querySelectorAll('input')].some((i) => i.checked && i.parentElement.textContent.includes('Extra 2x Bacon'))).toBe(true);
+  });
+
+  // A group can render only after an earlier selection (McDonald's "Salad Dressing
+  // Choice" appears once Side Salad is picked) — wait for the row, don't give up
+  // on the first miss.
+  test('waits for an option row that renders late (conditional group)', async () => {
+    document.body.innerHTML = '<div role="dialog"></div>';
+    const dialog = document.querySelector('[role="dialog"]');
+    setTimeout(() => {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = 'radio';
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(' Balsamic Dressing'));
+      dialog.appendChild(label);
+    }, 20);
+    const ok = await selectModifier(dialog, { name: 'Balsamic Dressing' }, pollWait);
+    expect(ok).toBe(true);
+    expect(dialog.querySelector('input').checked).toBe(true);
+  });
+
+  // Expanded toggles flip to "Show N less" (same data-qa). A later miss must NOT
+  // re-click them — live, the second unfound modifier collapsed the group the
+  // first miss had just expanded, hiding the option again.
+  test('does not re-click an already-expanded toggle ("Show N less")', async () => {
+    document.body.innerHTML = `
+      <div role="dialog">
+        <label><input type="checkbox"> Extra Cheese</label>
+        <span role="button" data-qa="item-choices-options-multi-action-toggle">Show 4 more</span>
+      </div>`;
+    const dialog = document.querySelector('[role="dialog"]');
+    const toggle = dialog.querySelector('[data-qa*="action-toggle"]');
+    toggle.addEventListener('click', () => {
+      const expanded = toggle.textContent.includes('more');
+      if (expanded) {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        label.appendChild(input);
+        label.appendChild(document.createTextNode(' Extra 2x Bacon'));
+        label.id = 'hidden-option';
+        dialog.insertBefore(label, toggle);
+        toggle.textContent = 'Show 4 less';
+      } else {
+        dialog.querySelector('#hidden-option').remove();
+        toggle.textContent = 'Show 4 more';
+      }
+    });
+    // First miss expands the group…
+    const ok1 = await selectModifier(dialog, { name: 'Extra 2x Bacon' }, pollWait);
+    expect(ok1).toBe(true);
+    // …a second unfindable modifier must not collapse it again.
+    await selectModifier(dialog, { name: 'Unicorn Dust' }, pollWait);
+    expect(dialog.querySelector('#hidden-option')).not.toBeNull();
+  });
+
+  test('still reports false for an option that never appears (after expanding toggles)', async () => {
+    document.body.innerHTML = `
+      <div role="dialog">
+        <label><input type="checkbox"> Extra Cheese</label>
+        <button data-qa="item-choices-options-multi-action-toggle">Show 2 more</button>
+      </div>`;
+    const dialog = document.querySelector('[role="dialog"]');
+    const ok = await selectModifier(dialog, { name: 'Unicorn Dust' }, pollWait);
+    expect(ok).toBe(false);
+  });
+
   test('resolves only after the selection has settled (async aria-checked)', async () => {
     document.body.innerHTML = '<div role="dialog"></div>';
     const dialog = document.querySelector('[role="dialog"]');

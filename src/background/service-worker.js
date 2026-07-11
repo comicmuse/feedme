@@ -1,4 +1,4 @@
-const { PLATFORM, CHECKOUT_PATTERNS, MSG, buildSearchUrl, isAllowedMenuUrl, isMenuPageUrl, getConfig, browser } = require('../shared/constants');
+const { PLATFORM, CHECKOUT_PATTERNS, MSG, JUST_EAT_SMALL_ORDER_THRESHOLD, buildSearchUrl, isAllowedMenuUrl, isMenuPageUrl, getConfig, browser } = require('../shared/constants');
 const { matchItems, computeTotal, estimateUberFees } = require('../shared/matcher');
 const { buildSnapshot } = require('../shared/snapshot');
 const { createScheduler } = require('../shared/pool');
@@ -351,7 +351,14 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       serviceFeePct: msg.parsed.serviceFeePct, serviceFeeMin: msg.parsed.serviceFeeMin,
       serviceFeeMax: msg.parsed.serviceFeeMax, serviceFeeEstimated: msg.parsed.serviceFeeEstimated,
       deliveryFeeBands: msg.parsed.deliveryFeeBands,
+      bagFee: msg.parsed.bagFee,
+      smallOrderFeeMax: msg.parsed.smallOrderFeeMax,
     };
+    // The threshold is our model, not scraped (see the constant) — only Just Eat
+    // publishes a small-order fee, so only its branches get one.
+    if (branch.platform === PLATFORM.JUST_EAT) {
+      feeOpts.smallOrderFeeThreshold = JUST_EAT_SMALL_ORDER_THRESHOLD;
+    }
     let { deliveryFee, serviceFee } = msg.parsed;
     // Just Eat: the area listing's postcode-adjusted fee is what the basket
     // actually charges; menu/dynamic bands are the branch's base fee (observed

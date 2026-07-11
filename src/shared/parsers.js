@@ -348,6 +348,20 @@ function justEatServiceFee(dynamic) {
   return { serviceFee: 0, serviceFeePct: 0, serviceFeeMin: 0, serviceFeeMax: Infinity };
 }
 
+// Flat per-order bag charge, published per service type in pence.
+function justEatBagFee(dynamic) {
+  return (dynamic?.RestaurantFees?.BagFee?.ServiceTypes?.Delivery?.Amount ?? 0) / 100;
+}
+
+// Small-order fee: a flat MaxAmount charged when the basket subtotal is at or
+// below a threshold. The threshold is per-restaurant and server-side only
+// (confirmed live 2026-07-11: £10 JET-delivered, £7 marketplace; not in
+// menu/dynamic, the listing, or the SSR), so only the cap is scraped here —
+// computeTotal applies it against our modelled threshold.
+function justEatSmallOrderFee(dynamic) {
+  return (dynamic?.RestaurantFees?.SmallOrderFee?.MaxAmount ?? 0) / 100;
+}
+
 // Paid options for a Just Eat item: each item's variation references modifier
 // groups, whose members are modifierSets carrying the option name + additionPrice.
 function justEatItemModifiers(item, groupsById, modifierBySetId) {
@@ -490,6 +504,8 @@ function parseJustEat(data) {
     serviceFeeMin: svc.serviceFeeMin,
     serviceFeeMax: svc.serviceFeeMax,
     serviceFeeEstimated: false,
+    bagFee: justEatBagFee(data._feedmeDynamic),
+    smallOrderFeeMax: justEatSmallOrderFee(data._feedmeDynamic),
     offers: justEatOffers(data._feedmeOffers, itemNameById),
   };
 }

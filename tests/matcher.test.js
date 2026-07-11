@@ -537,6 +537,47 @@ describe('computeTotal', () => {
       expect(result.deliveryFee).toBeCloseTo(2.50);
     });
   });
+
+  // Just Eat's small-order fee is a flat SmallOrderFee.MaxAmount charged when the
+  // subtotal is at or below a threshold — inclusive at the boundary (live capture
+  // 2026-07-11, McDonald's Bow: £2 charged at a £10.00 subtotal, none at £10.50).
+  // The bag fee is a flat per-order charge.
+  describe('Just Eat bag and small-order fees', () => {
+    const basket = (price) => [{ referenceItem: { quantity: 1 }, platformItem: { unitPrice: price }, matched: true }];
+    const jeFees = { serviceFeePct: 0.11, serviceFeeMin: 0.99, serviceFeeMax: 2.99, smallOrderFeeMax: 2.00, smallOrderFeeThreshold: 10 };
+
+    test('adds the flat bag fee to the total and exposes it', () => {
+      const result = computeTotal(basket(12.00), 0, 0, [], { bagFee: 0.10 });
+      expect(result.bagFee).toBeCloseTo(0.10);
+      expect(result.total).toBeCloseTo(12.10);
+    });
+
+    test('charges the flat fee when the subtotal is at or below the threshold', () => {
+      // Live: 10.00 + 1.19 delivery + 1.10 service + 2.00 small order = 14.29
+      const result = computeTotal(basket(10.00), 1.19, 0, [], jeFees);
+      expect(result.smallOrderFee).toBeCloseTo(2.00);
+      expect(result.total).toBeCloseTo(14.29);
+    });
+
+    test('charges nothing above the threshold', () => {
+      const result = computeTotal(basket(10.50), 1.19, 0, [], jeFees);
+      expect(result.smallOrderFee).toBe(0);
+      expect(result.total).toBeCloseTo(10.50 + 1.19 + 10.50 * 0.11);
+    });
+
+    test('defaults both fees to 0 when the branch publishes none', () => {
+      const result = computeTotal(basket(5.00), 0, 0, [], { smallOrderFeeThreshold: 10 });
+      expect(result.smallOrderFee).toBe(0);
+      expect(result.bagFee).toBe(0);
+      expect(result.total).toBeCloseTo(5.00);
+    });
+
+    test('charges no small-order fee without a threshold (other platforms)', () => {
+      const result = computeTotal(basket(5.00), 0, 0, [], { smallOrderFeeMax: 2.00 });
+      expect(result.smallOrderFee).toBe(0);
+      expect(result.total).toBeCloseTo(5.00);
+    });
+  });
 });
 
 describe('computeTotal — item-level deals', () => {

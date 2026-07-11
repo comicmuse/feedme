@@ -92,7 +92,16 @@
             "Percentage": { "MinAmount": 99, "MaxAmount": 299, "Percent": 11 }
           }
         }
-      }
+      },
+      "BagFee": {
+        "Description": "",
+        "ServiceTypes": {
+          "Default": null,
+          "Collection": { "Amount": 10, "Copy": "Bag £0.10" },
+          "Delivery": { "Amount": 10, "Copy": "Bag £0.10" }
+        }
+      },
+      "SmallOrderFee": { "Copy": "Small order £0.00 - £2.00", "MaxAmount": 200 }
     }
   }
 }

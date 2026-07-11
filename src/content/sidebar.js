@@ -217,6 +217,16 @@ function buildBranchCard(branch, isCheapest) {
     : null;
   appendDetRow(det, 'Delivery', fmt(t.deliveryFee), deliveryNote);
   appendDetRow(det, `Service${t.serviceFeeEstimated ? ' (est.)' : ''}`, fmt(t.serviceFee));
+  if (t.bagFee > 0) appendDetRow(det, 'Bag fee', fmt(t.bagFee));
+  // The subtotal threshold below which Just Eat charges this is per-restaurant
+  // and unpublished; we apply the common £10, so near the boundary it may not
+  // match checkout.
+  if (t.smallOrderFee > 0) {
+    appendDetRow(det, 'Small order', fmt(t.smallOrderFee), {
+      marker: 'approx.',
+      tooltip: 'Just Eat adds a small-order fee below a spend threshold that varies by restaurant, so this may not apply at checkout.',
+    });
+  }
   if (t.discountTotal > 0) appendDetRow(det, 'Discounts', `-${fmt(t.discountTotal)}`);
   card.appendChild(det);
 

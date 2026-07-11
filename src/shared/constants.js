@@ -71,6 +71,13 @@ async function getConfig() {
 const DELIVEROO_SERVICE_FEE_PCT = 0.11;
 const DELIVEROO_SERVICE_FEE_CAP = 3.49;
 
+// Just Eat charges its small-order fee (SmallOrderFee.MaxAmount, flat) when the
+// basket subtotal is at or below a threshold the platform never publishes — it
+// only exists server-side, in basket responses. Live captures (2026-07-11) put it
+// at £10.00 inclusive for JET-delivered branches and £7.00 for a marketplace
+// branch; we model the common £10 and label the row approximate in the sidebar.
+const JUST_EAT_SMALL_ORDER_THRESHOLD = 10;
+
 function platformFromUrl(url) {
   try {
     const hostname = new URL(url).hostname;
@@ -144,6 +151,7 @@ module.exports = {
   DEFAULT_MAX_CONCURRENT,
   DELIVEROO_SERVICE_FEE_PCT,
   DELIVEROO_SERVICE_FEE_CAP,
+  JUST_EAT_SMALL_ORDER_THRESHOLD,
   platformFromUrl,
   buildSearchUrl,
   isAllowedMenuUrl,

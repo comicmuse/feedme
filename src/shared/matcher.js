@@ -77,7 +77,15 @@ function priceOptions(ref, platformModifiers) {
   // tick it once, so letting duplicates share a hit would double-count its price
   // while the basket silently ends up with a single selection.
   const used = new Set();
+  // A decline ("No Thanks", "No Dressing", "None") means "select nothing" in its
+  // group. It may only resolve to another decline — never a positive option (live:
+  // "No Dressing" fuzzy-matched the group's only option "Balsamic Dressing" and
+  // the builder added a dressing the user refused) — and never outside its group
+  // (a decline is meaningless elsewhere). When the target group has no decline
+  // option, the group is decline-by-omission: skipping is exactly the selection.
+  const isDecline = (name) => /^(no|none|without)\b/i.test(String(name ?? '').trim());
   for (const opt of options) {
+    const declined = isDecline(opt.name);
     // Candidate pool: the option's own group when we can match it, else all mods.
     let pool = mods;
     if (opt.group && groupFuse) {
@@ -95,18 +103,24 @@ function priceOptions(ref, platformModifiers) {
         fuse = new Fuse(candidates, { keys: ['name'], threshold: FUSE_THRESHOLD });
         fuseByPool.set(candidates, fuse);
       }
-      const results = fuse.search(opt.name).filter((r) => !used.has(r.item));
+      const results = fuse.search(opt.name)
+        .filter((r) => !used.has(r.item))
+        // decline-ness must agree in both directions.
+        .filter((r) => isDecline(r.item.name) === declined);
       const wantPaid = opt.price > 0;
       return (results.find((r) => (r.item.price > 0) === wantPaid) ?? results[0])?.item ?? null;
     };
     let hit = bestHit(pool);
     // Platforms group the same option differently, so an in-group miss retries the
-    // whole pool before the option is declared unresolved.
-    if (!hit && pool !== mods) hit = bestHit(mods);
+    // whole pool before the option is declared unresolved — except declines, which
+    // only make sense within their own group.
+    if (!hit && pool !== mods && !declined) hit = bestHit(mods);
     if (hit) {
       used.add(hit);
       cost += hit.price;
       matched.push(hit);
+    } else if (declined) {
+      // No decline option on the target: selecting nothing IS the decline.
     } else {
       cost += opt.price;
       if (opt.price > 0) estimated = true; // a £0 miss doesn't flag the total as estimated

@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-const { buildBasket, findItemCard, selectModifier, findAddButton } = require('../src/content/basket-builder');
+const { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket } = require('../src/content/basket-builder');
 
 // A synthetic menu DOM that mirrors the shape the engine targets: item rows whose
 // visible text carries the name, a customise dialog with labelled options, and an
@@ -626,5 +626,71 @@ describe('surfacing items via the menu search box (Just Eat)', () => {
     const plan = [{ name: 'Zinger Tower Burger', quantity: 1, modifiers: [], prefillable: true }];
     const results = await buildBasket({ basketPlan: plan }, { wait: pollWait, headless: true });
     expect(results[0]).toMatchObject({ added: 1, ok: true });
+  });
+});
+
+// ── clearBasket ──────────────────────────────────────────────────────────────
+// A synthetic Just Eat basket pane: one decrease button per item row, labelled
+// "Decrease quantity of X from N to M" (live shape, 2026-07-11). Clicking
+// decrements the quantity; at zero the row (and its button) disappears.
+function mountBasketPane(rows) {
+  const pane = document.createElement('aside');
+  pane.id = 'pane';
+  document.body.appendChild(pane);
+  rows.forEach(({ name, qty }) => {
+    const btn = document.createElement('button');
+    let n = qty;
+    const label = () => `Decrease quantity of ${name} from ${n} to ${n - 1}`;
+    btn.setAttribute('aria-label', label());
+    btn.addEventListener('click', () => {
+      n -= 1;
+      if (n <= 0) btn.remove(); else btn.setAttribute('aria-label', label());
+    });
+    pane.appendChild(btn);
+  });
+  return pane;
+}
+
+describe('clearBasket', () => {
+  beforeEach(() => { document.body.innerHTML = ''; });
+  const fastWait = (fn) => Promise.resolve(fn());
+
+  test('removes every unit and reports the count (Just Eat shape)', async () => {
+    mountBasketPane([{ name: 'Spicy Mayo Dip', qty: 2 }, { name: 'Big Mac Sauce', qty: 1 }]);
+    const r = await clearBasket(document, 'just-eat', fastWait);
+    expect(r).toEqual({ hadItems: true, cleared: true, removed: 3 });
+    expect(document.querySelectorAll('#pane button')).toHaveLength(0);
+  });
+
+  test('is a no-op on an empty basket', async () => {
+    const r = await clearBasket(document, 'just-eat', fastWait);
+    expect(r).toEqual({ hadItems: false, cleared: true, removed: 0 });
+  });
+
+  test('is a no-op for an unknown platform', async () => {
+    mountBasketPane([{ name: 'Stray', qty: 1 }]);
+    const r = await clearBasket(document, 'unknown-platform', fastWait);
+    expect(r).toEqual({ hadItems: false, cleared: true, removed: 0 });
+    expect(document.querySelectorAll('#pane button')).toHaveLength(1);
+  });
+
+  test('stops and reports cleared:false when a removal does not register', async () => {
+    // A button whose click changes nothing (platform swallowed it).
+    const pane = document.createElement('aside');
+    const btn = document.createElement('button');
+    btn.setAttribute('aria-label', 'Decrease quantity of Stuck Item from 1 to 0');
+    pane.appendChild(btn);
+    document.body.appendChild(pane);
+    const r = await clearBasket(document, 'just-eat', fastWait);
+    expect(r).toEqual({ hadItems: true, cleared: false, removed: 0 });
+  });
+
+  test('surfaces a hidden basket view before clearing (Just Eat "View basket")', async () => {
+    const view = document.createElement('button');
+    view.textContent = 'View basket';
+    view.addEventListener('click', () => mountBasketPane([{ name: 'Old Fries', qty: 1 }]));
+    document.body.appendChild(view);
+    const r = await clearBasket(document, 'just-eat', fastWait);
+    expect(r).toEqual({ hadItems: true, cleared: true, removed: 1 });
   });
 });

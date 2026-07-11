@@ -260,6 +260,82 @@ function dismissDialog(doc, dialog) {
   doc.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 }
 
+// ── Basket clearing (issue #24) ──────────────────────────────────────────────
+// Pre-existing basket items make the filled basket diverge from the sidebar's
+// comparison, so the plan starts by emptying the basket via the platform's own
+// remove/decrease controls. Per-platform hooks: `surface` (optional) returns a
+// control that reveals the basket view when it isn't rendered; `removeButtons`
+// returns the current remove/decrease controls. Deliveroo and Uber selectors
+// are candidates until the live-verification pass pins them.
+const CLEAR_HOOKS = {
+  'just-eat': {
+    surface: (doc) => [...doc.querySelectorAll('button, [role="button"]')]
+      .find((b) => /view basket/i.test(accessibleName(b, doc))) || null,
+    removeButtons: (doc) => [...doc.querySelectorAll(
+      'button[aria-label^="Decrease quantity"], pie-icon-button[aria-label^="Decrease quantity"]')],
+  },
+  deliveroo: {
+    surface: null,
+    removeButtons: (doc) => [...doc.querySelectorAll(
+      'button[aria-label^="Remove"], button[aria-label*="decrease" i]')],
+  },
+  'uber-eats': {
+    surface: (doc) => doc.querySelector('[data-testid="view-carts-badge"]'),
+    removeButtons: (doc) => [...doc.querySelectorAll(
+      '[data-testid*="remove" i], button[aria-label^="Remove" i]')],
+  },
+};
+
+// Each click removes one UNIT (a decrease at quantity 1 removes the row), so the
+// bound is on clicks, not rows. Big enough for any real basket, small enough to
+// end a stuck loop quickly.
+const MAX_CLEAR_CLICKS = 60;
+
+// Empty the platform basket. Never throws. `cleared: false` means items may
+// remain (the caller warns and proceeds — user-confirmed behaviour).
+async function clearBasket(doc, platform, wait = defaultWait) {
+  const hooks = CLEAR_HOOKS[platform];
+  const result = { hadItems: false, cleared: true, removed: 0 };
+  if (!hooks || !doc) return result;
+  try {
+    // A removal is confirmed by the control set changing (a button vanishing or
+    // its "from N to M" label decrementing) — the platform's own signal.
+    const state = () => hooks.removeButtons(doc).map((b) => accessibleName(b, doc)).join('|');
+    if (!hooks.removeButtons(doc).length && hooks.surface) {
+      const s = hooks.surface(doc);
+      if (s) {
+        dlog('clear: surfacing basket view via', describeEl(s, doc));
+        clickEl(s);
+        await wait(() => hooks.removeButtons(doc).length, { timeout: 3000 });
+      }
+    }
+    for (let i = 0; i < MAX_CLEAR_CLICKS; i++) {
+      const buttons = hooks.removeButtons(doc);
+      if (!buttons.length) {
+        if (result.removed) dlog(`clear: basket empty after ${result.removed} removal(s)`);
+        return result;
+      }
+      result.hadItems = true;
+      const before = state();
+      dlog('clear: removing via', describeEl(buttons[0], doc));
+      clickEl(buttons[0]);
+      const settled = await wait(() => state() !== before, { timeout: 4000 });
+      if (!settled) {
+        dlog('clear: removal did not register — stopping with items left');
+        result.cleared = false;
+        return result;
+      }
+      result.removed += 1;
+    }
+    dlog('clear: hit the click bound with items remaining');
+    result.cleared = false;
+  } catch (e) {
+    dlog('clear: failed —', e && e.message);
+    result.cleared = false;
+  }
+  return result;
+}
+
 // Set an input's value the way React-controlled pages expect: through the
 // native value setter, followed by an input event.
 function setNativeValue(input, value) {
@@ -458,7 +534,7 @@ function createOverlay(doc, total) {
   };
 }
 
-module.exports = { buildBasket, findItemCard, selectModifier, findAddButton };
+module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket };
 
 // Bootstrap when injected into a real page (guarded so require() in tests is inert).
 if (typeof window !== 'undefined' && window.__feedmeBuild) {

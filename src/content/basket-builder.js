@@ -388,9 +388,31 @@ async function openItemDialog(doc, line, wait, surface, platform) {
       return all.find((d) => norm(d.textContent).includes(norm(line.name))) || null;
     }, { timeout: 1500 });
     if (dialog) return dialog;
+    // A cross-restaurant confirm can also block the customise dialog from
+    // opening at all — accept it and retry the click.
+    if (acceptNewBasketPrompt(doc, line)) continue;
     dlog(`"${line.name}": no dialog after click (attempt ${attempt + 1})`);
   }
   return null;
+}
+
+// Cross-restaurant switch: adding while another restaurant's basket exists makes
+// the platform confirm before replacing it ("Starting a new order will clear your
+// basket at …"). Accepting IS the clear (spec #24), so find such a prompt and
+// click its affirmative. Excludes the item's own customise dialog by name.
+const NEW_BASKET_RE = /\b(new (basket|order)|start (a )?(new|fresh|again)|clear your basket)\b/i;
+function acceptNewBasketPrompt(doc, line) {
+  const prompt = [...doc.querySelectorAll(DIALOG_SELECTOR)]
+    .find((d) => NEW_BASKET_RE.test(norm(d.textContent))
+      && !norm(d.textContent).includes(norm(line.name)));
+  if (!prompt) return false;
+  const yes = [...prompt.querySelectorAll('button, [role="button"], pie-button')]
+    .find((b) => NEW_BASKET_RE.test(norm(b.textContent))
+      || /^(yes|ok|continue|confirm)$/.test(norm(b.textContent)));
+  if (!yes) return false;
+  dlog(`"${line.name}": accepting new-basket prompt via`, describeEl(yes, doc));
+  clickEl(yes);
+  return true;
 }
 
 // Add a single plan line (respecting its quantity). Returns a per-line result; it
@@ -432,8 +454,17 @@ async function addLine(line, ctx) {
     // open — counting that unit would report a filled basket the platform never
     // received, and the stale dialog would be re-matched on the next unit.
     if (!closed) {
-      dismissDialog(doc, dialog);
-      break;
+      // The add may be blocked by a cross-restaurant confirm — accept it (that
+      // IS the basket clear) and re-await the close before failing the line.
+      let closedAfterPrompt = false;
+      if (acceptNewBasketPrompt(doc, line)) {
+        closedAfterPrompt = await wait(() => !doc.contains(dialog), { timeout: 3000 });
+        dlog(`"${line.name}": dialog ${closedAfterPrompt ? 'closed' : 'still open'} after accepting the prompt`);
+      }
+      if (!closedAfterPrompt) {
+        dismissDialog(doc, dialog);
+        break;
+      }
     }
     added += 1;
   }

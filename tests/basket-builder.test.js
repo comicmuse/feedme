@@ -758,3 +758,35 @@ describe('buildBasket clears the basket first', () => {
     expect(shadow.textContent).toContain("Couldn't clear pre-existing items — check your basket.");
   });
 });
+
+describe('cross-restaurant new-basket prompt', () => {
+  const fastWait = (fn) => Promise.resolve(fn());
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('accepts a "start new order?" confirm that blocks the add, then counts the line', async () => {
+    mountMenu();
+    // First add-click spawns a Deliveroo-style confirm instead of closing the
+    // dialog; clicking "New order" removes the confirm AND completes the add.
+    const root = document.getElementById('dialog-root');
+    let intercepted = false;
+    root.addEventListener('click', (e) => {
+      if (!e.target.classList.contains('add') || intercepted) return;
+      intercepted = true;
+      e.stopPropagation();
+      const confirm = document.createElement('div');
+      confirm.setAttribute('role', 'dialog');
+      confirm.id = 'confirm';
+      const p = document.createElement('p');
+      p.textContent = 'Starting a new order will clear your basket at Popeyes Whitechapel';
+      const yes = document.createElement('button');
+      yes.textContent = 'New order';
+      yes.addEventListener('click', () => { confirm.remove(); root.innerHTML = ''; });
+      confirm.appendChild(p); confirm.appendChild(yes);
+      document.body.appendChild(confirm);
+    }, true);
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ platform: 'deliveroo', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ name: 'Whopper', added: 1, ok: true });
+    expect(document.getElementById('confirm')).toBeNull();
+  });
+});

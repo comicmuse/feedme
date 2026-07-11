@@ -2,6 +2,15 @@ const Fuse = require('fuse.js');
 
 const FUSE_THRESHOLD = 0.4;
 
+// Case/whitespace-insensitive name comparison, shared by exact-name checks.
+const normalize = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+// Size adjectives whose swap distinguishes variants of one product ("… Medium
+// Meal" vs "… Large Meal"). Names equal after stripping these are the same
+// product in different sizes.
+const SIZE_WORDS_RE = /\b(small|medium|large|regular|extra large|xl)\b/gi;
+const sizeAgnostic = (s) => normalize(String(s ?? '').replace(SIZE_WORDS_RE, ' '));
+
 // Combos, meals, bundles and multipacks fuzzy-match the same words as a single
 // item but cost far more, so they're de-prioritised unless the reference item is
 // itself one of these.
@@ -163,20 +172,40 @@ function matchItems(referenceItems, platformItems) {
   });
 
   return referenceItems.map((ref) => {
-    const results = fuse.search(ref.name);
+    // Size-upgrade retargeting (issue #28): Uber sells sizes as a modifier on the
+    // base item ("Select Option: … Large Meal (£1.10)"), other platforms as
+    // separate items. An option whose name equals the reference's name up to size
+    // words is the same product in another size — when THIS platform lists that
+    // size as its own item (exact normalized name), the line retargets to it and
+    // the upgrade option is consumed. Otherwise everything falls through to the
+    // base-item path (the upgrade stays an option: resolved as a modifier on
+    // platforms that also sell sizes as modifiers, or honestly unresolved).
+    let effectiveRef = ref;
+    const upgrade = (ref.options ?? []).find((o) =>
+      o.name
+      && normalize(o.name) !== normalize(ref.name)
+      && sizeAgnostic(o.name) === sizeAgnostic(ref.name));
+    if (upgrade) {
+      const sized = platformItems.find((i) => i.unitPrice > 0 && normalize(i.name) === normalize(upgrade.name));
+      if (sized) {
+        effectiveRef = { ...ref, name: sized.name, options: ref.options.filter((o) => o !== upgrade) };
+      }
+    }
+
+    const results = fuse.search(effectiveRef.name);
     // Menus often have several entries matching the same words — a £0 combo-builder
     // placeholder, the real à-la-carte item, and bundles/meals that cost far more.
     // Pick the best-scoring priced match, de-prioritising combos; if none qualify
     // it's unmatched, which counts against completeness rather than silently
     // lowering the total with a £0 (or wildly inflating it with a meal deal).
-    const item = pickBestPricedMatch(results, ref.name);
+    const item = pickBestPricedMatch(results, effectiveRef.name);
     if (!item) {
       return { referenceItem: ref, platformItem: null, matched: false, basketLine: null };
     }
     // Price the user's selected options using THIS platform's own modifier prices
     // where it lists them (exact); fall back to the source price and flag as an
     // estimate only for options this platform doesn't have.
-    const { cost, estimated, matched, unresolved } = priceOptions(ref, item.modifiers);
+    const { cost, estimated, matched, unresolved } = priceOptions(effectiveRef, item.modifiers);
     const platformItem = cost
       ? { ...item, unitPrice: item.unitPrice + cost, optionsEstimated: estimated }
       : item;
@@ -228,7 +257,6 @@ function applyOffers(offers, itemsTotal, deliveryFee, matches = []) {
 // matching here invented discounts for similar-but-different products
 // ("6 Boneless & a dip" qualifying for a deal on "6 boneless saucin' wings").
 function eligibleUnitPrices(offer, matches) {
-  const normalize = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
   const eligible = new Set((offer.eligibleItems ?? []).map(normalize));
   if (!eligible.size) return [];
   const units = [];

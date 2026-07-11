@@ -287,9 +287,21 @@ const CLEAR_HOOKS = {
     },
   },
   deliveroo: {
-    surface: null,
-    removeButtons: (doc) => [...doc.querySelectorAll(
-      'button[aria-label^="Remove"], button[aria-label*="decrease" i]')],
+    // Live shapes 2026-07-11 (Popeyes Shoreditch): the basket aside carries a
+    // one-click [aria-label="Delete all items"] control guarded by an "Are you
+    // sure…?" confirm. The aside ALSO hosts "People also added" quick-add
+    // steppers (aria-label "Decrease quantity") that must never be clicked, so
+    // Deliveroo clears via clearAll only — no removeButtons loop. Row buttons
+    // read "Nx Item £…"; the leading quantities give the removed count.
+    countItems: (doc) => [...doc.querySelectorAll('[aria-label="Basket"] button')]
+      .map((b) => ((b.textContent || '').match(/^\s*(\d+)\s*x/i) || [])[1])
+      .filter(Boolean)
+      .reduce((s, n) => s + Number(n), 0),
+    clearAll: {
+      trigger: (doc) => doc.querySelector('[aria-label="Basket"] [aria-label="Delete all items"]'),
+      confirm: (doc) => [...doc.querySelectorAll('[role="dialog"] button, [aria-modal="true"] button')]
+        .find((b) => /delete this basket/i.test(norm(b.textContent))) || null,
+    },
   },
   'uber-eats': {
     surface: (doc) => doc.querySelector('[data-testid="view-carts-badge"]'),
@@ -311,6 +323,32 @@ async function clearBasket(doc, platform, wait = defaultWait) {
   if (!hooks || !doc) return result;
   let surfaced = false;
   try {
+    // Platforms with a native "delete basket" affordance clear in one action:
+    // click it, accept its confirm, and wait for the control to disappear (the
+    // platform's own emptied signal). The row count from before the click is
+    // the honest removed count.
+    if (hooks.clearAll) {
+      const trigger = hooks.clearAll.trigger(doc);
+      if (!trigger) return result;
+      result.hadItems = true;
+      const count = hooks.countItems ? hooks.countItems(doc) : 0;
+      dlog('clear: clearing all via', describeEl(trigger, doc));
+      clickEl(trigger);
+      const confirmBtn = await wait(() => hooks.clearAll.confirm(doc), { timeout: 3000 });
+      if (confirmBtn) {
+        dlog('clear: confirming via', describeEl(confirmBtn, doc));
+        clickEl(confirmBtn);
+      }
+      const emptied = await wait(() => !hooks.clearAll.trigger(doc), { timeout: 5000 });
+      if (emptied) {
+        result.removed = count || 1;
+        dlog(`clear: basket emptied (${result.removed} item(s))`);
+      } else {
+        dlog('clear: basket did not empty after clear-all');
+        result.cleared = false;
+      }
+      return result;
+    }
     // A removal is confirmed by the control set changing (a button vanishing or
     // its "from N to M" label decrementing) — the platform's own signal.
     const state = () => hooks.removeButtons(doc).map((b) => accessibleName(b, doc)).join('|');

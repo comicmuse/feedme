@@ -203,8 +203,13 @@ function modifierClickTarget(target) {
     const inner = target.shadowRoot.querySelector('input');
     if (inner) return inner;
   }
-  if (target.tagName === 'INPUT') return target;
-  return target.querySelector('input') || target;
+  // Deliveroo wraps a readonly, React-controlled input in the row <button>:
+  // clicking the input registers only via bubbling and leaves `checked` false
+  // (#37's false "NOT selected" logs) — the button is the real control. Rows
+  // without a button ancestor (Uber's label rows, plain labels) keep the input.
+  const input = target.tagName === 'INPUT' ? target : target.querySelector('input');
+  if (input) return input.closest('button') || input;
+  return target;
 }
 
 function modifierSelected(target) {
@@ -244,7 +249,12 @@ async function selectModifier(dialog, mod, wait = defaultWait) {
   if (!target) return false;
   if (modifierSelected(target)) return true;
   clickEl(modifierClickTarget(target));
-  return !!(await wait(() => modifierSelected(target), { timeout: 2000 }));
+  // React re-renders can REPLACE the row's nodes after a selection — verify
+  // against a freshly resolved target, not the clicked (possibly detached) one.
+  return !!(await wait(() => {
+    const fresh = findModifierTarget(dialog, mod) || target;
+    return modifierSelected(fresh);
+  }, { timeout: 2000 }));
 }
 
 function findAddButton(dialog) {

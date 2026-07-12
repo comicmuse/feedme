@@ -185,16 +185,32 @@ browser.runtime.onMessage.addListener(async (msg) => {
 
 browser.runtime.onMessage.addListener(async (msg, sender) => {
   if (msg.type !== MSG.SWITCH_TO_BRANCH) return;
+  // Every rejected click logs its reason: a switch that silently does nothing is
+  // undiagnosable from a user report (#38).
   // The sidebar runs in the source tab, which keys the comparison.
   const comparison = comparisons.get(sender.tab?.id);
-  if (!comparison) return;
+  if (!comparison) {
+    console.info('[FeedMe switch] click ignored — no comparison for tab', sender.tab?.id);
+    return;
+  }
   const branch = comparison.branches.get(msg.branchKey);
-  if (!branch || branch.isCurrent || !branch.switchUrl) return;
+  if (!branch || branch.isCurrent || !branch.switchUrl) {
+    console.info('[FeedMe switch] click ignored —',
+      !branch ? 'unknown branch key' : branch.isCurrent ? 'branch is the current one' : 'branch has no switch URL',
+      msg.branchKey);
+    return;
+  }
   // Defence in depth: the URL was validated when enqueued, re-check before opening.
-  if (!isAllowedMenuUrl(branch.platform, branch.switchUrl)) return;
+  if (!isAllowedMenuUrl(branch.platform, branch.switchUrl)) {
+    console.info('[FeedMe switch] click ignored — URL failed origin validation', branch.switchUrl);
+    return;
+  }
 
   const tab = await browser.tabs.create({ url: branch.switchUrl, active: true }).catch(() => null);
-  if (!tab) return;
+  if (!tab) {
+    console.info('[FeedMe switch] tabs.create failed for', branch.switchUrl);
+    return;
+  }
   // Stash the whole plan for the builder to claim once the tab has loaded. Lines
   // the matcher couldn't fully resolve (prefillable: false) are attempted too —
   // the builder fills what it can and flags them for review; dropping them here

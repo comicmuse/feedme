@@ -343,6 +343,15 @@ function render(snapshot, order) {
       none.className = 'errc';
       none.textContent = 'No branches found';
       colEl.appendChild(none);
+    } else if (col.branches.every((b) => b.isCurrent)) {
+      // Enumeration found nothing beyond the user's own branch (live 2026-07-12:
+      // Uber's brand search returns only the nearest store, which is the source
+      // store itself) — say so rather than showing a column that silently does
+      // nothing (#38).
+      const none = document.createElement('div');
+      none.className = 'errc';
+      none.textContent = 'No other branches found';
+      colEl.appendChild(none);
     }
     cols.appendChild(colEl);
   });

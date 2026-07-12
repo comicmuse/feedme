@@ -536,6 +536,7 @@ async function addLine(line, ctx) {
   const { doc, wait, platform } = ctx;
   const requested = Math.max(1, line.quantity || 1);
   let added = 0;
+  let missedSelection = false;
   for (let q = 0; q < requested; q++) {
     const dialog = await openItemDialog(doc, line, wait, q === 0, platform);
     // On all three platforms clicking an item card opens a customise dialog (even
@@ -551,6 +552,9 @@ async function addLine(line, ctx) {
       let picked = false;
       try { picked = await selectModifier(dialog, mod, wait); } catch (_) {}
       dlog(`"${line.name}": modifier "${mod.name}" ${picked ? 'selected' : 'NOT selected'}`);
+      // A lost selection means the added item may not match the user's order —
+      // the line must surface for review, never read as a clean fill (#37).
+      if (!picked) missedSelection = true;
     }
     // The add button stays disabled until required choices are made, so this
     // wait doubles as "wait for it to enable".
@@ -583,7 +587,9 @@ async function addLine(line, ctx) {
     }
     added += 1;
   }
-  return { name: line.name || '', requested, added, ok: added >= requested };
+  const result = { name: line.name || '', requested, added, ok: added >= requested };
+  if (result.ok && missedSelection) result.review = true;
+  return result;
 }
 
 // Drive the whole basket plan. Resolves to a results array (one per plan line).

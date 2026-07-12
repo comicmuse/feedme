@@ -966,3 +966,34 @@ describe('cross-restaurant new-basket prompt', () => {
     expect(document.getElementById('confirm')).toBeNull();
   });
 });
+
+// #37 honesty: a line can add successfully while one of its selections never
+// registered — presenting that as a clean fill hides a wrong basket. Any
+// failed modifier selection must flag the line for review.
+describe('failed modifier selections flag the line for review', () => {
+  const fastWait = (fn) => Promise.resolve(fn());
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('ok line with an unselectable modifier gets review:true', async () => {
+    mountMenu();
+    const plan = [{
+      id: 'dr-9', name: 'Honey BBQ Sandwich', quantity: 1,
+      modifiers: [{ id: 'opt-1', name: 'Regular Fries' }, { id: 'nope', name: 'Unicorn Dust' }],
+      prefillable: true,
+    }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ name: 'Honey BBQ Sandwich', added: 1, ok: true, review: true });
+  });
+
+  test('ok line with all modifiers selected stays clean', async () => {
+    mountMenu();
+    const plan = [{
+      id: 'dr-9', name: 'Honey BBQ Sandwich', quantity: 1,
+      modifiers: [{ id: 'opt-1', name: 'Regular Fries' }],
+      prefillable: true,
+    }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0].ok).toBe(true);
+    expect(results[0].review).toBeFalsy();
+  });
+});

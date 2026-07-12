@@ -75,6 +75,16 @@ function accessibleName(el, doc) {
   return t;
 }
 
+// Deliveroo prefixes promo cards' labels with a badge ("NEW ✨ Crunchy Cheese
+// Bites …"), which a plain prefix match misses — and then a superstring sibling
+// ("… Sharebox") wins instead (#37). Strip ONLY that badge before matching; an
+// ordinary word prefix ("Deluxe …") must keep failing or superstring items
+// would match again.
+const LABEL_BADGE_RE = /^new\b[\s\W]*/i;
+function nameStartsWith(label, name) {
+  return label.startsWith(name) || label.replace(LABEL_BADGE_RE, '').startsWith(name);
+}
+
 // Selectors for elements that actually respond to a click. A name match on a
 // container (e.g. a Just Eat search-result <li>) is useless unless we descend to
 // the real clickable overlay inside it.
@@ -88,7 +98,7 @@ const ACTIONABLE_SELECTOR = '[data-qa="item"], [role="button"], button, a';
 // for a non-actionable container with no actionable descendant (the overlay may
 // not have hydrated yet) so the caller keeps polling rather than clicking nothing.
 function resolveClickable(el, name, doc) {
-  const nameMatches = (c) => accessibleName(c, doc).startsWith(name);
+  const nameMatches = (c) => nameStartsWith(accessibleName(c, doc), name);
   const smallestName = (list) => list.slice().sort(
     (a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length)[0];
 
@@ -131,7 +141,7 @@ function findItemCard(doc, line, platform) {
   // the first frames after a search only the decoy exists, before any overlay has
   // rendered at all. So target ONLY the overlays, matched by resolved name.
   const itemOverlays = [...doc.querySelectorAll('[data-qa="item"]')]
-    .filter((el) => accessibleName(el, doc).startsWith(name));
+    .filter((el) => nameStartsWith(accessibleName(el, doc), name));
   if (itemOverlays.length) {
     itemOverlays.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
     return itemOverlays[0];
@@ -146,7 +156,7 @@ function findItemCard(doc, line, platform) {
   // button/link/[role=button], possibly wrapped in a container we descend into.
   for (const tier of ['button, a, [role="button"]', '[data-item-id], [data-testid]']) {
     const candidates = [...doc.querySelectorAll(tier)]
-      .filter((el) => accessibleName(el, doc).startsWith(name));
+      .filter((el) => nameStartsWith(accessibleName(el, doc), name));
     // Shortest name = the item itself rather than a section/wrapper around it.
     candidates.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
     for (const candidate of candidates) {
@@ -460,9 +470,40 @@ function setNativeValue(input, value) {
   try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
 }
 
+// Deliveroo renders menu sections lazily as they scroll into view and has no
+// menu search box, so an unrendered item's card is unfindable in place (#37).
+// Walk the window through the page's full height — real scrolls fire the
+// platform's IntersectionObservers and scroll listeners — polling for the card,
+// then restore the original position.
+async function scrollItemIntoDom(doc, line, wait, platform) {
+  const win = doc.defaultView;
+  if (!win) return null;
+  const startY = win.scrollY || 0;
+  const height = () => Math.max(
+    doc.body ? doc.body.scrollHeight : 0,
+    doc.documentElement ? doc.documentElement.scrollHeight : 0
+  );
+  const step = Math.max(400, (win.innerHeight || 800) * 0.8);
+  dlog(`"${line.name}": scrolling to force lazy menu sections (height ${height()})`);
+  let found = null;
+  for (let y = 0, i = 0; y <= height() && i < 60 && !found; y += step, i++) {
+    try {
+      win.scrollTo(0, y);
+      win.dispatchEvent(new win.Event('scroll'));
+    } catch (_) {}
+    found = await wait(() => findItemCard(doc, line, platform), { timeout: 350 });
+  }
+  try {
+    win.scrollTo(0, startY);
+    win.dispatchEvent(new win.Event('scroll'));
+  } catch (_) {}
+  return found;
+}
+
 // Get the item's card into the DOM. Just Eat menus open on a category grid with
 // no items rendered, so when the card isn't found, type the name into the menu
-// search box and wait for the results to render.
+// search box and wait for the results to render. Menus with no search box
+// (Deliveroo) get the scroll fallback instead.
 async function surfaceItem(doc, line, wait, platform) {
   const card = await wait(() => findItemCard(doc, line, platform), { timeout: 2500 });
   if (card) {
@@ -471,8 +512,9 @@ async function surfaceItem(doc, line, wait, platform) {
   }
   const box = safeQuery(doc, 'input[type="search"], [data-qa="menu-category-nav-search-element"], input[placeholder*="search" i]');
   if (!box) {
-    dlog(`"${line.name}": no card and no search box — giving up on line`);
-    return null;
+    const scrolled = await scrollItemIntoDom(doc, line, wait, platform);
+    dlog(`"${line.name}": card after scroll:`, describeEl(scrolled, doc));
+    return scrolled;
   }
   dlog(`"${line.name}": not in DOM, typing into search box:`, describeEl(box, doc));
   setNativeValue(box, line.name);

@@ -997,3 +997,59 @@ describe('failed modifier selections flag the line for review', () => {
     expect(results[0].review).toBeFalsy();
   });
 });
+
+// #37: Deliveroo lazy-renders menu sections (137 cards appear only after
+// scrolling, live 2026-07-12) and has NO menu search box, so an unrendered
+// item was unfindable and a rendered superstring card (the Sharebox) matched
+// instead. With no search box the builder must scroll to force the sections.
+describe('card discovery on lazily rendered menus', () => {
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('scrolls to force a lazy section to render when there is no search box', async () => {
+    document.body.innerHTML = '<main><div class="menu"></div></main>';
+    window.addEventListener('scroll', function once() {
+      window.removeEventListener('scroll', once);
+      const btn = document.createElement('button');
+      btn.className = 'item';
+      btn.textContent = 'Crunchy Cheese Bites £3.29';
+      btn.addEventListener('click', () => {
+        const dlg = document.createElement('div');
+        dlg.setAttribute('role', 'dialog');
+        const h = document.createElement('h2');
+        h.textContent = 'Crunchy Cheese Bites';
+        const add = document.createElement('button');
+        add.className = 'add';
+        add.textContent = 'Add to basket';
+        add.addEventListener('click', () => dlg.remove());
+        dlg.appendChild(h); dlg.appendChild(add);
+        document.body.appendChild(dlg);
+      });
+      document.querySelector('.menu').appendChild(btn);
+    });
+    const plan = [{ name: 'Crunchy Cheese Bites', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ platform: 'deliveroo', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ name: 'Crunchy Cheese Bites', added: 1, ok: true });
+  });
+});
+
+// #37: Deliveroo prefixes promo cards' aria-labels with a badge ("NEW ✨ …"),
+// which defeats the plain prefix match — the plan item's own card is invisible
+// and a superstring sibling (the Sharebox) wins instead.
+describe('promo-badged card labels', () => {
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('matches a card whose label carries a leading NEW badge', () => {
+    document.body.innerHTML = `
+      <div role="button" aria-label="NEW ✨ Crunchy Cheese Bites , A savoury blend, 482 kcal, £3.29"></div>
+      <div role="button" aria-label="Crunchy Cheese Bites Sharebox®, A savoury blend, 963 kcal, £8.19"></div>`;
+    const el = findItemCard(document, { name: 'Crunchy Cheese Bites' }, 'deliveroo');
+    expect(el).toBeTruthy();
+    expect(el.getAttribute('aria-label')).toMatch(/^NEW/);
+  });
+
+  test('does not treat an ordinary word prefix as a badge (superstring guard)', () => {
+    document.body.innerHTML = `
+      <div role="button" aria-label="Deluxe Crunchy Cheese Bites, 963 kcal, £8.19"></div>`;
+    expect(findItemCard(document, { name: 'Crunchy Cheese Bites' }, 'deliveroo')).toBeNull();
+  });
+});

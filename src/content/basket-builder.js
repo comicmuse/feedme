@@ -75,6 +75,16 @@ function accessibleName(el, doc) {
   return t;
 }
 
+// Deliveroo prefixes promo cards' labels with a badge ("NEW ✨ Crunchy Cheese
+// Bites …"), which a plain prefix match misses — and then a superstring sibling
+// ("… Sharebox") wins instead (#37). Strip ONLY that badge before matching; an
+// ordinary word prefix ("Deluxe …") must keep failing or superstring items
+// would match again.
+const LABEL_BADGE_RE = /^new\b[\s\W]*/i;
+function nameStartsWith(label, name) {
+  return label.startsWith(name) || label.replace(LABEL_BADGE_RE, '').startsWith(name);
+}
+
 // Selectors for elements that actually respond to a click. A name match on a
 // container (e.g. a Just Eat search-result <li>) is useless unless we descend to
 // the real clickable overlay inside it.
@@ -88,7 +98,7 @@ const ACTIONABLE_SELECTOR = '[data-qa="item"], [role="button"], button, a';
 // for a non-actionable container with no actionable descendant (the overlay may
 // not have hydrated yet) so the caller keeps polling rather than clicking nothing.
 function resolveClickable(el, name, doc) {
-  const nameMatches = (c) => accessibleName(c, doc).startsWith(name);
+  const nameMatches = (c) => nameStartsWith(accessibleName(c, doc), name);
   const smallestName = (list) => list.slice().sort(
     (a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length)[0];
 
@@ -131,7 +141,7 @@ function findItemCard(doc, line, platform) {
   // the first frames after a search only the decoy exists, before any overlay has
   // rendered at all. So target ONLY the overlays, matched by resolved name.
   const itemOverlays = [...doc.querySelectorAll('[data-qa="item"]')]
-    .filter((el) => accessibleName(el, doc).startsWith(name));
+    .filter((el) => nameStartsWith(accessibleName(el, doc), name));
   if (itemOverlays.length) {
     itemOverlays.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
     return itemOverlays[0];
@@ -146,7 +156,7 @@ function findItemCard(doc, line, platform) {
   // button/link/[role=button], possibly wrapped in a container we descend into.
   for (const tier of ['button, a, [role="button"]', '[data-item-id], [data-testid]']) {
     const candidates = [...doc.querySelectorAll(tier)]
-      .filter((el) => accessibleName(el, doc).startsWith(name));
+      .filter((el) => nameStartsWith(accessibleName(el, doc), name));
     // Shortest name = the item itself rather than a section/wrapper around it.
     candidates.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
     for (const candidate of candidates) {
@@ -203,8 +213,13 @@ function modifierClickTarget(target) {
     const inner = target.shadowRoot.querySelector('input');
     if (inner) return inner;
   }
-  if (target.tagName === 'INPUT') return target;
-  return target.querySelector('input') || target;
+  // Deliveroo wraps a readonly, React-controlled input in the row <button>:
+  // clicking the input registers only via bubbling and leaves `checked` false
+  // (#37's false "NOT selected" logs) — the button is the real control. Rows
+  // without a button ancestor (Uber's label rows, plain labels) keep the input.
+  const input = target.tagName === 'INPUT' ? target : target.querySelector('input');
+  if (input) return input.closest('button') || input;
+  return target;
 }
 
 function modifierSelected(target) {
@@ -244,7 +259,12 @@ async function selectModifier(dialog, mod, wait = defaultWait) {
   if (!target) return false;
   if (modifierSelected(target)) return true;
   clickEl(modifierClickTarget(target));
-  return !!(await wait(() => modifierSelected(target), { timeout: 2000 }));
+  // React re-renders can REPLACE the row's nodes after a selection — verify
+  // against a freshly resolved target, not the clicked (possibly detached) one.
+  return !!(await wait(() => {
+    const fresh = findModifierTarget(dialog, mod) || target;
+    return modifierSelected(fresh);
+  }, { timeout: 2000 }));
 }
 
 function findAddButton(dialog) {
@@ -450,9 +470,40 @@ function setNativeValue(input, value) {
   try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
 }
 
+// Deliveroo renders menu sections lazily as they scroll into view and has no
+// menu search box, so an unrendered item's card is unfindable in place (#37).
+// Walk the window through the page's full height — real scrolls fire the
+// platform's IntersectionObservers and scroll listeners — polling for the card,
+// then restore the original position.
+async function scrollItemIntoDom(doc, line, wait, platform) {
+  const win = doc.defaultView;
+  if (!win) return null;
+  const startY = win.scrollY || 0;
+  const height = () => Math.max(
+    doc.body ? doc.body.scrollHeight : 0,
+    doc.documentElement ? doc.documentElement.scrollHeight : 0
+  );
+  const step = Math.max(400, (win.innerHeight || 800) * 0.8);
+  dlog(`"${line.name}": scrolling to force lazy menu sections (height ${height()})`);
+  let found = null;
+  for (let y = 0, i = 0; y <= height() && i < 60 && !found; y += step, i++) {
+    try {
+      win.scrollTo(0, y);
+      win.dispatchEvent(new win.Event('scroll'));
+    } catch (_) {}
+    found = await wait(() => findItemCard(doc, line, platform), { timeout: 350 });
+  }
+  try {
+    win.scrollTo(0, startY);
+    win.dispatchEvent(new win.Event('scroll'));
+  } catch (_) {}
+  return found;
+}
+
 // Get the item's card into the DOM. Just Eat menus open on a category grid with
 // no items rendered, so when the card isn't found, type the name into the menu
-// search box and wait for the results to render.
+// search box and wait for the results to render. Menus with no search box
+// (Deliveroo) get the scroll fallback instead.
 async function surfaceItem(doc, line, wait, platform) {
   const card = await wait(() => findItemCard(doc, line, platform), { timeout: 2500 });
   if (card) {
@@ -461,8 +512,9 @@ async function surfaceItem(doc, line, wait, platform) {
   }
   const box = safeQuery(doc, 'input[type="search"], [data-qa="menu-category-nav-search-element"], input[placeholder*="search" i]');
   if (!box) {
-    dlog(`"${line.name}": no card and no search box — giving up on line`);
-    return null;
+    const scrolled = await scrollItemIntoDom(doc, line, wait, platform);
+    dlog(`"${line.name}": card after scroll:`, describeEl(scrolled, doc));
+    return scrolled;
   }
   dlog(`"${line.name}": not in DOM, typing into search box:`, describeEl(box, doc));
   setNativeValue(box, line.name);
@@ -526,6 +578,7 @@ async function addLine(line, ctx) {
   const { doc, wait, platform } = ctx;
   const requested = Math.max(1, line.quantity || 1);
   let added = 0;
+  let missedSelection = false;
   for (let q = 0; q < requested; q++) {
     const dialog = await openItemDialog(doc, line, wait, q === 0, platform);
     // On all three platforms clicking an item card opens a customise dialog (even
@@ -541,6 +594,9 @@ async function addLine(line, ctx) {
       let picked = false;
       try { picked = await selectModifier(dialog, mod, wait); } catch (_) {}
       dlog(`"${line.name}": modifier "${mod.name}" ${picked ? 'selected' : 'NOT selected'}`);
+      // A lost selection means the added item may not match the user's order —
+      // the line must surface for review, never read as a clean fill (#37).
+      if (!picked) missedSelection = true;
     }
     // The add button stays disabled until required choices are made, so this
     // wait doubles as "wait for it to enable".
@@ -573,7 +629,9 @@ async function addLine(line, ctx) {
     }
     added += 1;
   }
-  return { name: line.name || '', requested, added, ok: added >= requested };
+  const result = { name: line.name || '', requested, added, ok: added >= requested };
+  if (result.ok && missedSelection) result.review = true;
+  return result;
 }
 
 // Drive the whole basket plan. Resolves to a results array (one per plan line).

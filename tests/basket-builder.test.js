@@ -380,15 +380,49 @@ describe('selectModifier live dialog shapes', () => {
     expect(dialog.querySelector('input[value="1"]').checked).toBe(true);
   });
 
-  test('selects deterministically by modifier id via input value (Deliveroo shape)', async () => {
+  // Live shape re-pinned 2026-07-12 (#37, McDonald's Commercial Road): the row
+  // input is readonly, tabindex=-1 and React-CONTROLLED — clicking it registers
+  // with the platform only via bubbling and leaves `checked` false (the false
+  // "NOT selected" logs in #37). Only the wrapping <button>'s handler both
+  // registers the selection and yields a truthful checked signal.
+  test('selects by modifier id by clicking the row button, not the readonly input (Deliveroo shape)', async () => {
     document.body.innerHTML = `
       <div role="dialog">
-        <button type="button"><span>Bold BBQ Sauce Dip</span><input type="radio" value="2610419456" name="2610419456"></button>
+        <button type="button"><span>Bold BBQ Sauce Dip</span><input type="checkbox" value="2610419456" name="2610419456" readonly tabindex="-1"></button>
       </div>`;
     const dialog = document.querySelector('[role="dialog"]');
+    const input = dialog.querySelector('input');
+    // Controlled input: a direct click never flips checked…
+    input.addEventListener('click', (e) => e.preventDefault());
+    // …only the button's own handler does.
+    dialog.querySelector('button').addEventListener('click', () => { input.checked = true; });
     const ok = await selectModifier(dialog, { id: '2610419456', name: 'Bold BBQ Sauce Dip' }, pollWait);
     expect(ok).toBe(true);
-    expect(dialog.querySelector('input').checked).toBe(true);
+    expect(input.checked).toBe(true);
+  });
+
+  // Live regression (#37, 2026-07-12): React re-renders the option row after a
+  // selection, REPLACING the input node — the builder verified the stale
+  // detached node and reported a landed selection as "NOT selected".
+  test('verifies against a freshly resolved node when React replaces the input', async () => {
+    document.body.innerHTML = `
+      <div role="dialog">
+        <button type="button"><span>Add Extra Bacon</span><input type="checkbox" value="2638278848" name="2638278848" readonly tabindex="-1"></button>
+      </div>`;
+    const dialog = document.querySelector('[role="dialog"]');
+    const button = dialog.querySelector('button');
+    // Controlled: the original input never flips from a direct click.
+    button.querySelector('input').addEventListener('click', (e) => e.preventDefault());
+    button.addEventListener('click', () => {
+      // Simulate the React re-render: swap in a NEW checked input.
+      const fresh = document.createElement('input');
+      fresh.type = 'checkbox';
+      fresh.value = '2638278848';
+      fresh.checked = true;
+      button.querySelector('input').replaceWith(fresh);
+    });
+    const ok = await selectModifier(dialog, { id: '2638278848', name: 'Add Extra Bacon' }, pollWait);
+    expect(ok).toBe(true);
   });
 
   // Live regression (McDonald's JE, 2026-07-11): checkbox options are bare
@@ -930,5 +964,92 @@ describe('cross-restaurant new-basket prompt', () => {
     const results = await buildBasket({ platform: 'deliveroo', basketPlan: plan }, { wait: fastWait, headless: true });
     expect(results[0]).toMatchObject({ name: 'Whopper', added: 1, ok: true });
     expect(document.getElementById('confirm')).toBeNull();
+  });
+});
+
+// #37 honesty: a line can add successfully while one of its selections never
+// registered — presenting that as a clean fill hides a wrong basket. Any
+// failed modifier selection must flag the line for review.
+describe('failed modifier selections flag the line for review', () => {
+  const fastWait = (fn) => Promise.resolve(fn());
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('ok line with an unselectable modifier gets review:true', async () => {
+    mountMenu();
+    const plan = [{
+      id: 'dr-9', name: 'Honey BBQ Sandwich', quantity: 1,
+      modifiers: [{ id: 'opt-1', name: 'Regular Fries' }, { id: 'nope', name: 'Unicorn Dust' }],
+      prefillable: true,
+    }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ name: 'Honey BBQ Sandwich', added: 1, ok: true, review: true });
+  });
+
+  test('ok line with all modifiers selected stays clean', async () => {
+    mountMenu();
+    const plan = [{
+      id: 'dr-9', name: 'Honey BBQ Sandwich', quantity: 1,
+      modifiers: [{ id: 'opt-1', name: 'Regular Fries' }],
+      prefillable: true,
+    }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0].ok).toBe(true);
+    expect(results[0].review).toBeFalsy();
+  });
+});
+
+// #37: Deliveroo lazy-renders menu sections (137 cards appear only after
+// scrolling, live 2026-07-12) and has NO menu search box, so an unrendered
+// item was unfindable and a rendered superstring card (the Sharebox) matched
+// instead. With no search box the builder must scroll to force the sections.
+describe('card discovery on lazily rendered menus', () => {
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('scrolls to force a lazy section to render when there is no search box', async () => {
+    document.body.innerHTML = '<main><div class="menu"></div></main>';
+    window.addEventListener('scroll', function once() {
+      window.removeEventListener('scroll', once);
+      const btn = document.createElement('button');
+      btn.className = 'item';
+      btn.textContent = 'Crunchy Cheese Bites £3.29';
+      btn.addEventListener('click', () => {
+        const dlg = document.createElement('div');
+        dlg.setAttribute('role', 'dialog');
+        const h = document.createElement('h2');
+        h.textContent = 'Crunchy Cheese Bites';
+        const add = document.createElement('button');
+        add.className = 'add';
+        add.textContent = 'Add to basket';
+        add.addEventListener('click', () => dlg.remove());
+        dlg.appendChild(h); dlg.appendChild(add);
+        document.body.appendChild(dlg);
+      });
+      document.querySelector('.menu').appendChild(btn);
+    });
+    const plan = [{ name: 'Crunchy Cheese Bites', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ platform: 'deliveroo', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ name: 'Crunchy Cheese Bites', added: 1, ok: true });
+  });
+});
+
+// #37: Deliveroo prefixes promo cards' aria-labels with a badge ("NEW ✨ …"),
+// which defeats the plain prefix match — the plan item's own card is invisible
+// and a superstring sibling (the Sharebox) wins instead.
+describe('promo-badged card labels', () => {
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('matches a card whose label carries a leading NEW badge', () => {
+    document.body.innerHTML = `
+      <div role="button" aria-label="NEW ✨ Crunchy Cheese Bites , A savoury blend, 482 kcal, £3.29"></div>
+      <div role="button" aria-label="Crunchy Cheese Bites Sharebox®, A savoury blend, 963 kcal, £8.19"></div>`;
+    const el = findItemCard(document, { name: 'Crunchy Cheese Bites' }, 'deliveroo');
+    expect(el).toBeTruthy();
+    expect(el.getAttribute('aria-label')).toMatch(/^NEW/);
+  });
+
+  test('does not treat an ordinary word prefix as a badge (superstring guard)', () => {
+    document.body.innerHTML = `
+      <div role="button" aria-label="Deluxe Crunchy Cheese Bites, 963 kcal, £8.19"></div>`;
+    expect(findItemCard(document, { name: 'Crunchy Cheese Bites' }, 'deliveroo')).toBeNull();
   });
 });

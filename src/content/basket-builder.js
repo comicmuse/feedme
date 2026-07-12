@@ -260,6 +260,184 @@ function dismissDialog(doc, dialog) {
   doc.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 }
 
+// ── Basket clearing (issue #24) ──────────────────────────────────────────────
+// Pre-existing basket items make the filled basket diverge from the sidebar's
+// comparison, so the plan starts by emptying the basket via the platform's own
+// remove/decrease controls. Per-platform hooks: `surface` (optional) returns a
+// control that reveals the basket view when it isn't rendered; `removeButtons`
+// returns the current remove/decrease controls. Deliveroo and Uber selectors
+// are candidates until the live-verification pass pins them.
+const CLEAR_HOOKS = {
+  'just-eat': {
+    // Live shapes 2026-07-11: toggle button [data-qa="cart-modal-toggle-element"];
+    // decrease control is an EMPTY span[role=button][data-qa=
+    // "cart-item-amount-action-decrement"]; close is [data-qa=
+    // "cart-modal-header-action-close"]. The aria-label variants are kept as a
+    // drift fallback.
+    surface: (doc) => doc.querySelector('[data-qa="cart-modal-toggle-element"]')
+      || [...doc.querySelectorAll('button, [role="button"]')]
+        .find((b) => /view basket/i.test(accessibleName(b, doc))) || null,
+    removeButtons: (doc) => [...doc.querySelectorAll(
+      '[data-qa="cart-item-amount-action-decrement"],'
+      + ' button[aria-label^="Decrease quantity"], [role="button"][aria-label^="Decrease quantity"]')],
+    dismiss: (doc) => {
+      const close = doc.querySelector(
+        '[data-qa="cart-modal-header-action-close"], [data-qa="cart-modal"] [aria-label*="close" i]');
+      if (close) clickEl(close);
+    },
+  },
+  deliveroo: {
+    // Live shapes 2026-07-11 (Popeyes Shoreditch): the basket aside carries a
+    // one-click [aria-label="Delete all items"] control guarded by an "Are you
+    // sure…?" confirm. The aside ALSO hosts "People also added" quick-add
+    // steppers (aria-label "Decrease quantity") that must never be clicked, so
+    // Deliveroo clears via clearAll only — no removeButtons loop. Row buttons
+    // read "Nx Item £…"; the leading quantities give the removed count.
+    countItems: (doc) => [...doc.querySelectorAll('[aria-label="Basket"] button')]
+      .map((b) => ((b.textContent || '').match(/^\s*(\d+)\s*x/i) || [])[1])
+      .filter(Boolean)
+      .reduce((s, n) => s + Number(n), 0),
+    clearAll: {
+      trigger: (doc) => doc.querySelector('[aria-label="Basket"] [aria-label="Delete all items"]'),
+      confirm: (doc) => [...doc.querySelectorAll('[role="dialog"] button, [aria-modal="true"] button')]
+        .find((b) => /delete this basket/i.test(norm(b.textContent))) || null,
+    },
+  },
+  'uber-eats': {
+    // Live shapes 2026-07-11 (KFC Mile End): a "BasketN" badge button opens a
+    // per-store cart drawer; each row is an <li> with a mod=editItem link whose
+    // href carries the store path, plus Decrement/Increment steppers — Decrement
+    // at quantity 1 removes the row (trash icon). Rows are scoped to the CURRENT
+    // store via the editItem href so another store's cart is never touched. The
+    // Decrement labels carry no quantity, so settling is detected from the row
+    // text (the `state` hook) instead of the button labels. The old
+    // view-carts-badge testid no longer exists; kept as a drift fallback.
+    surface: (doc) => doc.querySelector('[data-testid="view-carts-badge"]')
+      || [...doc.querySelectorAll('button')].find((b) => /^baskets?\s*\d+$/i.test(norm(b.textContent))) || null,
+    removeButtons: (doc) => {
+      const path = String((doc.location && doc.location.pathname) || '');
+      const scoped = path.includes('/store/');
+      return [...doc.querySelectorAll('a[href*="editItem"]')]
+        .filter((a) => !scoped || (a.getAttribute('href') || '').includes(path))
+        .map((a) => a.closest('li'))
+        .filter(Boolean)
+        .map((li) => [...li.querySelectorAll('button')].find((b) => (b.getAttribute('aria-label') || '') === 'Decrement'))
+        .filter(Boolean);
+    },
+    state: (doc) => [...doc.querySelectorAll('a[href*="editItem"]')]
+      .map((a) => { const li = a.closest('li'); return li ? norm(li.textContent) : ''; })
+      .join('|'),
+    dismiss: (doc) => {
+      const close = [...doc.querySelectorAll('button[aria-label="Close"]')].pop();
+      if (close) clickEl(close);
+    },
+  },
+};
+
+// Each click removes one UNIT (a decrease at quantity 1 removes the row), so the
+// bound is on clicks, not rows. Big enough for any real basket, small enough to
+// end a stuck loop quickly.
+const MAX_CLEAR_CLICKS = 60;
+
+// Empty the platform basket. Never throws. `cleared: false` means items may
+// remain (the caller warns and proceeds — user-confirmed behaviour).
+async function clearBasket(doc, platform, wait = defaultWait) {
+  const hooks = CLEAR_HOOKS[platform];
+  const result = { hadItems: false, cleared: true, removed: 0 };
+  if (!hooks || !doc) return result;
+  let surfaced = false;
+  try {
+    // Platforms with a native "delete basket" affordance clear in one action:
+    // click it, accept its confirm, and wait for the control to disappear (the
+    // platform's own emptied signal). The row count from before the click is
+    // the honest removed count.
+    if (hooks.clearAll) {
+      const trigger = hooks.clearAll.trigger(doc);
+      if (!trigger) return result;
+      result.hadItems = true;
+      const count = hooks.countItems ? hooks.countItems(doc) : 0;
+      dlog('clear: clearing all via', describeEl(trigger, doc));
+      clickEl(trigger);
+      const confirmBtn = await wait(() => hooks.clearAll.confirm(doc), { timeout: 3000 });
+      if (confirmBtn) {
+        dlog('clear: confirming via', describeEl(confirmBtn, doc));
+        clickEl(confirmBtn);
+      }
+      const emptied = await wait(() => !hooks.clearAll.trigger(doc), { timeout: 5000 });
+      if (emptied) {
+        result.removed = count || 1;
+        dlog(`clear: basket emptied (${result.removed} item(s))`);
+      } else {
+        dlog('clear: basket did not empty after clear-all');
+        result.cleared = false;
+      }
+      return result;
+    }
+    // A removal is confirmed by the platform's own signal: the hook's state
+    // string changing — by default the remove controls' accessible names (Just
+    // Eat embeds "from N to M" quantities there); platforms whose labels carry
+    // no quantity (Uber) provide a `state` hook over the row text instead.
+    const state = () => (hooks.state
+      ? hooks.state(doc)
+      : hooks.removeButtons(doc).map((b) => accessibleName(b, doc)).join('|'));
+    if (!hooks.removeButtons(doc).length && hooks.surface) {
+      const s = hooks.surface(doc);
+      if (s) {
+        dlog('clear: surfacing basket view via', describeEl(s, doc));
+        clickEl(s);
+        surfaced = true;
+        await wait(() => hooks.removeButtons(doc).length, { timeout: 3000 });
+      }
+    }
+    for (let i = 0; i < MAX_CLEAR_CLICKS; i++) {
+      const buttons = hooks.removeButtons(doc);
+      if (!buttons.length) {
+        if (result.removed) dlog(`clear: basket empty after ${result.removed} removal(s)`);
+        break;
+      }
+      result.hadItems = true;
+      if (i === MAX_CLEAR_CLICKS - 1) {
+        dlog('clear: hit the click bound with items remaining');
+        result.cleared = false;
+        break;
+      }
+      // Just Eat keeps a decremented row's control mounted for a beat at
+      // quantity 0 ("from 0 to -1") — clicking that is a wasted click that
+      // inflates the removed count. Wait for it to unmount instead.
+      const live = buttons.filter((b) => !/\bfrom\s+(0|-\d+)\s+to\b/i.test(accessibleName(b, doc)));
+      if (!live.length) {
+        const stale = state();
+        const gone = await wait(() => state() !== stale, { timeout: 4000 });
+        if (!gone) {
+          dlog('clear: quantity-0 control never unmounted — stopping');
+          result.cleared = false;
+          break;
+        }
+        continue;
+      }
+      const before = state();
+      dlog('clear: removing via', describeEl(live[0], doc));
+      clickEl(live[0]);
+      const settled = await wait(() => state() !== before, { timeout: 4000 });
+      if (!settled) {
+        dlog('clear: removal did not register — stopping with items left');
+        result.cleared = false;
+        break;
+      }
+      result.removed += 1;
+    }
+  } catch (e) {
+    dlog('clear: failed —', e && e.message);
+    result.cleared = false;
+  }
+  // Close whatever the surface click opened: a lingering cart view's text (the
+  // stale items) would otherwise be mistaken for an item's customise dialog.
+  if (surfaced && hooks.dismiss) {
+    try { hooks.dismiss(doc); } catch (_) {}
+  }
+  return result;
+}
+
 // Set an input's value the way React-controlled pages expect: through the
 // native value setter, followed by an input event.
 function setNativeValue(input, value) {
@@ -307,14 +485,39 @@ async function openItemDialog(doc, line, wait, surface, platform) {
     clickEl(card);
     // Match the dialog by the item name (its heading) so an unrelated dialog — e.g.
     // the Just Eat location panel — is never mistaken for the customise dialog.
+    // The Just Eat CART modal is also role=dialog and lists the basket's items by
+    // name (live failure 2026-07-11), so it is excluded explicitly.
     const dialog = await wait(() => {
-      const all = [...doc.querySelectorAll(DIALOG_SELECTOR)];
+      const all = [...doc.querySelectorAll(DIALOG_SELECTOR)]
+        .filter((d) => !(d.matches && d.matches('[data-qa="cart-modal"]')));
       return all.find((d) => norm(d.textContent).includes(norm(line.name))) || null;
     }, { timeout: 1500 });
     if (dialog) return dialog;
+    // A cross-restaurant confirm can also block the customise dialog from
+    // opening at all — accept it and retry the click.
+    if (acceptNewBasketPrompt(doc, line)) continue;
     dlog(`"${line.name}": no dialog after click (attempt ${attempt + 1})`);
   }
   return null;
+}
+
+// Cross-restaurant switch: adding while another restaurant's basket exists makes
+// the platform confirm before replacing it ("Starting a new order will clear your
+// basket at …"). Accepting IS the clear (spec #24), so find such a prompt and
+// click its affirmative. Excludes the item's own customise dialog by name.
+const NEW_BASKET_RE = /\b(new (basket|order)|start (a )?(new|fresh|again)|clear your basket)\b/i;
+function acceptNewBasketPrompt(doc, line) {
+  const prompt = [...doc.querySelectorAll(DIALOG_SELECTOR)]
+    .find((d) => NEW_BASKET_RE.test(norm(d.textContent))
+      && !norm(d.textContent).includes(norm(line.name)));
+  if (!prompt) return false;
+  const yes = [...prompt.querySelectorAll('button, [role="button"], pie-button')]
+    .find((b) => NEW_BASKET_RE.test(norm(b.textContent))
+      || /^(yes|ok|continue|confirm)$/.test(norm(b.textContent)));
+  if (!yes) return false;
+  dlog(`"${line.name}": accepting new-basket prompt via`, describeEl(yes, doc));
+  clickEl(yes);
+  return true;
 }
 
 // Add a single plan line (respecting its quantity). Returns a per-line result; it
@@ -356,8 +559,17 @@ async function addLine(line, ctx) {
     // open — counting that unit would report a filled basket the platform never
     // received, and the stale dialog would be re-matched on the next unit.
     if (!closed) {
-      dismissDialog(doc, dialog);
-      break;
+      // The add may be blocked by a cross-restaurant confirm — accept it (that
+      // IS the basket clear) and re-await the close before failing the line.
+      let closedAfterPrompt = false;
+      if (acceptNewBasketPrompt(doc, line)) {
+        closedAfterPrompt = await wait(() => !doc.contains(dialog), { timeout: 3000 });
+        dlog(`"${line.name}": dialog ${closedAfterPrompt ? 'closed' : 'still open'} after accepting the prompt`);
+      }
+      if (!closedAfterPrompt) {
+        dismissDialog(doc, dialog);
+        break;
+      }
     }
     added += 1;
   }
@@ -373,6 +585,14 @@ async function buildBasket(build, opts = {}) {
   dlog('starting on', doc && doc.location ? String(doc.location.href) : '(no doc)',
     'platform=', platform, 'readyState=', doc && doc.readyState, 'plan=', JSON.stringify(plan));
   const overlay = opts.headless || !doc ? null : createOverlay(doc, plan.length);
+
+  // Pre-existing basket items would sit under the plan and skew the total away
+  // from the sidebar's comparison — empty the basket first (issue #24). A failed
+  // clear warns and proceeds: most of a fill is better than none (user-confirmed).
+  if (plan.length) {
+    const clear = await clearBasket(doc, platform, wait);
+    if (overlay) overlay.setClear(clear);
+  }
 
   const results = [];
   for (const line of plan) {
@@ -422,13 +642,27 @@ function createOverlay(doc, total) {
   title.style.cssText = 'font-weight:800;margin-bottom:6px;color:#111;';
   title.textContent = 'FeedMe — filling basket…';
   const status = doc.createElement('div');
+  const clearLine = doc.createElement('div');
+  clearLine.style.cssText = 'margin-top:4px;font-size:11px;color:#6b7280;display:none;';
   const list = doc.createElement('div');
   list.style.cssText = 'margin-top:6px;color:#ef4444;font-size:11px;';
-  box.appendChild(title); box.appendChild(status); box.appendChild(list);
+  box.appendChild(title); box.appendChild(status); box.appendChild(clearLine); box.appendChild(list);
+  let uncleared = false;
   shadow.appendChild(box);
   doc.body.appendChild(host);
 
   return {
+    setClear(clear) {
+      if (!clear.hadItems) return;
+      clearLine.style.display = 'block';
+      if (clear.cleared) {
+        clearLine.textContent = `Removed ${clear.removed} item(s) already in the basket`;
+      } else {
+        uncleared = true;
+        clearLine.style.color = '#d97706';
+        clearLine.textContent = "Couldn't clear pre-existing items — check your basket.";
+      }
+    },
     update(results) {
       const done = results.filter((r) => r.ok).length;
       status.textContent = `Added ${done} of ${total}`;
@@ -453,12 +687,12 @@ function createOverlay(doc, total) {
       };
       if (failed.length) section('Add these manually:', failed, '#ef4444');
       if (review.length) section('Check the options on:', review, '#d97706');
-      setTimeout(() => host.remove(), failed.length || review.length ? 12000 : 4000);
+      setTimeout(() => host.remove(), failed.length || review.length || uncleared ? 12000 : 4000);
     },
   };
 }
 
-module.exports = { buildBasket, findItemCard, selectModifier, findAddButton };
+module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket };
 
 // Bootstrap when injected into a real page (guarded so require() in tests is inert).
 if (typeof window !== 'undefined' && window.__feedmeBuild) {

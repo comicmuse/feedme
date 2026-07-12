@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-const { buildBasket, findItemCard, selectModifier, findAddButton } = require('../src/content/basket-builder');
+const { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket } = require('../src/content/basket-builder');
 
 // A synthetic menu DOM that mirrors the shape the engine targets: item rows whose
 // visible text carries the name, a customise dialog with labelled options, and an
@@ -626,5 +626,309 @@ describe('surfacing items via the menu search box (Just Eat)', () => {
     const plan = [{ name: 'Zinger Tower Burger', quantity: 1, modifiers: [], prefillable: true }];
     const results = await buildBasket({ basketPlan: plan }, { wait: pollWait, headless: true });
     expect(results[0]).toMatchObject({ added: 1, ok: true });
+  });
+});
+
+// ── clearBasket ──────────────────────────────────────────────────────────────
+// A synthetic Just Eat basket pane: one decrease button per item row, labelled
+// "Decrease quantity of X from N to M" (live shape, 2026-07-11). Clicking
+// decrements the quantity; at zero the row (and its button) disappears.
+function mountBasketPane(rows) {
+  const pane = document.createElement('aside');
+  pane.id = 'pane';
+  document.body.appendChild(pane);
+  rows.forEach(({ name, qty }) => {
+    // LIVE shape (2026-07-11): an empty span[role=button] with
+    // data-qa="cart-item-amount-action-decrement" — NOT a <button>.
+    const btn = document.createElement('span');
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('data-qa', 'cart-item-amount-action-decrement');
+    let n = qty;
+    const label = () => `Decrease quantity of ${name} from ${n} to ${n - 1}`;
+    btn.setAttribute('aria-label', label());
+    btn.addEventListener('click', () => {
+      n -= 1;
+      if (n <= 0) btn.remove(); else btn.setAttribute('aria-label', label());
+    });
+    pane.appendChild(btn);
+  });
+  return pane;
+}
+
+describe('clearBasket', () => {
+  beforeEach(() => { document.body.innerHTML = ''; });
+  const fastWait = (fn) => Promise.resolve(fn());
+
+  test('removes every unit and reports the count (Just Eat shape)', async () => {
+    mountBasketPane([{ name: 'Spicy Mayo Dip', qty: 2 }, { name: 'Big Mac Sauce', qty: 1 }]);
+    const r = await clearBasket(document, 'just-eat', fastWait);
+    expect(r).toEqual({ hadItems: true, cleared: true, removed: 3 });
+    expect(document.querySelectorAll('#pane [role="button"]')).toHaveLength(0);
+  });
+
+  test('is a no-op on an empty basket', async () => {
+    const r = await clearBasket(document, 'just-eat', fastWait);
+    expect(r).toEqual({ hadItems: false, cleared: true, removed: 0 });
+  });
+
+  test('is a no-op for an unknown platform', async () => {
+    mountBasketPane([{ name: 'Stray', qty: 1 }]);
+    const r = await clearBasket(document, 'unknown-platform', fastWait);
+    expect(r).toEqual({ hadItems: false, cleared: true, removed: 0 });
+    expect(document.querySelectorAll('#pane [role="button"]')).toHaveLength(1);
+  });
+
+  test('stops and reports cleared:false when a removal does not register', async () => {
+    // A button whose click changes nothing (platform swallowed it).
+    const pane = document.createElement('aside');
+    const btn = document.createElement('button');
+    btn.setAttribute('aria-label', 'Decrease quantity of Stuck Item from 1 to 0');
+    pane.appendChild(btn);
+    document.body.appendChild(pane);
+    const r = await clearBasket(document, 'just-eat', fastWait);
+    expect(r).toEqual({ hadItems: true, cleared: false, removed: 0 });
+  });
+
+  test('surfaces a hidden basket view before clearing (Just Eat "View basket")', async () => {
+    const view = document.createElement('button');
+    view.textContent = 'View basket';
+    view.addEventListener('click', () => mountBasketPane([{ name: 'Old Fries', qty: 1 }]));
+    document.body.appendChild(view);
+    const r = await clearBasket(document, 'just-eat', fastWait);
+    expect(r).toEqual({ hadItems: true, cleared: true, removed: 1 });
+  });
+
+  // Live finding 2026-07-11: after the final decrement Just Eat keeps the
+  // control mounted for a beat with the label "from 0 to -1" — clicking it is a
+  // wasted click that inflated the removed count (4 reported for 3 units).
+  // The builder must wait for it to unmount instead.
+  test('does not click or count the lingering quantity-0 control', async () => {
+    const pollWait = (fn, { timeout = 500 } = {}) => new Promise((resolve) => {
+      const start = Date.now();
+      const tick = () => {
+        let v = null; try { v = fn(); } catch (_) {}
+        if (v) return resolve(v);
+        if (Date.now() - start > timeout) return resolve(null);
+        setTimeout(tick, 10);
+      };
+      tick();
+    });
+    const pane = document.createElement('aside');
+    pane.id = 'pane';
+    document.body.appendChild(pane);
+    const btn = document.createElement('span');
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('data-qa', 'cart-item-amount-action-decrement');
+    btn.setAttribute('aria-label', 'Decrease quantity of Old Fries from 1 to 0');
+    let clicks = 0;
+    btn.addEventListener('click', () => {
+      clicks += 1;
+      btn.setAttribute('aria-label', 'Decrease quantity of Old Fries from 0 to -1');
+      setTimeout(() => btn.remove(), 20); // unmounts a beat later, as live
+    });
+    pane.appendChild(btn);
+    const r = await clearBasket(document, 'just-eat', pollWait);
+    expect(clicks).toBe(1);
+    expect(r).toEqual({ hadItems: true, cleared: true, removed: 1 });
+  });
+
+  // Live finding 2026-07-11: the surfaced cart modal stays open and its text
+  // (the stale items) then hijacks the customise-dialog matcher — the builder
+  // must close what it opened.
+  test('dismisses the surfaced Just Eat cart modal after clearing', async () => {
+    const view = document.createElement('button');
+    view.setAttribute('data-qa', 'cart-modal-toggle-element');
+    view.textContent = 'View basket';
+    view.addEventListener('click', () => {
+      const modal = document.createElement('div');
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('data-qa', 'cart-modal');
+      const close = document.createElement('span');
+      close.setAttribute('role', 'button');
+      close.setAttribute('data-qa', 'cart-modal-header-action-close');
+      close.setAttribute('aria-label', 'Close');
+      close.addEventListener('click', () => modal.remove());
+      modal.appendChild(close);
+      document.body.appendChild(modal);
+      const pane = mountBasketPane([{ name: 'Old Fries', qty: 1 }]);
+      modal.appendChild(pane);
+    });
+    document.body.appendChild(view);
+    const r = await clearBasket(document, 'just-eat', fastWait);
+    expect(r).toEqual({ hadItems: true, cleared: true, removed: 1 });
+    expect(document.querySelector('[data-qa="cart-modal"]')).toBeNull();
+  });
+});
+
+// Live finding 2026-07-11: the Just Eat cart modal is role=dialog and its text
+// contains the stale basket items' names — clicking an item card while it is
+// open made openItemDialog treat the CART as the customise dialog (no add
+// button → line failed). The customise-dialog matcher must skip it.
+describe('cart modal never mistaken for the customise dialog', () => {
+  const fastWait = (fn) => Promise.resolve(fn());
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('fills a line whose name also appears in an open cart modal', async () => {
+    mountMenu();
+    const cart = document.createElement('div');
+    cart.setAttribute('role', 'dialog');
+    cart.setAttribute('data-qa', 'cart-modal');
+    cart.textContent = 'Basket: Whopper £5.89 — 1 item';
+    // Prepend: on the live page the cart modal can precede the customise dialog
+    // in document order, which is what made find() return it first.
+    document.body.prepend(cart);
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ name: 'Whopper', added: 1, ok: true });
+  });
+});
+
+// A synthetic Deliveroo basket in the LIVE shape (2026-07-11, Popeyes
+// Shoreditch): an aside[aria-label="Basket"] with "Nx Item £…" row buttons and
+// a "Delete all items" control that opens an "Are you sure…?" confirm dialog;
+// confirming empties the basket in one action. The aside ALSO hosts a "People
+// also added" carousel with quick-add steppers that must never be clicked.
+function mountRooBasket(rows, { stickyConfirm = false } = {}) {
+  const aside = document.createElement('aside');
+  aside.setAttribute('aria-label', 'Basket');
+  document.body.appendChild(aside);
+  rows.forEach(({ name, qty }) => {
+    const row = document.createElement('button');
+    row.className = 'roo-row';
+    row.textContent = `${qty}x${name}£1.00`;
+    aside.appendChild(row);
+  });
+  const decoy = document.createElement('button');
+  decoy.setAttribute('aria-label', 'Decrease quantity');
+  decoy.dataset.decoyClicks = '0';
+  decoy.addEventListener('click', () => { decoy.dataset.decoyClicks = String(Number(decoy.dataset.decoyClicks) + 1); });
+  aside.appendChild(decoy);
+  const del = document.createElement('button');
+  del.setAttribute('aria-label', 'Delete all items');
+  del.addEventListener('click', () => {
+    const dlg = document.createElement('div');
+    dlg.setAttribute('role', 'dialog');
+    dlg.setAttribute('aria-modal', 'true');
+    const p = document.createElement('p');
+    p.textContent = 'Are you sure you want to delete this basket?';
+    const yes = document.createElement('button');
+    yes.textContent = 'Delete this basket';
+    yes.addEventListener('click', () => {
+      dlg.remove();
+      if (stickyConfirm) return; // simulates a confirm whose click never lands
+      [...aside.querySelectorAll('.roo-row')].forEach((r) => r.remove());
+      del.remove();
+    });
+    dlg.appendChild(p); dlg.appendChild(yes);
+    document.body.appendChild(dlg);
+  });
+  aside.appendChild(del);
+  return aside;
+}
+
+describe('clearBasket — Deliveroo clear-all flow', () => {
+  const fastWait = (fn) => Promise.resolve(fn());
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('clears via Delete all items + confirm, counting the basket rows', async () => {
+    mountRooBasket([{ name: 'Stale Hot Honey', qty: 2 }, { name: 'Stale Fries', qty: 1 }]);
+    const r = await clearBasket(document, 'deliveroo', fastWait);
+    expect(r).toEqual({ hadItems: true, cleared: true, removed: 3 });
+    expect(document.querySelector('[aria-label="Delete all items"]')).toBeNull();
+  });
+
+  test('never clicks the recommended-items quick-add steppers in the aside', async () => {
+    mountRooBasket([{ name: 'Stale A', qty: 1 }]);
+    await clearBasket(document, 'deliveroo', fastWait);
+    expect(document.querySelector('[aria-label="Decrease quantity"]').dataset.decoyClicks).toBe('0');
+  });
+
+  test('is a no-op when the Deliveroo basket is empty (no delete-all control)', async () => {
+    mountRooBasket([]);
+    document.querySelector('[aria-label="Delete all items"]').remove();
+    const r = await clearBasket(document, 'deliveroo', fastWait);
+    expect(r).toEqual({ hadItems: false, cleared: true, removed: 0 });
+  });
+
+  test('reports cleared:false when confirming never empties the basket', async () => {
+    mountRooBasket([{ name: 'Stuck', qty: 1 }], { stickyConfirm: true });
+    const r = await clearBasket(document, 'deliveroo', fastWait);
+    expect(r).toMatchObject({ hadItems: true, cleared: false });
+  });
+});
+
+describe('buildBasket clears the basket first', () => {
+  const fastWait = (fn) => Promise.resolve(fn());
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('empties pre-existing items before adding the plan (order matters)', async () => {
+    mountMenu();
+    const events = [];
+    mountRooBasket([{ name: 'Stale Hot Honey', qty: 1 }]);
+    document.querySelector('[aria-label="Delete all items"]').addEventListener('click', () => events.push('cleared'));
+    document.querySelector('[data-item-id="dr-1"]').addEventListener('click', () => events.push('add-clicked'));
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ platform: 'deliveroo', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ ok: true });
+    expect(events[0]).toBe('cleared');
+    expect(events).toContain('add-clicked');
+    expect(document.querySelectorAll('.roo-row')).toHaveLength(0);
+  });
+
+  test('does not clear when the plan is empty', async () => {
+    mountRooBasket([{ name: 'Keep Me', qty: 1 }]);
+    await buildBasket({ platform: 'deliveroo', basketPlan: [] }, { wait: fastWait, headless: true });
+    expect(document.querySelectorAll('.roo-row')).toHaveLength(1);
+  });
+
+  test('overlay reports how many pre-existing items were removed', async () => {
+    mountMenu();
+    mountRooBasket([{ name: 'Stale A', qty: 1 }, { name: 'Stale B', qty: 1 }]);
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    await buildBasket({ platform: 'deliveroo', basketPlan: plan }, { wait: fastWait });
+    const shadow = document.getElementById('feedme-builder').shadowRoot;
+    expect(shadow.textContent).toContain('Removed 2 item(s) already in the basket');
+  });
+
+  test('overlay warns in amber when clearing fails, and the fill still runs', async () => {
+    mountMenu();
+    mountRooBasket([{ name: 'Stuck', qty: 1 }], { stickyConfirm: true });
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ platform: 'deliveroo', basketPlan: plan }, { wait: fastWait });
+    expect(results[0]).toMatchObject({ ok: true });
+    const shadow = document.getElementById('feedme-builder').shadowRoot;
+    expect(shadow.textContent).toContain("Couldn't clear pre-existing items — check your basket.");
+  });
+});
+
+describe('cross-restaurant new-basket prompt', () => {
+  const fastWait = (fn) => Promise.resolve(fn());
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('accepts a "start new order?" confirm that blocks the add, then counts the line', async () => {
+    mountMenu();
+    // First add-click spawns a Deliveroo-style confirm instead of closing the
+    // dialog; clicking "New order" removes the confirm AND completes the add.
+    const root = document.getElementById('dialog-root');
+    let intercepted = false;
+    root.addEventListener('click', (e) => {
+      if (!e.target.classList.contains('add') || intercepted) return;
+      intercepted = true;
+      e.stopPropagation();
+      const confirm = document.createElement('div');
+      confirm.setAttribute('role', 'dialog');
+      confirm.id = 'confirm';
+      const p = document.createElement('p');
+      p.textContent = 'Starting a new order will clear your basket at Popeyes Whitechapel';
+      const yes = document.createElement('button');
+      yes.textContent = 'New order';
+      yes.addEventListener('click', () => { confirm.remove(); root.innerHTML = ''; });
+      confirm.appendChild(p); confirm.appendChild(yes);
+      document.body.appendChild(confirm);
+    }, true);
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ platform: 'deliveroo', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ name: 'Whopper', added: 1, ok: true });
+    expect(document.getElementById('confirm')).toBeNull();
   });
 });

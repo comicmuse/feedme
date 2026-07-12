@@ -1053,3 +1053,41 @@ describe('promo-badged card labels', () => {
     expect(findItemCard(document, { name: 'Crunchy Cheese Bites' }, 'deliveroo')).toBeNull();
   });
 });
+
+// Live failure (user retest of #24, 2026-07-12): the basket UI hydrates from the
+// platform's basket API after page load, but clearBasket sampled the DOM once at
+// injection time — on Just Eat the stale same-restaurant basket hadn't rendered
+// yet, so the clear concluded "empty" and the fill stacked on top of it.
+describe('clearBasket waits for the basket UI to hydrate', () => {
+  beforeEach(() => { document.body.innerHTML = ''; });
+  // Clamp the production wait timeouts (the hydration wait is 6s) so the
+  // nothing-ever-hydrates case still finishes within jest's limit.
+  const pollWait = (fn, { timeout = 500 } = {}) => new Promise((resolve) => {
+    const start = Date.now();
+    const capped = Math.min(timeout, 300);
+    const tick = () => {
+      let v = null; try { v = fn(); } catch (_) {}
+      if (v) return resolve(v);
+      if (Date.now() - start > capped) return resolve(null);
+      setTimeout(tick, 10);
+    };
+    tick();
+  });
+
+  test('clears a Just Eat pane that renders after injection', async () => {
+    setTimeout(() => mountBasketPane([{ name: 'Stale Sauce', qty: 1 }]), 30);
+    const r = await clearBasket(document, 'just-eat', pollWait);
+    expect(r).toEqual({ hadItems: true, cleared: true, removed: 1 });
+  });
+
+  test('clears a Deliveroo basket whose delete-all renders after injection', async () => {
+    setTimeout(() => mountRooBasket([{ name: 'Stale Biscuit', qty: 1 }]), 30);
+    const r = await clearBasket(document, 'deliveroo', pollWait);
+    expect(r).toEqual({ hadItems: true, cleared: true, removed: 1 });
+  });
+
+  test('still reports an empty basket when nothing ever hydrates', async () => {
+    const r = await clearBasket(document, 'just-eat', pollWait);
+    expect(r).toEqual({ hadItems: false, cleared: true, removed: 0 });
+  });
+});

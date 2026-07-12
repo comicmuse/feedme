@@ -313,6 +313,9 @@ const CLEAR_HOOKS = {
     // steppers (aria-label "Decrease quantity") that must never be clicked, so
     // Deliveroo clears via clearAll only — no removeButtons loop. Row buttons
     // read "Nx Item £…"; the leading quantities give the removed count.
+    // The aside renders even when the basket is empty — its presence says the
+    // basket UI has hydrated.
+    ready: (doc) => doc.querySelector('aside[aria-label="Basket"]'),
     countItems: (doc) => [...doc.querySelectorAll('[aria-label="Basket"] button')]
       .map((b) => ((b.textContent || '').match(/^\s*(\d+)\s*x/i) || [])[1])
       .filter(Boolean)
@@ -367,6 +370,24 @@ async function clearBasket(doc, platform, wait = defaultWait) {
   if (!hooks || !doc) return result;
   let surfaced = false;
   try {
+    // The basket UI hydrates from the platform's basket API AFTER the page
+    // completes, and the builder is injected right at complete — a single
+    // instant sample raced it and concluded "empty" over a stale basket (live
+    // #24 retest failure, Just Eat same-restaurant, 2026-07-12). Wait for any
+    // sign of the basket UI before deciding. Platforms whose basket UI renders
+    // even when empty publish `ready`; Just Eat renders NO cart container when
+    // empty, so a genuinely empty basket there simply waits out the timeout.
+    const uiPresent = () => {
+      if (hooks.clearAll && hooks.clearAll.trigger(doc)) return true;
+      if (hooks.removeButtons && hooks.removeButtons(doc).length) return true;
+      if (hooks.surface && hooks.surface(doc)) return true;
+      if (hooks.ready && hooks.ready(doc)) return true;
+      return null;
+    };
+    if (!uiPresent()) {
+      dlog('clear: waiting for the basket UI to hydrate');
+      await wait(uiPresent, { timeout: 6000 });
+    }
     // Platforms with a native "delete basket" affordance clear in one action:
     // click it, accept its confirm, and wait for the control to disappear (the
     // platform's own emptied signal). The row count from before the click is

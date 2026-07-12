@@ -1091,3 +1091,64 @@ describe('clearBasket waits for the basket UI to hydrate', () => {
     expect(r).toEqual({ hadItems: false, cleared: true, removed: 0 });
   });
 });
+
+// Live #37 retest failure (2026-07-12, McDonald's Commercial Road): BOTH cards
+// render, but the Sharebox has a compact carousel variant ("Crunchy Cheese Bites
+// Sharebox®, 482 kcal, £8.19") whose label is SHORTER than the plain item's
+// verbose card ("Crunchy Cheese Bites, A savoury blend…, 161 kcal, £3.59") — so
+// the shortest-label sort picked the superstring. The label's NAME SEGMENT (text
+// before the first comma/price) is the signal; an exact segment match must
+// outrank any superstring regardless of description length.
+describe('exact-name cards outrank superstring variants', () => {
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  test('prefers the exact-named card over a shorter superstring label', () => {
+    document.body.innerHTML = `
+      <div role="button" aria-label="Crunchy Cheese Bites Sharebox®, 482 kcal, £8.19"></div>
+      <div role="button" aria-label="Crunchy Cheese Bites, A savoury blend of Mozzarella &amp; Gouda in a crunchy breadcrumb coating, served with BBQ dip. Allergen info: mcdonalds.co.uk/nutrition, 161 kcal, £3.59"></div>`;
+    const el = findItemCard(document, { name: 'Crunchy Cheese Bites' }, 'deliveroo');
+    expect(el).toBeTruthy();
+    expect(el.getAttribute('aria-label')).toMatch(/^Crunchy Cheese Bites,/);
+  });
+
+  test('prefers the exact-named Just Eat overlay over a superstring one', () => {
+    document.body.innerHTML = `
+      <p id="n1">Crunchy Cheese Bites Sharebox® from £8.19</p>
+      <span role="button" data-qa="item" aria-labelledby="n1"></span>
+      <p id="n2">Crunchy Cheese Bites from £3.59</p>
+      <span role="button" data-qa="item" aria-labelledby="n2"></span>`;
+    const el = findItemCard(document, { name: 'Crunchy Cheese Bites' }, 'just-eat');
+    expect(el).toBeTruthy();
+    expect(el.getAttribute('aria-labelledby')).toBe('n2');
+  });
+
+  test('scrolls past a rendered superstring to reach the exact item', async () => {
+    const fastWait = (fn) => Promise.resolve(fn());
+    document.body.innerHTML = `
+      <main><div class="menu">
+        <div role="button" aria-label="Crunchy Cheese Bites Sharebox®, 482 kcal, £8.19"></div>
+      </div></main>`;
+    window.addEventListener('scroll', function once() {
+      window.removeEventListener('scroll', once);
+      const card = document.createElement('div');
+      card.setAttribute('role', 'button');
+      card.setAttribute('aria-label', 'Crunchy Cheese Bites, A savoury blend, 161 kcal, £3.59');
+      card.addEventListener('click', () => {
+        const dlg = document.createElement('div');
+        dlg.setAttribute('role', 'dialog');
+        const h = document.createElement('h2');
+        h.textContent = 'Crunchy Cheese Bites';
+        const add = document.createElement('button');
+        add.className = 'add';
+        add.textContent = 'Add to basket';
+        add.addEventListener('click', () => dlg.remove());
+        dlg.appendChild(h); dlg.appendChild(add);
+        document.body.appendChild(dlg);
+      });
+      document.querySelector('.menu').appendChild(card);
+    });
+    const plan = [{ name: 'Crunchy Cheese Bites', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ platform: 'deliveroo', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ name: 'Crunchy Cheese Bites', added: 1, ok: true });
+  });
+});

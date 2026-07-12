@@ -85,6 +85,19 @@ function nameStartsWith(label, name) {
   return label.startsWith(name) || label.replace(LABEL_BADGE_RE, '').startsWith(name);
 }
 
+// The item name portion of a card label: platforms append description and price
+// after a separator (Deliveroo "Name, desc, kcal, £p"; Uber "Name£p • kcal";
+// Just Eat "Name from £p"). An EXACT segment match distinguishes the item from a
+// superstring sibling ("… Sharebox®") no matter how verbose either label is —
+// the live #37 failure was a compact Sharebox carousel label beating the plain
+// item's long-description card in the shortest-label sort.
+function nameSegment(label) {
+  return label.replace(LABEL_BADGE_RE, '').replace(/( from £|,|£).*$/, '').trim();
+}
+function nameExact(label, name) {
+  return nameSegment(label) === name;
+}
+
 // Selectors for elements that actually respond to a click. A name match on a
 // container (e.g. a Just Eat search-result <li>) is useless unless we descend to
 // the real clickable overlay inside it.
@@ -140,10 +153,17 @@ function findItemCard(doc, line, platform) {
   // decoy rows that carry the same name text but do nothing when clicked — and in
   // the first frames after a search only the decoy exists, before any overlay has
   // rendered at all. So target ONLY the overlays, matched by resolved name.
+  // Rank exact-name-segment matches above superstring variants, then shorter
+  // labels (the item itself rather than a section/wrapper around it).
+  const rank = (a, b) => {
+    const an = accessibleName(a, doc);
+    const bn = accessibleName(b, doc);
+    return (nameExact(bn, name) - nameExact(an, name)) || (an.length - bn.length);
+  };
   const itemOverlays = [...doc.querySelectorAll('[data-qa="item"]')]
     .filter((el) => nameStartsWith(accessibleName(el, doc), name));
   if (itemOverlays.length) {
-    itemOverlays.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
+    itemOverlays.sort(rank);
     return itemOverlays[0];
   }
   // Wait (return null → keep polling) rather than clicking a decoy: on Just Eat
@@ -157,8 +177,7 @@ function findItemCard(doc, line, platform) {
   for (const tier of ['button, a, [role="button"]', '[data-item-id], [data-testid]']) {
     const candidates = [...doc.querySelectorAll(tier)]
       .filter((el) => nameStartsWith(accessibleName(el, doc), name));
-    // Shortest name = the item itself rather than a section/wrapper around it.
-    candidates.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
+    candidates.sort(rank);
     for (const candidate of candidates) {
       const clickable = resolveClickable(candidate, name, doc);
       if (clickable) return clickable;
@@ -496,7 +515,7 @@ function setNativeValue(input, value) {
 // Walk the window through the page's full height — real scrolls fire the
 // platform's IntersectionObservers and scroll listeners — polling for the card,
 // then restore the original position.
-async function scrollItemIntoDom(doc, line, wait, platform) {
+async function scrollItemIntoDom(doc, line, wait, platform, { exactOnly = false } = {}) {
   const win = doc.defaultView;
   if (!win) return null;
   const startY = win.scrollY || 0;
@@ -506,13 +525,21 @@ async function scrollItemIntoDom(doc, line, wait, platform) {
   );
   const step = Math.max(400, (win.innerHeight || 800) * 0.8);
   dlog(`"${line.name}": scrolling to force lazy menu sections (height ${height()})`);
+  // When hunting past an already-rendered superstring card, only an exact
+  // name-segment match ends the scroll — findItemCard alone would return the
+  // superstring again on the first poll.
+  const probe = () => {
+    const card = findItemCard(doc, line, platform);
+    if (!card) return null;
+    return !exactOnly || nameExact(accessibleName(card, doc), norm(line.name)) ? card : null;
+  };
   let found = null;
   for (let y = 0, i = 0; y <= height() && i < 60 && !found; y += step, i++) {
     try {
       win.scrollTo(0, y);
       win.dispatchEvent(new win.Event('scroll'));
     } catch (_) {}
-    found = await wait(() => findItemCard(doc, line, platform), { timeout: 350 });
+    found = await wait(probe, { timeout: 350 });
   }
   try {
     win.scrollTo(0, startY);
@@ -528,6 +555,18 @@ async function scrollItemIntoDom(doc, line, wait, platform) {
 async function surfaceItem(doc, line, wait, platform) {
   const card = await wait(() => findItemCard(doc, line, platform), { timeout: 2500 });
   if (card) {
+    // A prefix-only hit may be a superstring sibling ("… Sharebox®") while the
+    // exact item's card sits in an unrendered lazy section — scroll to look for
+    // an exact match before settling for the superstring (#37 retest).
+    if (!nameExact(accessibleName(card, doc), norm(line.name))
+        && !safeQuery(doc, 'input[type="search"], [data-qa="menu-category-nav-search-element"], input[placeholder*="search" i]')) {
+      dlog(`"${line.name}": only a superstring card rendered (${describeEl(card, doc)}) — scrolling for an exact match`);
+      const exact = await scrollItemIntoDom(doc, line, wait, platform, { exactOnly: true });
+      if (exact && nameExact(accessibleName(exact, doc), norm(line.name))) {
+        dlog(`"${line.name}": exact card after scroll:`, describeEl(exact, doc));
+        return exact;
+      }
+    }
     dlog(`"${line.name}": card found directly:`, describeEl(card, doc));
     return card;
   }

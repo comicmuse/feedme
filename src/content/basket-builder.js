@@ -347,6 +347,27 @@ const CLEAR_HOOKS = {
     state: (doc) => [...doc.querySelectorAll('a[href*="editItem"]')]
       .map((a) => { const li = a.closest('li'); return li ? norm(li.textContent) : ''; })
       .join('|'),
+    // A logged-in account with saved carts at multiple restaurants (issue
+    // #43, inferred from live screenshots 2026-07-13, pending full DOM
+    // confirmation): the badge opens a SWITCHER panel — one tile per
+    // restaurant showing "Subtotal £…" — instead of landing on the per-store
+    // drawer above. Carts at other addresses are grouped under a "You seem
+    // far away from the shop" heading; the tile(s) before that heading are
+    // this store's own cart. Picking the wrong tile is harmless: removeButtons
+    // is scoped to the current store's path, so a mismatched tile just yields
+    // no rows rather than touching another restaurant's cart.
+    chooseCart: (doc) => {
+      const tiles = [...doc.querySelectorAll('button, [role="button"], a')]
+        .filter((el) => /subtotal\s*£/i.test(norm(el.textContent)));
+      if (!tiles.length) return null;
+      const farAway = [...doc.querySelectorAll('*')]
+        .find((el) => el.children.length === 0 && /you seem far away/i.test(norm(el.textContent)));
+      if (!farAway) return tiles[0];
+      const before = tiles.filter(
+        (el) => !!(el.compareDocumentPosition(farAway) & Node.DOCUMENT_POSITION_FOLLOWING),
+      );
+      return before[0] || tiles[0];
+    },
     dismiss: (doc) => {
       const close = [...doc.querySelectorAll('button[aria-label="Close"]')].pop();
       if (close) clickEl(close);
@@ -407,6 +428,14 @@ async function clearBasket(doc, platform, wait = defaultWait) {
         clickEl(s);
         surfaced = true;
         await wait(() => hooks.removeButtons(doc).length, { timeout: 3000 });
+        if (!hooks.removeButtons(doc).length && hooks.chooseCart) {
+          const tile = hooks.chooseCart(doc);
+          if (tile) {
+            dlog("clear: choosing this store's cart from the switcher via", describeEl(tile, doc));
+            clickEl(tile);
+            await wait(() => hooks.removeButtons(doc).length, { timeout: 3000 });
+          }
+        }
       }
     }
     for (let i = 0; i < MAX_CLEAR_CLICKS; i++) {

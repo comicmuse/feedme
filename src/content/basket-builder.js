@@ -85,6 +85,19 @@ function nameStartsWith(label, name) {
   return label.startsWith(name) || label.replace(LABEL_BADGE_RE, '').startsWith(name);
 }
 
+// The item name portion of a card label: platforms append description and price
+// after a separator (Deliveroo "Name, desc, kcal, £p"; Uber "Name£p • kcal";
+// Just Eat "Name from £p"). An EXACT segment match distinguishes the item from a
+// superstring sibling ("… Sharebox®") no matter how verbose either label is —
+// the live #37 failure was a compact Sharebox carousel label beating the plain
+// item's long-description card in the shortest-label sort.
+function nameSegment(label) {
+  return label.replace(LABEL_BADGE_RE, '').replace(/( from £|,|£).*$/, '').trim();
+}
+function nameExact(label, name) {
+  return nameSegment(label) === name;
+}
+
 // Selectors for elements that actually respond to a click. A name match on a
 // container (e.g. a Just Eat search-result <li>) is useless unless we descend to
 // the real clickable overlay inside it.
@@ -140,10 +153,17 @@ function findItemCard(doc, line, platform) {
   // decoy rows that carry the same name text but do nothing when clicked — and in
   // the first frames after a search only the decoy exists, before any overlay has
   // rendered at all. So target ONLY the overlays, matched by resolved name.
+  // Rank exact-name-segment matches above superstring variants, then shorter
+  // labels (the item itself rather than a section/wrapper around it).
+  const rank = (a, b) => {
+    const an = accessibleName(a, doc);
+    const bn = accessibleName(b, doc);
+    return (nameExact(bn, name) - nameExact(an, name)) || (an.length - bn.length);
+  };
   const itemOverlays = [...doc.querySelectorAll('[data-qa="item"]')]
     .filter((el) => nameStartsWith(accessibleName(el, doc), name));
   if (itemOverlays.length) {
-    itemOverlays.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
+    itemOverlays.sort(rank);
     return itemOverlays[0];
   }
   // Wait (return null → keep polling) rather than clicking a decoy: on Just Eat
@@ -157,8 +177,7 @@ function findItemCard(doc, line, platform) {
   for (const tier of ['button, a, [role="button"]', '[data-item-id], [data-testid]']) {
     const candidates = [...doc.querySelectorAll(tier)]
       .filter((el) => nameStartsWith(accessibleName(el, doc), name));
-    // Shortest name = the item itself rather than a section/wrapper around it.
-    candidates.sort((a, b) => accessibleName(a, doc).length - accessibleName(b, doc).length);
+    candidates.sort(rank);
     for (const candidate of candidates) {
       const clickable = resolveClickable(candidate, name, doc);
       if (clickable) return clickable;
@@ -313,6 +332,9 @@ const CLEAR_HOOKS = {
     // steppers (aria-label "Decrease quantity") that must never be clicked, so
     // Deliveroo clears via clearAll only — no removeButtons loop. Row buttons
     // read "Nx Item £…"; the leading quantities give the removed count.
+    // The aside renders even when the basket is empty — its presence says the
+    // basket UI has hydrated.
+    ready: (doc) => doc.querySelector('aside[aria-label="Basket"]'),
     countItems: (doc) => [...doc.querySelectorAll('[aria-label="Basket"] button')]
       .map((b) => ((b.textContent || '').match(/^\s*(\d+)\s*x/i) || [])[1])
       .filter(Boolean)
@@ -324,15 +346,28 @@ const CLEAR_HOOKS = {
     },
   },
   'uber-eats': {
-    // Live shapes 2026-07-11 (KFC Mile End): a "BasketN" badge button opens a
-    // per-store cart drawer; each row is an <li> with a mod=editItem link whose
-    // href carries the store path, plus Decrement/Increment steppers — Decrement
-    // at quantity 1 removes the row (trash icon). Rows are scoped to the CURRENT
-    // store via the editItem href so another store's cart is never touched. The
-    // Decrement labels carry no quantity, so settling is detected from the row
-    // text (the `state` hook) instead of the button labels. The old
-    // view-carts-badge testid no longer exists; kept as a drift fallback.
-    surface: (doc) => doc.querySelector('[data-testid="view-carts-badge"]')
+    // Live shapes 2026-07-11 (KFC Mile End, anonymous) and 2026-07-13 (logged-in
+    // multi-cart account, issue #43). The badge (data-test-id="view-carts-btn")
+    // opens one of two views:
+    //  - This store HAS a cart (badge "BasketN", even for a cart saved under a
+    //    different delivery address): the per-store drawer opens DIRECTLY. Each
+    //    row is an <li> with a mod=editItem link whose href carries the store
+    //    path, plus Decrement/Increment steppers — Decrement at quantity 1
+    //    removes the row (trash icon). Rows are scoped to the CURRENT store via
+    //    the editItem href so another store's cart is never touched. The
+    //    Decrement labels carry no quantity, so settling is detected from the
+    //    row text (the `state` hook) instead of the button labels.
+    //  - This store has NO cart but the account holds carts elsewhere (badge
+    //    "BasketsN", N = cart count): a cart SWITCHER opens instead — one
+    //    li[role=menuitem] tile per restaurant ("<Name>Subtotal: £…"), carts at
+    //    other addresses grouped under a "You seem far away from the shop"
+    //    heading. There is nothing of this store's to clear, so the no-rows →
+    //    empty conclusion is correct; tiles must NOT be clicked (opening
+    //    another restaurant's cart can trigger its stale-items validation
+    //    modal). The switcher has no Close button — dismiss re-clicks the
+    //    badge, which toggles it shut.
+    // The old view-carts-badge testid no longer exists; kept as a drift fallback.
+    surface: (doc) => doc.querySelector('[data-test-id="view-carts-btn"], [data-testid="view-carts-badge"]')
       || [...doc.querySelectorAll('button')].find((b) => /^baskets?\s*\d+$/i.test(norm(b.textContent))) || null,
     removeButtons: (doc) => {
       const path = String((doc.location && doc.location.pathname) || '');
@@ -349,7 +384,13 @@ const CLEAR_HOOKS = {
       .join('|'),
     dismiss: (doc) => {
       const close = [...doc.querySelectorAll('button[aria-label="Close"]')].pop();
-      if (close) clickEl(close);
+      if (close) return clickEl(close);
+      const switcherOpen = [...doc.querySelectorAll('li[role="menuitem"]')]
+        .some((el) => /subtotal:?\s*£/i.test(norm(el.textContent)));
+      if (switcherOpen) {
+        const badge = CLEAR_HOOKS['uber-eats'].surface(doc);
+        if (badge) clickEl(badge);
+      }
     },
   },
 };
@@ -367,6 +408,24 @@ async function clearBasket(doc, platform, wait = defaultWait) {
   if (!hooks || !doc) return result;
   let surfaced = false;
   try {
+    // The basket UI hydrates from the platform's basket API AFTER the page
+    // completes, and the builder is injected right at complete — a single
+    // instant sample raced it and concluded "empty" over a stale basket (live
+    // #24 retest failure, Just Eat same-restaurant, 2026-07-12). Wait for any
+    // sign of the basket UI before deciding. Platforms whose basket UI renders
+    // even when empty publish `ready`; Just Eat renders NO cart container when
+    // empty, so a genuinely empty basket there simply waits out the timeout.
+    const uiPresent = () => {
+      if (hooks.clearAll && hooks.clearAll.trigger(doc)) return true;
+      if (hooks.removeButtons && hooks.removeButtons(doc).length) return true;
+      if (hooks.surface && hooks.surface(doc)) return true;
+      if (hooks.ready && hooks.ready(doc)) return true;
+      return null;
+    };
+    if (!uiPresent()) {
+      dlog('clear: waiting for the basket UI to hydrate');
+      await wait(uiPresent, { timeout: 6000 });
+    }
     // Platforms with a native "delete basket" affordance clear in one action:
     // click it, accept its confirm, and wait for the control to disappear (the
     // platform's own emptied signal). The row count from before the click is
@@ -475,7 +534,7 @@ function setNativeValue(input, value) {
 // Walk the window through the page's full height — real scrolls fire the
 // platform's IntersectionObservers and scroll listeners — polling for the card,
 // then restore the original position.
-async function scrollItemIntoDom(doc, line, wait, platform) {
+async function scrollItemIntoDom(doc, line, wait, platform, { exactOnly = false } = {}) {
   const win = doc.defaultView;
   if (!win) return null;
   const startY = win.scrollY || 0;
@@ -485,13 +544,21 @@ async function scrollItemIntoDom(doc, line, wait, platform) {
   );
   const step = Math.max(400, (win.innerHeight || 800) * 0.8);
   dlog(`"${line.name}": scrolling to force lazy menu sections (height ${height()})`);
+  // When hunting past an already-rendered superstring card, only an exact
+  // name-segment match ends the scroll — findItemCard alone would return the
+  // superstring again on the first poll.
+  const probe = () => {
+    const card = findItemCard(doc, line, platform);
+    if (!card) return null;
+    return !exactOnly || nameExact(accessibleName(card, doc), norm(line.name)) ? card : null;
+  };
   let found = null;
   for (let y = 0, i = 0; y <= height() && i < 60 && !found; y += step, i++) {
     try {
       win.scrollTo(0, y);
       win.dispatchEvent(new win.Event('scroll'));
     } catch (_) {}
-    found = await wait(() => findItemCard(doc, line, platform), { timeout: 350 });
+    found = await wait(probe, { timeout: 350 });
   }
   try {
     win.scrollTo(0, startY);
@@ -507,6 +574,18 @@ async function scrollItemIntoDom(doc, line, wait, platform) {
 async function surfaceItem(doc, line, wait, platform) {
   const card = await wait(() => findItemCard(doc, line, platform), { timeout: 2500 });
   if (card) {
+    // A prefix-only hit may be a superstring sibling ("… Sharebox®") while the
+    // exact item's card sits in an unrendered lazy section — scroll to look for
+    // an exact match before settling for the superstring (#37 retest).
+    if (!nameExact(accessibleName(card, doc), norm(line.name))
+        && !safeQuery(doc, 'input[type="search"], [data-qa="menu-category-nav-search-element"], input[placeholder*="search" i]')) {
+      dlog(`"${line.name}": only a superstring card rendered (${describeEl(card, doc)}) — scrolling for an exact match`);
+      const exact = await scrollItemIntoDom(doc, line, wait, platform, { exactOnly: true });
+      if (exact && nameExact(accessibleName(exact, doc), norm(line.name))) {
+        dlog(`"${line.name}": exact card after scroll:`, describeEl(exact, doc));
+        return exact;
+      }
+    }
     dlog(`"${line.name}": card found directly:`, describeEl(card, doc));
     return card;
   }

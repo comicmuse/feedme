@@ -60,6 +60,51 @@ function mountBadge(rows) {
   return badge;
 }
 
+// A logged-in account with carts at OTHER restaurants but none at this store
+// (issue #43, live-pinned 2026-07-13): the badge reads "BasketsN" and opens a
+// cart SWITCHER — one li[role=menuitem] tile per restaurant ("<Name>Subtotal:
+// £…"), far-address carts grouped under a "You seem far away from the shop"
+// heading nested inside the first such tile. No editItem rows, no Close
+// button; clicking the badge again toggles the switcher shut. (When this
+// store HAS a cart the drawer above opens directly — the switcher never
+// carries this store's rows.)
+function mountSwitcherBadge(entries) {
+  const badge = document.createElement('button');
+  badge.setAttribute('data-test-id', 'view-carts-btn');
+  badge.textContent = `Baskets${entries.length}`;
+  badge.addEventListener('click', () => {
+    const open = document.getElementById('switcher');
+    if (open) open.remove(); else mountSwitcher(entries);
+  });
+  document.body.appendChild(badge);
+  return badge;
+}
+
+function mountSwitcher(entries) {
+  const panel = document.createElement('ul');
+  panel.id = 'switcher';
+  let farAwayShown = false;
+  entries.forEach((entry) => {
+    const tile = document.createElement('li');
+    tile.setAttribute('role', 'menuitem');
+    tile.setAttribute('data-testid', `menu-item-${entry.name}`);
+    if (entry.farAway && !farAwayShown) {
+      const heading = document.createElement('div');
+      heading.textContent = 'You seem far away from the shop';
+      tile.appendChild(heading);
+      farAwayShown = true;
+    }
+    const label = document.createElement('div');
+    label.textContent = `${entry.name}Subtotal: £${entry.subtotal}Deliver to ${entry.address}`;
+    tile.appendChild(label);
+    clicksByName[entry.name] = 0;
+    tile.addEventListener('click', () => { clicksByName[entry.name] += 1; });
+    panel.appendChild(tile);
+  });
+  document.body.appendChild(panel);
+  return panel;
+}
+
 describe('clearBasket — Uber Eats cart drawer', () => {
   beforeEach(() => { document.body.innerHTML = ''; clicksByName = {}; removedByName = {}; });
   const fastWait = (fn) => Promise.resolve(fn());
@@ -92,5 +137,21 @@ describe('clearBasket — Uber Eats cart drawer', () => {
     mountBadge([]);
     const r = await clearBasket(document, 'uber-eats', fastWait);
     expect(r).toEqual({ hadItems: false, cleared: true, removed: 0 });
+  });
+
+  test('treats the multi-restaurant cart switcher as empty, clicks no tile, and toggles it shut (#43)', async () => {
+    mountSwitcherBadge([
+      { name: "Domino's Pizza", subtotal: '46.38', farAway: true, address: 'E14 7LG' },
+      { name: "McDonald's", subtotal: '18.57', farAway: true, address: 'E14 7LG' },
+      { name: 'Subway', subtotal: '28.30', farAway: true, address: 'E14 7LG' },
+    ]);
+    const r = await clearBasket(document, 'uber-eats', fastWait);
+    expect(r).toEqual({ hadItems: false, cleared: true, removed: 0 });
+    expect(clicksByName["Domino's Pizza"]).toBe(0);
+    expect(clicksByName["McDonald's"]).toBe(0);
+    expect(clicksByName.Subway).toBe(0);
+    // dismissed via the badge toggle — a lingering switcher would sit over the
+    // menu for the whole fill
+    expect(document.getElementById('switcher')).toBeNull();
   });
 });

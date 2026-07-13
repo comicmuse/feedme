@@ -147,8 +147,16 @@ async function runUberScraper() {
   // the brand's own results, and they stream in over time. Resolving on the first
   // /gb/store/ link snapshots a recommendation before the chain's branches render
   // (the old storeCards=1, matched=0 failure). Instead wait until a card actually
-  // matches the brand — then the real results are present — and fall back to
-  // whatever is there at timeout.
+  // matches the brand; a timeout with no brand card sends [] (a fallback to the
+  // rendered strays would be brand-filtered to [] anyway).
+  //
+  // NOTE (live 2026-07-12, #38): Uber's brand search no longer has the "N
+  // locations" multi-branch view — the feed AND its getSearchFeedV1 payload carry
+  // exactly ONE store per brand (the nearest), for every brand probed. Sibling
+  // enumeration therefore finds at most the source store, which the worker then
+  // de-dupes away. Locality-qualified queries ("KFC Whitechapel") sometimes
+  // expand to several branches but inconsistently ("KFC Mile End" does not), so
+  // there is no deterministic replacement surface.
   const brand = nameTokens(ctx.restaurantName ?? '')[0] || '';
   const ready = await waitFor(() => {
     const found = extractUberStoreCards(document);

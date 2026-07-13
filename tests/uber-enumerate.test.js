@@ -102,4 +102,25 @@ describe('extractUberStoreCatalog', () => {
   test('returns null when no store catalogue blob is present', () => {
     expect(extractUberStoreCatalog(docFromHtml('<div>no script here</div>'))).toBeNull();
   });
+
+  // A store with NO item promotion running ships a blob without any
+  // buyXGetYItemPromotion string (live KFC Mile End, 2026-07-13) — the finder
+  // must key on the catalog structure, not a promo-dependent marker, or every
+  // sibling item loses its id and the sidebar falls back to "Open menu" (#45).
+  test('finds the blob on a store without any item promotion', () => {
+    const promoless = {
+      mutations: [],
+      queries: [{ state: { data: {
+        title: 'KFC London - Mile End Road',
+        catalogSectionsMap: { 'sec-1': [{ payload: { standardItemsPayload: { catalogItems: [
+          { title: 'Signature Fries', uuid: 'fries-uuid-1', price: 419 },
+        ] } } }] },
+      } } }],
+    };
+    const doc = docFromHtml(
+      `<script type="application/json">${encode(JSON.stringify(promoless))}</script>`);
+    const data = extractUberStoreCatalog(doc);
+    expect(data).toBeTruthy();
+    expect(data.title).toBe('KFC London - Mile End Road');
+  });
 });

@@ -324,15 +324,28 @@ const CLEAR_HOOKS = {
     },
   },
   'uber-eats': {
-    // Live shapes 2026-07-11 (KFC Mile End): a "BasketN" badge button opens a
-    // per-store cart drawer; each row is an <li> with a mod=editItem link whose
-    // href carries the store path, plus Decrement/Increment steppers — Decrement
-    // at quantity 1 removes the row (trash icon). Rows are scoped to the CURRENT
-    // store via the editItem href so another store's cart is never touched. The
-    // Decrement labels carry no quantity, so settling is detected from the row
-    // text (the `state` hook) instead of the button labels. The old
-    // view-carts-badge testid no longer exists; kept as a drift fallback.
-    surface: (doc) => doc.querySelector('[data-testid="view-carts-badge"]')
+    // Live shapes 2026-07-11 (KFC Mile End, anonymous) and 2026-07-13 (logged-in
+    // multi-cart account, issue #43). The badge (data-test-id="view-carts-btn")
+    // opens one of two views:
+    //  - This store HAS a cart (badge "BasketN", even for a cart saved under a
+    //    different delivery address): the per-store drawer opens DIRECTLY. Each
+    //    row is an <li> with a mod=editItem link whose href carries the store
+    //    path, plus Decrement/Increment steppers — Decrement at quantity 1
+    //    removes the row (trash icon). Rows are scoped to the CURRENT store via
+    //    the editItem href so another store's cart is never touched. The
+    //    Decrement labels carry no quantity, so settling is detected from the
+    //    row text (the `state` hook) instead of the button labels.
+    //  - This store has NO cart but the account holds carts elsewhere (badge
+    //    "BasketsN", N = cart count): a cart SWITCHER opens instead — one
+    //    li[role=menuitem] tile per restaurant ("<Name>Subtotal: £…"), carts at
+    //    other addresses grouped under a "You seem far away from the shop"
+    //    heading. There is nothing of this store's to clear, so the no-rows →
+    //    empty conclusion is correct; tiles must NOT be clicked (opening
+    //    another restaurant's cart can trigger its stale-items validation
+    //    modal). The switcher has no Close button — dismiss re-clicks the
+    //    badge, which toggles it shut.
+    // The old view-carts-badge testid no longer exists; kept as a drift fallback.
+    surface: (doc) => doc.querySelector('[data-test-id="view-carts-btn"], [data-testid="view-carts-badge"]')
       || [...doc.querySelectorAll('button')].find((b) => /^baskets?\s*\d+$/i.test(norm(b.textContent))) || null,
     removeButtons: (doc) => {
       const path = String((doc.location && doc.location.pathname) || '');
@@ -347,30 +360,15 @@ const CLEAR_HOOKS = {
     state: (doc) => [...doc.querySelectorAll('a[href*="editItem"]')]
       .map((a) => { const li = a.closest('li'); return li ? norm(li.textContent) : ''; })
       .join('|'),
-    // A logged-in account with saved carts at multiple restaurants (issue
-    // #43, inferred from live screenshots 2026-07-13, pending full DOM
-    // confirmation): the badge opens a SWITCHER panel — one tile per
-    // restaurant showing "Subtotal £…" — instead of landing on the per-store
-    // drawer above. Carts at other addresses are grouped under a "You seem
-    // far away from the shop" heading; the tile(s) before that heading are
-    // this store's own cart. Picking the wrong tile is harmless: removeButtons
-    // is scoped to the current store's path, so a mismatched tile just yields
-    // no rows rather than touching another restaurant's cart.
-    chooseCart: (doc) => {
-      const tiles = [...doc.querySelectorAll('button, [role="button"], a')]
-        .filter((el) => /subtotal\s*£/i.test(norm(el.textContent)));
-      if (!tiles.length) return null;
-      const farAway = [...doc.querySelectorAll('*')]
-        .find((el) => el.children.length === 0 && /you seem far away/i.test(norm(el.textContent)));
-      if (!farAway) return tiles[0];
-      const before = tiles.filter(
-        (el) => !!(el.compareDocumentPosition(farAway) & Node.DOCUMENT_POSITION_FOLLOWING),
-      );
-      return before[0] || tiles[0];
-    },
     dismiss: (doc) => {
       const close = [...doc.querySelectorAll('button[aria-label="Close"]')].pop();
-      if (close) clickEl(close);
+      if (close) return clickEl(close);
+      const switcherOpen = [...doc.querySelectorAll('li[role="menuitem"]')]
+        .some((el) => /subtotal:?\s*£/i.test(norm(el.textContent)));
+      if (switcherOpen) {
+        const badge = CLEAR_HOOKS['uber-eats'].surface(doc);
+        if (badge) clickEl(badge);
+      }
     },
   },
 };
@@ -428,14 +426,6 @@ async function clearBasket(doc, platform, wait = defaultWait) {
         clickEl(s);
         surfaced = true;
         await wait(() => hooks.removeButtons(doc).length, { timeout: 3000 });
-        if (!hooks.removeButtons(doc).length && hooks.chooseCart) {
-          const tile = hooks.chooseCart(doc);
-          if (tile) {
-            dlog("clear: choosing this store's cart from the switcher via", describeEl(tile, doc));
-            clickEl(tile);
-            await wait(() => hooks.removeButtons(doc).length, { timeout: 3000 });
-          }
-        }
       }
     }
     for (let i = 0; i < MAX_CLEAR_CLICKS; i++) {

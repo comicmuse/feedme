@@ -60,36 +60,45 @@ function mountBadge(rows) {
   return badge;
 }
 
-// A logged-in account with saved carts at multiple restaurants (issue #43,
-// screenshots 2026-07-13): the badge opens a SWITCHER panel — one tile per
-// restaurant showing "Subtotal £…" — instead of going straight to a drawer.
-// Carts at other addresses are grouped under a "You seem far away from the
-// shop" heading; the tile(s) before that heading are this store's own cart.
+// A logged-in account with carts at OTHER restaurants but none at this store
+// (issue #43, live-pinned 2026-07-13): the badge reads "BasketsN" and opens a
+// cart SWITCHER — one li[role=menuitem] tile per restaurant ("<Name>Subtotal:
+// £…"), far-address carts grouped under a "You seem far away from the shop"
+// heading nested inside the first such tile. No editItem rows, no Close
+// button; clicking the badge again toggles the switcher shut. (When this
+// store HAS a cart the drawer above opens directly — the switcher never
+// carries this store's rows.)
 function mountSwitcherBadge(entries) {
   const badge = document.createElement('button');
+  badge.setAttribute('data-test-id', 'view-carts-btn');
   badge.textContent = `Baskets${entries.length}`;
-  badge.addEventListener('click', () => mountSwitcher(entries));
+  badge.addEventListener('click', () => {
+    const open = document.getElementById('switcher');
+    if (open) open.remove(); else mountSwitcher(entries);
+  });
   document.body.appendChild(badge);
   return badge;
 }
 
 function mountSwitcher(entries) {
-  const panel = document.createElement('div');
+  const panel = document.createElement('ul');
   panel.id = 'switcher';
   let farAwayShown = false;
   entries.forEach((entry) => {
+    const tile = document.createElement('li');
+    tile.setAttribute('role', 'menuitem');
+    tile.setAttribute('data-testid', `menu-item-${entry.name}`);
     if (entry.farAway && !farAwayShown) {
       const heading = document.createElement('div');
       heading.textContent = 'You seem far away from the shop';
-      panel.appendChild(heading);
+      tile.appendChild(heading);
       farAwayShown = true;
     }
-    const tile = document.createElement('button');
-    tile.textContent = `${entry.name} Subtotal £${entry.subtotal}`;
-    tile.addEventListener('click', () => {
-      panel.remove();
-      mountUberDrawer(entry.rows);
-    });
+    const label = document.createElement('div');
+    label.textContent = `${entry.name}Subtotal: £${entry.subtotal}Deliver to ${entry.address}`;
+    tile.appendChild(label);
+    clicksByName[entry.name] = 0;
+    tile.addEventListener('click', () => { clicksByName[entry.name] += 1; });
     panel.appendChild(tile);
   });
   document.body.appendChild(panel);
@@ -130,23 +139,19 @@ describe('clearBasket — Uber Eats cart drawer', () => {
     expect(r).toEqual({ hadItems: false, cleared: true, removed: 0 });
   });
 
-  test('opens this store\'s tile from a multi-restaurant cart switcher before clearing (#43)', async () => {
+  test('treats the multi-restaurant cart switcher as empty, clicks no tile, and toggles it shut (#43)', async () => {
     mountSwitcherBadge([
-      { name: "McDonald's", subtotal: '2.99', farAway: false, rows: [{ name: 'Raspberry X Sprite', qty: 1, path: STORE_PATH }] },
-      { name: "Domino's Pizza", subtotal: '46.38', farAway: true, rows: [{ name: 'Pizza', qty: 1, path: OTHER_PATH }] },
-      { name: "McDonald's", subtotal: '18.57', farAway: true, rows: [{ name: 'Fries', qty: 1, path: OTHER_PATH }] },
+      { name: "Domino's Pizza", subtotal: '46.38', farAway: true, address: 'E14 7LG' },
+      { name: "McDonald's", subtotal: '18.57', farAway: true, address: 'E14 7LG' },
+      { name: 'Subway', subtotal: '28.30', farAway: true, address: 'E14 7LG' },
     ]);
     const r = await clearBasket(document, 'uber-eats', fastWait);
-    expect(r).toEqual({ hadItems: true, cleared: true, removed: 1 });
-    expect(clicksByName.Pizza).toBeUndefined();
-    expect(clicksByName.Fries).toBeUndefined();
-  });
-
-  test('falls back to the first tile when no "far away" grouping is present', async () => {
-    mountSwitcherBadge([
-      { name: "McDonald's", subtotal: '2.99', farAway: false, rows: [{ name: 'Raspberry X Sprite', qty: 1, path: STORE_PATH }] },
-    ]);
-    const r = await clearBasket(document, 'uber-eats', fastWait);
-    expect(r).toEqual({ hadItems: true, cleared: true, removed: 1 });
+    expect(r).toEqual({ hadItems: false, cleared: true, removed: 0 });
+    expect(clicksByName["Domino's Pizza"]).toBe(0);
+    expect(clicksByName["McDonald's"]).toBe(0);
+    expect(clicksByName.Subway).toBe(0);
+    // dismissed via the badge toggle — a lingering switcher would sit over the
+    // menu for the whole fill
+    expect(document.getElementById('switcher')).toBeNull();
   });
 });

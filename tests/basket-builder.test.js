@@ -1292,3 +1292,199 @@ describe('exact-name cards outrank superstring variants', () => {
     expect(results[0]).toMatchObject({ name: 'Crunchy Cheese Bites', added: 1, ok: true });
   });
 });
+
+// ── Uber meal wizard navigation (#47) ────────────────────────────────────────
+// Live shapes (McDonald's Bethnal Green Road, 2026-07-14): meal items hide
+// concrete options behind CATEGORY radios ("Cold Drink", "Bottled Drinks"…).
+// Clicking a category REPLACES the whole dialog with a sub-screen carrying a
+// button[aria-label="Go back"], the category's concrete options, and a bottom
+// "Save • £X" button. Save commits and returns to the parent screen (or stays
+// and flags when that screen's Required groups are unmet — the platform's own
+// validation); Go back discards. Sub-screens do NOT contain the item name, and
+// the real "Add 1 to order • £X" button exists only on the top-level screen.
+describe('Uber meal wizard navigation (#47)', () => {
+  // A faithful jsdom model of the wizard. Every screen render REPLACES the
+  // dialog node (as live React does, #26), option rows use the live
+  // input+sibling-label[for] shape, and radio input name attrs are unique per
+  // screen (navigation is detectable by a radio group vanishing).
+  function mountWizardStore({ defaults = false } = {}) {
+    const state = {
+      side: defaults ? 'Medium Fries' : null,
+      drinkCat: null,
+      drink: null,
+      addOn: defaults ? 'No Thanks' : null,
+      pendingDrink: null,
+      added: 0,
+      composition: null,
+    };
+    const CATS = {
+      'Cold Drink': ['(Upgrade) Regular Frozen Cherry Lemonade', 'Medium Diet Coke®', 'Medium Coca-Cola® Zero Sugar'],
+      'Bottled Drinks': ['GLACEAU Smartwater', 'Medium Oasis® Zero'],
+      'Milkshake': ['(Upgrade) Medium Chocolate Milkshake'],
+    };
+    document.body.innerHTML = `
+      <button class="item">Big Mac®£5.89 • 509 kcal</button>
+      <div id="modal"></div>`;
+    const modal = document.getElementById('modal');
+
+    const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const radio = (group, label, checked) => {
+      const v = slug(label);
+      return `<input type="radio" name="${group}" value="${v}" id="qv-${group}-${v}"${checked ? ' checked' : ''}>`
+        + `<label for="qv-${group}-${v}"><div>${label}</div></label>`;
+    };
+
+    const renderTop = () => {
+      modal.innerHTML = `
+        <div role="dialog">
+          <button aria-label="Close">Close</button>
+          <h1>Big Mac®</h1>
+          <div data-testid="customization-pick-one"><div>Select Option</div><span>Choose 1</span><div>Required</div>
+            ${radio('sel-uuid+0', 'Medium Big Mac® Meal', state.drink != null)}
+            ${radio('sel-uuid+0', 'Big Mac®', false)}
+          </div>
+          <button class="top-add">Add 1 to order • £7.59</button>
+        </div>`;
+    };
+    const renderMeal = () => {
+      const drinkGroup = state.drink
+        ? `<div>${state.drinkCat}${state.drink}Edit selections</div>`
+        : Object.keys(CATS).map((c) => radio('drink-uuid+1', c, false)).join('');
+      modal.innerHTML = `
+        <div role="dialog">
+          <button aria-label="Go back">Back</button>
+          <div>Medium Big Mac® Meal</div>
+          <div data-testid="customization-pick-one"><div>Medium Side</div><span>Choose 1</span><div>Required</div>
+            ${radio('side-uuid+0', 'Medium Fries', state.side === 'Medium Fries')}
+            ${radio('side-uuid+0', 'Side Salad', state.side === 'Side Salad')}
+          </div>
+          <div data-testid="customization-pick-one"><div>Medium Drink</div><span>Choose 1</span><div>Required</div>
+            ${drinkGroup}
+          </div>
+          <div data-testid="customization-pick-one"><div>Meal Add On</div><span>Choose 1</span><div>Required</div>
+            ${radio('addon-uuid+2', '4 Chicken McNuggets®', state.addOn === '4 Chicken McNuggets®')}
+            ${radio('addon-uuid+2', 'No Thanks', state.addOn === 'No Thanks')}
+          </div>
+          <button class="save">Save • £7.59</button>
+        </div>`;
+    };
+    const renderLeaf = (cat) => {
+      modal.innerHTML = `
+        <div role="dialog">
+          <button aria-label="Go back">Back</button>
+          <div>${cat}</div>
+          <div data-testid="customization-pick-one"><div>${cat}</div><span>Choose 1</span><div>Required</div>
+            ${CATS[cat].map((d) => radio('leaf-' + slug(cat) + '+0', d, state.pendingDrink === d)).join('')}
+          </div>
+          <button class="save">Save • £7.59</button>
+        </div>`;
+    };
+
+    let screen = 'closed';
+    document.querySelector('.item').addEventListener('click', () => {
+      if (screen !== 'closed') return;
+      screen = 'top';
+      renderTop();
+    });
+    const findLabelText = (input) => {
+      const lab = modal.querySelector(`label[for="${input.id}"]`);
+      return lab ? lab.textContent.trim() : '';
+    };
+    modal.addEventListener('click', (e) => {
+      const t = e.target;
+      if (t.tagName === 'INPUT' && t.type === 'radio') {
+        const label = findLabelText(t);
+        if (screen === 'top') {
+          if (label === 'Medium Big Mac® Meal') { screen = 'meal'; renderMeal(); }
+          return;
+        }
+        if (screen === 'meal') {
+          if (t.name.startsWith('side-')) { state.side = label; renderMeal(); return; }
+          if (t.name.startsWith('addon-')) { state.addOn = label; renderMeal(); return; }
+          if (t.name.startsWith('drink-')) {
+            // entering a category resets the group's committed choice (live)
+            state.drinkCat = label; state.drink = null; state.pendingDrink = null;
+            screen = 'leaf'; renderLeaf(label);
+          }
+          return;
+        }
+        if (screen === 'leaf') { state.pendingDrink = label; renderLeaf(state.drinkCat); }
+        return;
+      }
+      if (t.matches('button[aria-label="Go back"]')) {
+        if (screen === 'leaf') { state.pendingDrink = null; screen = 'meal'; renderMeal(); }
+        return;
+      }
+      if (t.matches('.save')) {
+        if (screen === 'leaf') {
+          if (state.pendingDrink) { state.drink = state.pendingDrink; screen = 'meal'; renderMeal(); }
+          else renderLeaf(state.drinkCat); // validation: stays put
+          return;
+        }
+        if (screen === 'meal') {
+          if (state.side && state.drink && state.addOn) { screen = 'top'; renderTop(); }
+          else renderMeal(); // validation: stays put, node still replaced
+        }
+        return;
+      }
+      if (t.matches('.top-add')) {
+        state.added += 1;
+        state.composition = { side: state.side, drinkCat: state.drinkCat, drink: state.drink, addOn: state.addOn };
+        screen = 'closed';
+        modal.innerHTML = '';
+      }
+    });
+    return state;
+  }
+
+  test('navigates a category sub-screen to select a nested drink and restores a stray click', async () => {
+    const state = mountWizardStore();
+    const plan = [{
+      name: 'Big Mac®', quantity: 1, prefillable: true,
+      modifiers: [
+        { group: 'Choose your side', name: 'Medium Fries' },
+        { group: 'Choose your drink', name: 'Medium Diet Coke®' },
+        { group: 'Meal Add On', name: 'No Thanks' },
+      ],
+    }];
+    const results = await buildBasket({ platform: 'uber-eats', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ added: 1, ok: true });
+    // The stray Side Salad candidate click must have been restored to Medium
+    // Fries before moving on, so the composition matches the user's order.
+    expect(state.composition).toEqual({
+      side: 'Medium Fries', drinkCat: 'Cold Drink', drink: 'Medium Diet Coke®', addOn: 'No Thanks',
+    });
+    expect(results[0].review).toBeFalsy();
+  });
+
+  test('backs out of a category that lacks the drink and finds it in the next', async () => {
+    const state = mountWizardStore({ defaults: true });
+    const plan = [{
+      name: 'Big Mac®', quantity: 1, prefillable: true,
+      modifiers: [{ group: 'Choose your drink', name: 'Medium Oasis® Zero' }],
+    }];
+    const results = await buildBasket({ platform: 'uber-eats', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ added: 1, ok: true });
+    expect(state.composition).toMatchObject({ drinkCat: 'Bottled Drinks', drink: 'Medium Oasis® Zero' });
+  });
+
+  test('fails the line honestly when Save keeps refusing (required groups unmet)', async () => {
+    const state = mountWizardStore(); // no defaults: side/add-on never selected
+    const plan = [{
+      name: 'Big Mac®', quantity: 1, prefillable: true,
+      modifiers: [{ group: 'Choose your drink', name: 'Medium Diet Coke®' }],
+    }];
+    const results = await buildBasket({ platform: 'uber-eats', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ added: 0, ok: false });
+    expect(state.added).toBe(0);
+  });
+
+  test('findAddButton never mistakes a wizard Save button for the add', () => {
+    document.body.innerHTML = `
+      <div role="dialog">
+        <button aria-label="Go back">Back</button>
+        <button>Save • £7.59</button>
+      </div>`;
+    expect(findAddButton(document.querySelector('[role="dialog"]'))).toBeFalsy();
+  });
+});

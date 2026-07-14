@@ -56,7 +56,12 @@ function extractUberStoreCatalog(doc) {
   };
   for (const sc of doc.querySelectorAll('script')) {
     const t = sc.textContent || '';
-    if (!t.includes('buyXGetYItemPromotion')) continue;
+    // Key on the catalog structure itself (catalogSectionsMap), not a promotion
+    // type name: a store with no item promotion running ships no
+    // buyXGetYItemPromotion string at all (live KFC Mile End, 2026-07-13), and
+    // the missed blob cost every sibling item its id — sidebar fell back to
+    // "Open menu" (#45). The promo marker stays as a drift fallback.
+    if (!t.includes('catalogSectionsMap') && !t.includes('buyXGetYItemPromotion')) continue;
     // The blob object starts at the first `{` immediately followed by an escaped key
     // quote; slice from there so any wrapper before it is ignored.
     const start = t.indexOf('{\\u0022');

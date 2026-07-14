@@ -157,9 +157,15 @@ function switchButtonLabel(branch) {
   if (!branch.switchUrl) return null;
   const plan = branch.result?.basketPlan ?? [];
   const fillable = plan.filter((l) => l.prefillable).length;
-  if (!plan.length || fillable === 0) return { text: 'Open menu ↗', plain: true };
+  // A line with a matched item id is worth attempting even when its options
+  // only carry names (#51 — Uber targets expose no option data, so nothing
+  // there is ever fully "prefillable"): the builder selects options by name
+  // text and review-flags what it can't complete. Only a plan with no matched
+  // items at all falls back to the plain menu link.
+  const attemptable = plan.filter((l) => l.id != null).length;
+  if (!plan.length || attemptable === 0) return { text: 'Open menu ↗', plain: true };
   if (fillable === plan.length) return { text: 'Switch & fill basket ↗', plain: false };
-  return { text: `Switch & fill ${fillable} of ${plan.length} ↗`, plain: false };
+  return { text: `Switch & fill ${attemptable} of ${plan.length} ↗`, plain: false };
 }
 
 const PLATFORM_LABEL = {

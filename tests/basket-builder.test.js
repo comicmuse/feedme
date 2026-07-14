@@ -74,6 +74,125 @@ describe('buildBasket engine', () => {
     expect(checkedDuringAdd).toBe(true);
   });
 
+  // Live false-success (#26, McDonald's Bow 2026-07-14): Uber REPLACES the
+  // quick-view dialog node when its customizations hydrate, shortly after it
+  // opens. The builder kept acting on the detached original — modifier clicks
+  // and the add click did nothing — and then took the stale node's absence
+  // (`!doc.contains(dialog)`) as "closed after add", counting a line the
+  // platform never received. Every step must re-resolve the LIVE dialog, and
+  // "closed" must mean no matching dialog exists anywhere.
+  test('re-resolves a React-replaced dialog node and only counts a real add (#26)', async () => {
+    mountMenu();
+    const root = document.getElementById('dialog-root');
+    const item = document.querySelector('[data-item-id="dr-1"]');
+    const plan = [{
+      id: 'dr-1', name: 'Whopper', quantity: 1, prefillable: true,
+      modifiers: [{ id: 'opt-1', name: 'Regular Fries' }],
+    }];
+    // The builder's own modifier click triggers the re-render: the dialog node
+    // it holds is swapped for a fresh identical one (clones carry no
+    // listeners); only the FRESH dialog's add button reaches the platform.
+    let swapped = false;
+    root.addEventListener('click', (e) => {
+      if (swapped || !e.target.matches('[data-mod-id="opt-1"]')) return;
+      swapped = true;
+      const stale = root.querySelector('[role="dialog"]');
+      const fresh = stale.cloneNode(true);
+      fresh.querySelector('[data-mod-id="opt-1"]').checked = true; // selection survives the re-render
+      // Like live React's delegated events: once detached, the stale dialog's
+      // controls are dead — strip the original add button's listener.
+      stale.querySelector('.add').replaceWith(stale.querySelector('.add').cloneNode(true));
+      root.appendChild(fresh);
+      stale.remove();
+      fresh.querySelector('.add').addEventListener('click', () => {
+        item.dataset.added = (Number(item.dataset.added || 0) + 1).toString();
+        root.innerHTML = '';
+      });
+    });
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ added: 1, ok: true });
+    expect(item.dataset.added).toBe('1'); // the LIVE dialog's add fired, not the stale one's
+  });
+
+  // Same replacement, harder case (the live McDonald's Bow failure): the
+  // modifier attempt itself burns against the pre-hydration node — its input
+  // is React-controlled (a direct click never flips checked) and the node is
+  // swapped mid-selection, losing the click entirely. The builder must retry
+  // the modifier once on the replaced dialog or the required group stays
+  // unpicked and the add button never enables.
+  test('retries a modifier lost to a mid-selection dialog replacement (#26)', async () => {
+    mountMenu();
+    const root = document.getElementById('dialog-root');
+    const item = document.querySelector('[data-item-id="dr-1"]');
+    item.addEventListener('click', () => {
+      const d = root.querySelector('[role="dialog"]');
+      const opt = d.querySelector('[data-mod-id="opt-1"]');
+      // React-controlled: the click never flips checked on THIS node…
+      opt.addEventListener('click', (e) => {
+        e.preventDefault();
+        // …and triggers the hydration re-render: a fresh dialog whose input
+        // is plain (clickable) and whose add button works only once checked.
+        // The clone must start unchecked: cloning copies the input's transient
+        // pre-revert checkedness, but live React renders from state the
+        // prevented click never reached.
+        const fresh = d.cloneNode(true);
+        fresh.querySelector('[data-mod-id="opt-1"]').checked = false;
+        d.remove();
+        root.appendChild(fresh);
+        fresh.querySelector('.add').addEventListener('click', () => {
+          if (!fresh.querySelector('[data-mod-id="opt-1"]').checked) return;
+          item.dataset.added = (Number(item.dataset.added || 0) + 1).toString();
+          root.innerHTML = '';
+        });
+      }, { once: true });
+    });
+    const plan = [{
+      id: 'dr-1', name: 'Whopper', quantity: 1, prefillable: true,
+      modifiers: [{ id: 'opt-1', name: 'Regular Fries' }],
+    }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ added: 1, ok: true });
+    expect(item.dataset.added).toBe('1');
+  });
+
+  test('does not count an add whose click landed on a stale detached dialog (#26)', async () => {
+    mountMenu();
+    const root = document.getElementById('dialog-root');
+    const item = document.querySelector('[data-item-id="dr-1"]');
+    // The add click itself triggers the re-render: the held node detaches, a
+    // fresh dialog stays OPEN (the platform never received the add), and the
+    // fresh add button is inert. The line must not be counted.
+    let swapped = false;
+    root.addEventListener('click', (e) => {
+      if (swapped || !e.target.matches('.add')) return;
+      swapped = true;
+      e.stopImmediatePropagation(); // the platform never processes this add
+      const stale = root.querySelector('[role="dialog"]');
+      const fresh = stale.cloneNode(true);
+      root.appendChild(fresh);
+      stale.remove();
+    }, true);
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ added: 0, ok: false });
+    expect(item.dataset.added).toBeUndefined();
+  });
+
+  // Uber store pages carry ONLY the global header search ("Search Uber Eats",
+  // a restaurant search) — typing an item name there can never surface a menu
+  // card (live, KFC Mile End 2026-07-14, #26). Menu-scoped search boxes exist
+  // only on Just Eat, so on uber-eats the missing-card fallback must scroll,
+  // never type.
+  test('never types into the global search box on Uber (scroll fallback instead)', async () => {
+    document.body.innerHTML = `
+      <input type="text" role="combobox" data-testid="search-input" placeholder="Search Uber Eats">
+      <div id="menu"></div>`;
+    const plan = [{ name: 'Sticky BBQ Drip Burger Box Meal', quantity: 1, modifiers: [], prefillable: true }];
+    const results = await buildBasket({ platform: 'uber-eats', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ added: 0, ok: false });
+    expect(document.querySelector('[data-testid="search-input"]').value).toBe('');
+  });
+
   test('records a line that cannot be located as not-ok (graceful fallback)', async () => {
     const plan = [{ id: 'x', name: 'Vegan Flatbread', quantity: 1, modifiers: [], prefillable: true }];
     const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
@@ -378,6 +497,27 @@ describe('selectModifier live dialog shapes', () => {
     const ok = await selectModifier(dialog, { name: 'Regular Fries' }, pollWait);
     expect(ok).toBe(true);
     expect(dialog.querySelector('input[value="1"]').checked).toBe(true);
+  });
+
+  // Live shape re-pinned 2026-07-14 (#26, KFC Mile End): Uber's real modifier
+  // groups now render each option as a div holding the input (name =
+  // "<groupUuid>+<idx>", value = a dialog-local option uuid that does NOT match
+  // the catalog ids we mine) and a for-ASSOCIATED <label> carrying the text —
+  // the input is NOT inside the label, so selection must resolve and verify
+  // via label.control or the click lands on a bare label and the readback
+  // always says "NOT selected".
+  test('selects and verifies via the for-associated label (Uber 2026-07 shape)', async () => {
+    document.body.innerHTML = `
+      <div role="dialog">
+        <div>Choice of Chicken</div>
+        <div><input type="radio" id="qv-1" name="g-uuid+0" value="opt-uuid-tender"><label for="qv-1">1 Tender125 kcal</label></div>
+        <div><input type="radio" id="qv-2" name="g-uuid+0" value="opt-uuid-wings"><label for="qv-2">2 Hot Wings179 kcal</label></div>
+      </div>`;
+    const dialog = document.querySelector('[role="dialog"]');
+    const ok = await selectModifier(dialog, { name: '2 Hot Wings' }, pollWait);
+    expect(ok).toBe(true);
+    expect(dialog.querySelector('#qv-2').checked).toBe(true);
+    expect(dialog.querySelector('#qv-1').checked).toBe(false);
   });
 
   // Live shape re-pinned 2026-07-12 (#37, McDonald's Commercial Road): the row

@@ -974,10 +974,13 @@ async function buildBasket(build, opts = {}) {
     } else {
       let r;
       try { r = await addLine(line, { doc, wait, platform }); } catch (_) { r = { name: line.name, requested: line.quantity || 1, added: 0, ok: false }; }
-      // A line the matcher couldn't fully resolve (prefillable: false) is still
-      // attempted, but a successful add may be missing one of the user's source
-      // selections — surface it for review rather than presenting a clean fill.
-      if (r.ok && line.prefillable === false) r.review = true;
+      // Flag a successful add for review only when a selection the user made is
+      // genuinely at risk: options the plan couldn't carry by name (uncarried),
+      // so the builder never even attempted them. A merely non-prefillable line
+      // whose carried name-only options were all found and platform-confirmed is
+      // as verified as a resolved one — addLine already sets review on any lost
+      // selection (missedSelection), so no blanket prefillable flag here (#52).
+      if (r.ok && (line.uncarried || 0) > 0) r.review = true;
       results.push(r);
     }
     if (overlay) overlay.update(results);

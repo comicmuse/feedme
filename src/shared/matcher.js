@@ -63,7 +63,10 @@ function priceOptions(ref, platformModifiers) {
   // Such options can't be targeted for pre-fill, so count them as unresolved.
   if (!options.length) {
     const total = ref.optionsTotal || 0;
-    return { cost: total, estimated: total > 0, matched: [], unresolved: total > 0 ? 1 : 0, unmatchedOptions: [] };
+    // No names to carry — these selections are beyond the builder's reach
+    // (uncarried), so a filled line stays review-flagged (#52).
+    const n = total > 0 ? 1 : 0;
+    return { cost: total, estimated: total > 0, matched: [], unresolved: n, unmatchedOptions: [], uncarried: n };
   }
   const mods = platformModifiers ?? [];
   // Index target modifiers by group name so a source option is matched within its
@@ -143,15 +146,20 @@ function priceOptions(ref, platformModifiers) {
       unmatchedOptions.push({ group: opt.group ?? '', name: opt.name });
     }
   }
-  return { cost, estimated, matched, unresolved, unmatchedOptions };
+  // Every option that missed here was carried by name (or omitted as a
+  // decline), so nothing is beyond the builder's reach: uncarried is 0.
+  return { cost, estimated, matched, unresolved, unmatchedOptions, uncarried: 0 };
 }
 
 // Instructions a basket-builder needs to add one matched line on the target
 // platform: the item id, the quantity ordered, and the resolved modifier options
 // (with their ids). `prefillable` is false when the item has no id, or any selected
 // option couldn't be resolved to a platform modifier — those lines fall back to
-// being added manually by the user.
-function buildBasketLine(ref, item, matchedModifiers, unresolved, unmatchedOptions = []) {
+// being added manually by the user. `uncarried` counts options the plan couldn't
+// even carry by name (nothing for the builder to attempt); a filled line is
+// review-flagged only when uncarried > 0 or a carried selection is lost (#52),
+// not merely because it wasn't prefillable.
+function buildBasketLine(ref, item, matchedModifiers, unresolved, unmatchedOptions = [], uncarried = 0) {
   const modifiers = [
     ...matchedModifiers.map((m) => ({ id: m.id, groupId: m.groupId, group: m.group ?? '', name: m.name })),
     // Options with no platform modifier ride along id-less: the builder's
@@ -166,6 +174,7 @@ function buildBasketLine(ref, item, matchedModifiers, unresolved, unmatchedOptio
     quantity: ref.quantity ?? 1,
     modifiers,
     prefillable: item.id != null && unresolved === 0,
+    uncarried,
   };
 }
 
@@ -218,11 +227,11 @@ function matchItems(referenceItems, platformItems) {
     // Price the user's selected options using THIS platform's own modifier prices
     // where it lists them (exact); fall back to the source price and flag as an
     // estimate only for options this platform doesn't have.
-    const { cost, estimated, matched, unresolved, unmatchedOptions } = priceOptions(effectiveRef, item.modifiers);
+    const { cost, estimated, matched, unresolved, unmatchedOptions, uncarried } = priceOptions(effectiveRef, item.modifiers);
     const platformItem = cost
       ? { ...item, unitPrice: item.unitPrice + cost, optionsEstimated: estimated }
       : item;
-    return { referenceItem: ref, platformItem, matched: true, basketLine: buildBasketLine(ref, item, matched, unresolved, unmatchedOptions) };
+    return { referenceItem: ref, platformItem, matched: true, basketLine: buildBasketLine(ref, item, matched, unresolved, unmatchedOptions, uncarried) };
   });
 }
 

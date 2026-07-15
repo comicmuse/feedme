@@ -234,21 +234,53 @@ describe('buildBasket engine', () => {
     expect(results[0]).toMatchObject({ name: 'Ghost Meal', added: 0, ok: false });
   });
 
-  // A line the matcher couldn't fully resolve (prefillable: false) is still worth
-  // attempting — the builder selects what it can and the add often works. But the
-  // basket may then be missing a selection the user made on the source platform,
-  // so a successful add on such a line must be flagged for review, never presented
-  // as a clean fill.
-  test('flags a filled line as review when its plan line was not fully resolved', async () => {
-    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: false }];
+  // A line with options the plan could not even carry by name (a source that
+  // lists only an options total, #52) may be missing a selection the user made
+  // on the source platform — the builder cannot attempt what it was never
+  // told about, so a successful add must be flagged for review, never
+  // presented as a clean fill.
+  test('flags a filled line as review when options could not be carried', async () => {
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], uncarried: 1, prefillable: false }];
     const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
     expect(results[0]).toMatchObject({ name: 'Whopper', added: 1, ok: true, review: true });
   });
 
   test('does not flag a fully resolved line as review', async () => {
-    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true }];
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], uncarried: 0, prefillable: true }];
     const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
     expect(results[0].review).toBeFalsy();
+  });
+
+  // A non-prefillable line whose name-only options were ALL found and
+  // platform-confirmed is exactly as verified as a resolved one — the amber
+  // review flag would be stale caution (#52, user-reported: a clean Zinger
+  // Box Meal fill still showed "Check the options on:"). Review is reserved
+  // for uncarried options and genuinely lost selections.
+  test('a clean fill of carried name-only modifiers is not review-flagged (#52)', async () => {
+    const plan = [{
+      id: 'dr-9', name: 'Honey BBQ Sandwich', quantity: 1, prefillable: false, uncarried: 0,
+      modifiers: [{ id: null, groupId: null, group: '', name: 'Regular Fries' }],
+    }];
+    // The dialog clears on add, so capture the modifier's state at add time.
+    let checkedDuringAdd = false;
+    document.getElementById('dialog-root').addEventListener('click', (e) => {
+      if (e.target.classList.contains('add')) {
+        checkedDuringAdd = document.querySelector('[data-mod-id="opt-1"]').checked;
+      }
+    }, true);
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ added: 1, ok: true });
+    expect(results[0].review).toBeFalsy();
+    expect(checkedDuringAdd).toBe(true);
+  });
+
+  test('a lost selection still flags a non-prefillable line for review (#52)', async () => {
+    const plan = [{
+      id: 'dr-9', name: 'Honey BBQ Sandwich', quantity: 1, prefillable: false, uncarried: 0,
+      modifiers: [{ id: null, groupId: null, group: '', name: 'Ghost Pepper Sauce' }], // not in the dialog
+    }];
+    const results = await buildBasket({ basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results[0]).toMatchObject({ added: 1, ok: true, review: true });
   });
 });
 
@@ -261,7 +293,7 @@ describe('overlay honesty', () => {
   test('lists a review line separately from manual lines and qualifies the title', async () => {
     const plan = [
       { id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: true },
-      { id: 'dr-9', name: 'Honey BBQ Sandwich', quantity: 1, modifiers: [], prefillable: false },
+      { id: 'dr-9', name: 'Honey BBQ Sandwich', quantity: 1, modifiers: [], prefillable: false, uncarried: 1 },
       { id: 'x', name: 'Vegan Flatbread', quantity: 1, modifiers: [], prefillable: true },
     ];
     await buildBasket({ basketPlan: plan }, { wait: fastWait });
@@ -285,7 +317,7 @@ describe('overlay honesty', () => {
   });
 
   test('review-only results report filled but ask for an options check', async () => {
-    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: false }];
+    const plan = [{ id: 'dr-1', name: 'Whopper', quantity: 1, modifiers: [], prefillable: false, uncarried: 1 }];
     await buildBasket({ basketPlan: plan }, { wait: fastWait });
     const text = overlayText();
     expect(text).toContain('basket filled');

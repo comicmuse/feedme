@@ -346,6 +346,26 @@ describe('matchItems basketLine (for scripted basket pre-fill)', () => {
       { id: null, groupId: null, group: 'Choose your fries', name: 'Large Signature Fries' },
     ]);
     expect(result.basketLine.prefillable).toBe(false);
+    // Every unresolved option was carried by name, so the builder can attempt
+    // them all — nothing is beyond its reach (#52).
+    expect(result.basketLine.uncarried).toBe(0);
+  });
+
+  // A source that lists only an options TOTAL (no per-option names) gives the
+  // plan nothing to carry: the builder cannot even attempt those selections,
+  // so the line must say how many are beyond its reach — a successful add is
+  // then still review-flagged (#52).
+  test('counts options the plan could not carry by name', () => {
+    const ref = [{
+      name: 'Meal Deal', quantity: 1, unitPrice: 11.99, optionsTotal: 1.5, options: [],
+    }];
+    const platform = [{
+      id: 'ue-md', name: 'Meal Deal', description: '', unitPrice: 10.99, modifiers: [],
+    }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.modifiers).toEqual([]);
+    expect(result.basketLine.uncarried).toBe(1);
+    expect(result.basketLine.prefillable).toBe(false);
   });
 
   test('resolved modifiers keep their ids, with unresolved names appended (#51)', () => {

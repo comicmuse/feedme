@@ -5,6 +5,7 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
+    "package": "node esbuild.config.mjs && node scripts/package.mjs",
     "test": "jest"
   },
   "dependencies": {

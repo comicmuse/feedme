@@ -224,26 +224,35 @@ function findModifierTarget(dialog, mod) {
   return candidates[0] || null;
 }
 
+// Uber's modifier rows (live 2026-07-14, #26) put the option text in a <label>
+// whose `for` points at a SIBLING input — nothing inside the label itself. The
+// label's native `control` accessor is the only route from the matched text to
+// the real input, for both clicking and reading `checked` back.
+function ownInput(target) {
+  if (target.tagName === 'INPUT') return target;
+  if (target.tagName === 'LABEL' && target.control) return target.control;
+  return target.querySelector('input');
+}
+
 // The element to actually click for a modifier target. Web components only
 // respond to a click on their shadow-DOM input (verified live on Just Eat);
 // native inputs take the click directly (it bubbles to any row handler).
+// Deliveroo wraps a readonly, React-controlled input in the row <button>:
+// clicking the input registers only via bubbling and leaves `checked` false
+// (#37's false "NOT selected" logs) — the button is the real control. Rows
+// without a button ancestor (Uber's label rows, plain labels) keep the input.
 function modifierClickTarget(target) {
   if (target.shadowRoot) {
     const inner = target.shadowRoot.querySelector('input');
     if (inner) return inner;
   }
-  // Deliveroo wraps a readonly, React-controlled input in the row <button>:
-  // clicking the input registers only via bubbling and leaves `checked` false
-  // (#37's false "NOT selected" logs) — the button is the real control. Rows
-  // without a button ancestor (Uber's label rows, plain labels) keep the input.
-  const input = target.tagName === 'INPUT' ? target : target.querySelector('input');
+  const input = ownInput(target);
   if (input) return input.closest('button') || input;
   return target;
 }
 
 function modifierSelected(target) {
-  const input = target.tagName === 'INPUT' ? target
-    : (target.shadowRoot && target.shadowRoot.querySelector('input')) || target.querySelector('input');
+  const input = (target.shadowRoot && target.shadowRoot.querySelector('input')) || ownInput(target);
   if (input && input.checked) return true;
   const host = target.closest('[aria-checked], [role="radio"], [role="checkbox"]') || target;
   return host.getAttribute && host.getAttribute('aria-checked') === 'true';
@@ -567,10 +576,20 @@ async function scrollItemIntoDom(doc, line, wait, platform, { exactOnly = false 
   return found;
 }
 
+// The menu-scoped search box, when the platform has one. Only Just Eat does:
+// Uber store pages carry ONLY the global header search ("Search Uber Eats", a
+// restaurant search that can never surface a menu card — live KFC Mile End,
+// 2026-07-14, #26) which the generic placeholder match used to catch, and
+// Deliveroo menus have no search box at all.
+function menuSearchBox(doc, platform) {
+  if (platform === 'uber-eats') return null;
+  return safeQuery(doc, 'input[type="search"], [data-qa="menu-category-nav-search-element"], input[placeholder*="search" i]');
+}
+
 // Get the item's card into the DOM. Just Eat menus open on a category grid with
 // no items rendered, so when the card isn't found, type the name into the menu
 // search box and wait for the results to render. Menus with no search box
-// (Deliveroo) get the scroll fallback instead.
+// (Deliveroo, Uber) get the scroll fallback instead.
 async function surfaceItem(doc, line, wait, platform) {
   const card = await wait(() => findItemCard(doc, line, platform), { timeout: 2500 });
   if (card) {
@@ -578,7 +597,7 @@ async function surfaceItem(doc, line, wait, platform) {
     // exact item's card sits in an unrendered lazy section — scroll to look for
     // an exact match before settling for the superstring (#37 retest).
     if (!nameExact(accessibleName(card, doc), norm(line.name))
-        && !safeQuery(doc, 'input[type="search"], [data-qa="menu-category-nav-search-element"], input[placeholder*="search" i]')) {
+        && !menuSearchBox(doc, platform)) {
       dlog(`"${line.name}": only a superstring card rendered (${describeEl(card, doc)}) — scrolling for an exact match`);
       const exact = await scrollItemIntoDom(doc, line, wait, platform, { exactOnly: true });
       if (exact && nameExact(accessibleName(exact, doc), norm(line.name))) {
@@ -589,7 +608,7 @@ async function surfaceItem(doc, line, wait, platform) {
     dlog(`"${line.name}": card found directly:`, describeEl(card, doc));
     return card;
   }
-  const box = safeQuery(doc, 'input[type="search"], [data-qa="menu-category-nav-search-element"], input[placeholder*="search" i]');
+  const box = menuSearchBox(doc, platform);
   if (!box) {
     const scrolled = await scrollItemIntoDom(doc, line, wait, platform);
     dlog(`"${line.name}": card after scroll:`, describeEl(scrolled, doc));
@@ -606,6 +625,17 @@ async function surfaceItem(doc, line, wait, platform) {
 // search results are a transient list that re-renders (the matched element can be
 // swapped out from under a single click), so re-find the card and retry a few
 // times before giving up. Returns the open dialog, or null if none appeared.
+// The customise dialog currently open for this line, or null. Matched by the
+// item name (its heading) so an unrelated dialog — e.g. the Just Eat location
+// panel — is never mistaken for it. The Just Eat CART modal is also
+// role=dialog and lists the basket's items by name (live failure 2026-07-11),
+// so it is excluded explicitly.
+function findOpenDialog(doc, line) {
+  const all = [...doc.querySelectorAll(DIALOG_SELECTOR)]
+    .filter((d) => !(d.matches && d.matches('[data-qa="cart-modal"]')));
+  return all.find((d) => norm(d.textContent).includes(norm(line.name))) || null;
+}
+
 async function openItemDialog(doc, line, wait, surface, platform) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const card = attempt === 0 && surface
@@ -614,15 +644,7 @@ async function openItemDialog(doc, line, wait, surface, platform) {
     if (!card) continue;
     dlog(`"${line.name}": clicking card (attempt ${attempt + 1}):`, describeEl(card, doc));
     clickEl(card);
-    // Match the dialog by the item name (its heading) so an unrelated dialog — e.g.
-    // the Just Eat location panel — is never mistaken for the customise dialog.
-    // The Just Eat CART modal is also role=dialog and lists the basket's items by
-    // name (live failure 2026-07-11), so it is excluded explicitly.
-    const dialog = await wait(() => {
-      const all = [...doc.querySelectorAll(DIALOG_SELECTOR)]
-        .filter((d) => !(d.matches && d.matches('[data-qa="cart-modal"]')));
-      return all.find((d) => norm(d.textContent).includes(norm(line.name))) || null;
-    }, { timeout: 1500 });
+    const dialog = await wait(() => findOpenDialog(doc, line), { timeout: 1500 });
     if (dialog) return dialog;
     // A cross-restaurant confirm can also block the customise dialog from
     // opening at all — accept it and retry the click.
@@ -659,7 +681,7 @@ async function addLine(line, ctx) {
   let added = 0;
   let missedSelection = false;
   for (let q = 0; q < requested; q++) {
-    const dialog = await openItemDialog(doc, line, wait, q === 0, platform);
+    let dialog = await openItemDialog(doc, line, wait, q === 0, platform);
     // On all three platforms clicking an item card opens a customise dialog (even
     // for items with no options). No dialog means the click landed on nothing, so
     // the line is NOT added — reporting it as "add manually" instead of silently
@@ -669,9 +691,30 @@ async function addLine(line, ctx) {
       break;
     }
     dlog(`"${line.name}": customise dialog open:`, describeEl(dialog, doc));
+    // Uber REPLACES the whole dialog node when its customizations hydrate or a
+    // selection re-renders it (live false-success, #26 McDonald's Bow
+    // 2026-07-14) — clicks on the held node then land on a detached subtree
+    // and do nothing. Re-resolve the LIVE dialog before every step, and treat
+    // "closed" as NO matching dialog existing, not the old node being gone.
+    const liveDialog = () => {
+      if (doc.contains(dialog)) return dialog;
+      const fresh = findOpenDialog(doc, line);
+      if (fresh) {
+        dlog(`"${line.name}": dialog node was replaced — re-resolved the live one`);
+        dialog = fresh;
+      }
+      return dialog;
+    };
     for (const mod of line.modifiers || []) {
       let picked = false;
-      try { picked = await selectModifier(dialog, mod, wait); } catch (_) {}
+      const attempted = liveDialog();
+      try { picked = await selectModifier(attempted, mod, wait); } catch (_) {}
+      // A replacement DURING the attempt means the click landed on (or was
+      // read back from) the detached node — one retry on the live dialog.
+      if (!picked && liveDialog() !== attempted) {
+        dlog(`"${line.name}": dialog replaced mid-selection — retrying "${mod.name}" on the live one`);
+        try { picked = await selectModifier(dialog, mod, wait); } catch (_) {}
+      }
       dlog(`"${line.name}": modifier "${mod.name}" ${picked ? 'selected' : 'NOT selected'}`);
       // A lost selection means the added item may not match the user's order —
       // the line must surface for review, never read as a clean fill (#37).
@@ -679,15 +722,16 @@ async function addLine(line, ctx) {
     }
     // The add button stays disabled until required choices are made, so this
     // wait doubles as "wait for it to enable".
-    const addBtn = await wait(() => findAddButton(dialog), { timeout: 3000 });
+    const addBtn = await wait(() => findAddButton(liveDialog()), { timeout: 3000 });
     if (!addBtn) {
       dlog(`"${line.name}": no enabled add button appeared — dismissing dialog, line failed`);
-      dismissDialog(doc, dialog);
+      dismissDialog(doc, liveDialog());
       break;
     }
     dlog(`"${line.name}": clicking add button:`, describeEl(addBtn, doc));
     clickEl(addBtn);
-    const closed = await wait(() => !doc.contains(dialog), { timeout: 3000 });
+    const dialogGone = () => !doc.contains(dialog) && !findOpenDialog(doc, line);
+    const closed = await wait(dialogGone, { timeout: 3000 });
     dlog(`"${line.name}": dialog ${closed ? 'closed' : 'did NOT close'} after add`);
     // The dialog closing is the only observable sign the add landed; a swallowed
     // click (button replaced mid-click, unmet server-side validation) leaves it
@@ -698,11 +742,11 @@ async function addLine(line, ctx) {
       // IS the basket clear) and re-await the close before failing the line.
       let closedAfterPrompt = false;
       if (acceptNewBasketPrompt(doc, line)) {
-        closedAfterPrompt = await wait(() => !doc.contains(dialog), { timeout: 3000 });
+        closedAfterPrompt = await wait(dialogGone, { timeout: 3000 });
         dlog(`"${line.name}": dialog ${closedAfterPrompt ? 'closed' : 'still open'} after accepting the prompt`);
       }
       if (!closedAfterPrompt) {
-        dismissDialog(doc, dialog);
+        dismissDialog(doc, liveDialog());
         break;
       }
     }

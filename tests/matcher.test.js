@@ -315,8 +315,93 @@ describe('matchItems basketLine (for scripted basket pre-fill)', () => {
       modifiers: [{ name: 'No Cheese', price: 0, id: 'no-cheese' }],
     }];
     const [result] = matchItems(ref, platform);
-    expect(result.basketLine.modifiers).toEqual([]);
+    // The miss must not resolve to the decline — but its NAME is still carried
+    // for the builder to attempt on the live page (#51).
+    expect(result.basketLine.modifiers).toEqual([{ id: null, groupId: null, group: '', name: 'Cheese' }]);
     expect(result.basketLine.prefillable).toBe(false); // a real selection went unresolved
+  });
+
+  // Uber sibling menus carry NO modifier option data at all (JSON-LD has none;
+  // the catalog blob only says hasCustomizations, live 2026-07-14) — so every
+  // source option is unresolved there. Dropping their names left the builder
+  // adding bare items that the platform's required-group validation rejects
+  // (live: Zinger Box Meal, KFC Mile End). The names must ride along as
+  // id-less modifiers: the builder selects by name text and the line stays
+  // non-prefillable, so a successful add is still review-flagged.
+  test('unresolved options are carried by name for the builder to attempt (#51)', () => {
+    const ref = [{
+      name: 'Zinger Box Meal', quantity: 1, unitPrice: 11.99, optionsTotal: 0.49,
+      options: [
+        { group: 'Choose your drink', name: 'Pepsi MAX', price: 0 },
+        { group: 'Choose your fries', name: 'Large Signature Fries', price: 0.49 },
+      ],
+    }];
+    const platform = [{
+      id: 'ue-zinger', name: 'Zinger Box Meal', description: '', unitPrice: 12.69,
+      modifiers: [], // Uber target: no option data at all
+    }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.modifiers).toEqual([
+      { id: null, groupId: null, group: 'Choose your drink', name: 'Pepsi MAX' },
+      { id: null, groupId: null, group: 'Choose your fries', name: 'Large Signature Fries' },
+    ]);
+    expect(result.basketLine.prefillable).toBe(false);
+    // Every unresolved option was carried by name, so the builder can attempt
+    // them all — nothing is beyond its reach (#52).
+    expect(result.basketLine.uncarried).toBe(0);
+  });
+
+  // A source that lists only an options TOTAL (no per-option names) gives the
+  // plan nothing to carry: the builder cannot even attempt those selections,
+  // so the line must say how many are beyond its reach — a successful add is
+  // then still review-flagged (#52).
+  test('counts options the plan could not carry by name', () => {
+    const ref = [{
+      name: 'Meal Deal', quantity: 1, unitPrice: 11.99, optionsTotal: 1.5, options: [],
+    }];
+    const platform = [{
+      id: 'ue-md', name: 'Meal Deal', description: '', unitPrice: 10.99, modifiers: [],
+    }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.modifiers).toEqual([]);
+    expect(result.basketLine.uncarried).toBe(1);
+    expect(result.basketLine.prefillable).toBe(false);
+  });
+
+  test('resolved modifiers keep their ids, with unresolved names appended (#51)', () => {
+    const ref = [{
+      name: 'Box Meal', quantity: 1, unitPrice: 13.29, optionsTotal: 3.5,
+      options: [
+        { group: 'Add a Side?', name: 'Oreo Shake', price: 3 },
+        { group: 'Add a Dip?', name: 'Hot Honey Dip', price: 0.5 },
+      ],
+    }];
+    const platform = [{
+      id: 'je-1', name: 'Box Meal', description: '', unitPrice: 13.29,
+      modifiers: [{ id: 'shake-1', group: 'Add a Side?', name: 'Oreo Shake', price: 3 }],
+    }];
+    const [result] = matchItems(ref, platform);
+    expect(result.basketLine.modifiers).toEqual([
+      expect.objectContaining({ id: 'shake-1', name: 'Oreo Shake' }),
+      { id: null, groupId: null, group: 'Add a Dip?', name: 'Hot Honey Dip' },
+    ]);
+    expect(result.basketLine.prefillable).toBe(false);
+  });
+
+  test('a declined option that misses is still omitted, not carried by name (#51)', () => {
+    const ref = [{
+      name: 'Caesar Salad', quantity: 1, unitPrice: 8.99, optionsTotal: 0,
+      options: [{ group: 'Dressing', name: 'No Dressing', price: 0 }],
+    }];
+    const platform = [{
+      id: 'dr-9', name: 'Caesar Salad', description: '', unitPrice: 8.99,
+      modifiers: [{ id: 'dr-bal', group: 'Dressing', name: 'Balsamic Dressing', price: 0 }],
+    }];
+    const [result] = matchItems(ref, platform);
+    // Selecting nothing IS the decline — carrying "No Dressing" by name would
+    // make the builder hunt for (and maybe mis-click) a row that doesn't exist.
+    expect(result.basketLine.modifiers).toEqual([]);
+    expect(result.basketLine.prefillable).toBe(true);
   });
 
   test('an option missing from its matched group falls back to the full modifier pool', () => {
@@ -356,7 +441,12 @@ describe('matchItems basketLine (for scripted basket pre-fill)', () => {
       modifiers: [{ name: 'The Big Ranch', price: 0.89, id: 'dip-ranch' }],
     }];
     const [result] = matchItems(ref, platform);
-    expect(result.basketLine.modifiers).toEqual([expect.objectContaining({ id: 'dip-ranch' })]);
+    // The unresolved duplicate rides along by name (#51): the builder finds the
+    // row already selected (a harmless no-op) and the line stays review-flagged.
+    expect(result.basketLine.modifiers).toEqual([
+      expect.objectContaining({ id: 'dip-ranch' }),
+      { id: null, groupId: null, group: '', name: 'The Big Ranch' },
+    ]);
     expect(result.basketLine.prefillable).toBe(false);
     // First dup at the platform's own £0.89; the unresolved second falls back to
     // the source £0.99 and flags the total estimated.

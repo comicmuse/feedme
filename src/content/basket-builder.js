@@ -13,6 +13,9 @@
 
 const ADD_BUTTON_RE = /\badd\b.*\b(basket|order|bag|cart)\b|add for|add\s*·|add\s*£/i;
 const DIALOG_SELECTOR = '[role="dialog"], [aria-modal="true"]';
+// Uber meal wizard sub-screens (#47) carry this control; it is how a screen
+// entered by clicking a category row is recognised and backed out of.
+const GO_BACK_SELECTOR = 'button[aria-label="Go back"]';
 
 // Diagnostic trail: the builder acts on the user's real basket in their own tab,
 // where we have no other visibility — every decision is logged so a failed run
@@ -300,6 +303,182 @@ function findAddButton(dialog) {
     .filter((b) => !b.disabled && b.getAttribute('aria-disabled') !== 'true'
       && !/(^|-)disabled$/.test(b.getAttribute('data-qa') || ''))
     .find((b) => ADD_BUTTON_RE.test(norm(b.textContent)) || b.classList.contains('add'));
+}
+
+// The bottom "Save • £X" button that commits an Uber wizard sub-screen and
+// returns to the parent screen (live 2026-07-14, #47). Deliberately distinct
+// from findAddButton: Save never adds to the basket.
+function findSaveButton(dialog) {
+  return [...dialog.querySelectorAll('button, [role="button"]')]
+    .filter((b) => !b.disabled && b.getAttribute('aria-disabled') !== 'true')
+    .find((b) => /^save\b/i.test(norm(b.textContent)));
+}
+
+// ── Uber meal wizard navigation (#47) ────────────────────────────────────────
+// Meal dialogs hide concrete options behind CATEGORY radios ("Cold Drink",
+// "Bottled Drinks"…): clicking one REPLACES the whole dialog with a sub-screen
+// (Go back button, the category's own option groups, a bottom Save button).
+// Save commits and returns to the parent — or stays and flags when the
+// screen's Required groups are unmet (the platform's own validation). Go back
+// discards. Sub-screens do NOT contain the item name, and the real add button
+// exists only on the top-level screen. (Live: McDonald's Bethnal Green Road,
+// 2026-07-14.)
+//
+// When a modifier misses on the current screen, iterate its unchecked radio
+// rows (bounded): a click that swaps in a sub-screen (its radio group vanished
+// and a Go back control appeared) is searched recursively and committed via
+// Save on success or abandoned via Go back on a miss. A click that did NOT
+// navigate selected a concrete option the user never asked for — restore the
+// row that was checked before, or flag the line for review when the group had
+// no previous selection to restore.
+const MAX_WIZARD_CANDIDATES = 6;
+const MAX_WIZARD_DEPTH = 2;
+
+// Candidate rows ranked to reach the right sub-screen with the fewest wrong
+// turns (all keys read off the row text, deterministically):
+//  - a row whose size word conflicts with the modifier's ("Large … Meal" for
+//    "Medium Fries") goes last;
+//  - undecorated rows (no kcal/price — the category shape) come before
+//    concrete-looking ones, so strays are rare;
+//  - rows sharing a word with the modifier ("Medium … Meal" for "Medium
+//    Fries") come first within their tier.
+const SIZE_TOKEN_RE = /^(small|medium|large|regular)$/;
+function wizardCandidates(scope, mod) {
+  const tokens = (s) => norm(s).split(/[^a-z0-9®]+/).filter((t) => t.length > 2);
+  const modTokens = new Set(tokens(mod.name));
+  const rank = (name) => {
+    const ts = tokens(name);
+    const conflict = ts.some((t) => SIZE_TOKEN_RE.test(t) && !modTokens.has(t)) ? 4 : 0;
+    const decorated = /\d\s*kcal|£/.test(name) ? 2 : 0;
+    const shares = ts.some((t) => modTokens.has(t)) ? 0 : 1;
+    return conflict + decorated + shares;
+  };
+  return [...scope.querySelectorAll('input[type="radio"]')]
+    .filter((i) => !i.checked)
+    .map((i) => {
+      const label = (i.id && scope.querySelector(`label[for="${i.id}"]`)) || i.closest('label');
+      return label ? norm(label.textContent) : '';
+    })
+    .filter(Boolean)
+    .sort((a, b) => rank(a) - rank(b))
+    .slice(0, MAX_WIZARD_CANDIDATES);
+}
+
+async function wizardPick(screen, mod, ctx, depth, tryDirect = true) {
+  const { doc, wait, line } = ctx;
+  let stray = false;
+  try {
+    if (tryDirect && await selectModifier(screen(), mod, wait)) return { picked: true, stray };
+    if (depth <= 0 || !screen()) return { picked: false, stray };
+    const scope = findGroupContainer(screen(), mod.group) || screen();
+    // Candidates are captured as TEXT: the platform replaces nodes freely, so
+    // every iteration re-finds its row by name on the live screen.
+    for (const rowName of wizardCandidates(scope, mod)) {
+      const current = screen();
+      if (!current) break;
+      const target = findModifierTarget(current, { name: rowName });
+      const input = target && ownInput(target);
+      if (!input || input.type !== 'radio' || input.checked) continue;
+      const groupName = input.getAttribute('name') || '';
+      const groupSel = `input[name="${cssEscape(groupName)}"]`;
+      const prev = groupName && [...current.querySelectorAll(groupSel)].find((i) => i.checked);
+      const prevValue = (prev && prev.getAttribute('value')) || null;
+      dlog(`"${line.name}": wizard — trying "${rowName}" for "${mod.name}"`);
+      clickEl(modifierClickTarget(target));
+      const navigated = await wait(() => {
+        const live = screen();
+        if (!live || !live.querySelector(GO_BACK_SELECTOR)) return null;
+        // Still seeing the clicked row's radio group means the same screen
+        // (possibly re-rendered, #26) — not a navigation.
+        return live.querySelector(groupSel) ? null : live;
+      }, { timeout: 1600 });
+      if (!navigated) {
+        // The click selected a concrete option in some group — undo it.
+        const live = screen();
+        const group = live ? [...live.querySelectorAll(groupSel)] : [];
+        const nowChecked = group.find((i) => i.checked);
+        const nowValue = nowChecked && nowChecked.getAttribute('value');
+        if (nowValue && nowValue !== prevValue) {
+          const restore = prevValue && group.find((i) => i.getAttribute('value') === prevValue);
+          if (restore) {
+            dlog(`"${line.name}": wizard — "${rowName}" was a concrete option, restoring the previous selection`);
+            clickEl(modifierClickTarget(restore));
+          } else {
+            dlog(`"${line.name}": wizard — stray selection "${rowName}" cannot be undone, flagging for review`);
+            stray = true;
+          }
+        }
+        continue;
+      }
+      dlog(`"${line.name}": wizard — entered "${rowName}"`);
+      const sub = await wizardPick(screen, mod, ctx, depth - 1);
+      stray = stray || sub.stray;
+      if (sub.picked) {
+        // Commit the entered screen so the selection survives leaving it. A
+        // Save refused because of other unmet Required groups simply stays
+        // put — later modifiers and the add phase continue from there.
+        const committed = screen();
+        const save = committed && findSaveButton(committed);
+        if (save) {
+          const leafInput = committed.querySelector('input[type="radio"]');
+          const leafSel = leafInput && `input[name="${cssEscape(leafInput.getAttribute('name') || '')}"]`;
+          dlog(`"${line.name}": wizard — committing "${rowName}" via`, describeEl(save, doc));
+          clickEl(save);
+          if (leafSel) {
+            await wait(() => {
+              const live = screen();
+              return live && !live.querySelector(leafSel) ? live : null;
+            }, { timeout: 2500 });
+          }
+        }
+        return { picked: true, stray };
+      }
+      dlog(`"${line.name}": wizard — "${rowName}" does not offer "${mod.name}", backing out`);
+      const back = screen() && screen().querySelector(GO_BACK_SELECTOR);
+      if (!back) break;
+      clickEl(back);
+      const returned = await wait(() => {
+        const live = screen();
+        return live && live.querySelector(groupSel) ? live : null;
+      }, { timeout: 2500 });
+      if (!returned) break; // stuck off-course — stop navigating, fail honestly
+    }
+  } catch (e) {
+    dlog(`"${line.name}": wizard navigation failed —`, e && e.message);
+  }
+  return { picked: false, stray };
+}
+
+// The enabled add button for the current dialog, committing any wizard screens
+// in the way: a fill that ended mid-wizard sits on a Save screen, and each
+// Save hop returns one level closer to the top-level screen that owns the real
+// add button. A Save that changes nothing means the platform refused it
+// (required choices unmet) — the line must fail honestly.
+async function resolveAddButton(screen, wait, doc, line) {
+  for (let hops = 0; hops < 4; hops++) {
+    const found = await wait(() => {
+      const d = screen();
+      if (!d) return null;
+      const add = findAddButton(d);
+      if (add) return { add };
+      const save = d.querySelector(GO_BACK_SELECTOR) && findSaveButton(d);
+      return save ? { save } : null;
+    }, { timeout: 3000 });
+    if (!found) return null;
+    if (found.add) return found.add;
+    const before = norm(screen().textContent);
+    dlog(`"${line.name}": committing wizard screen via`, describeEl(found.save, doc));
+    clickEl(found.save);
+    const moved = await wait(() => {
+      const d = screen();
+      return d && norm(d.textContent) !== before ? d : null;
+    }, { timeout: 2500 });
+    if (!moved) {
+      dlog(`"${line.name}": wizard Save refused (required choices unmet) — line failed`);
+      return null;
+    }
+  }
+  return null;
 }
 
 function dismissDialog(doc, dialog) {
@@ -633,7 +812,12 @@ async function surfaceItem(doc, line, wait, platform) {
 function findOpenDialog(doc, line) {
   const all = [...doc.querySelectorAll(DIALOG_SELECTOR)]
     .filter((d) => !(d.matches && d.matches('[data-qa="cart-modal"]')));
-  return all.find((d) => norm(d.textContent).includes(norm(line.name))) || null;
+  return all.find((d) => norm(d.textContent).includes(norm(line.name)))
+    // An Uber wizard sub-screen (#47) titles itself after the CATEGORY ("Cold
+    // Drink"), not the item — recognise it by its Go back control so
+    // mid-wizard re-resolution and the closed check keep working.
+    || all.find((d) => d.querySelector(GO_BACK_SELECTOR))
+    || null;
 }
 
 async function openItemDialog(doc, line, wait, surface, platform) {
@@ -715,14 +899,22 @@ async function addLine(line, ctx) {
         dlog(`"${line.name}": dialog replaced mid-selection — retrying "${mod.name}" on the live one`);
         try { picked = await selectModifier(dialog, mod, wait); } catch (_) {}
       }
+      // Uber meal dialogs hide concrete options behind category sub-screens
+      // (#47) — navigate into them before giving the modifier up.
+      if (!picked && platform === 'uber-eats') {
+        const w = await wizardPick(liveDialog, mod, { doc, wait, line }, MAX_WIZARD_DEPTH, false);
+        picked = w.picked;
+        if (w.stray) missedSelection = true;
+      }
       dlog(`"${line.name}": modifier "${mod.name}" ${picked ? 'selected' : 'NOT selected'}`);
       // A lost selection means the added item may not match the user's order —
       // the line must surface for review, never read as a clean fill (#37).
       if (!picked) missedSelection = true;
     }
     // The add button stays disabled until required choices are made, so this
-    // wait doubles as "wait for it to enable".
-    const addBtn = await wait(() => findAddButton(liveDialog()), { timeout: 3000 });
+    // wait doubles as "wait for it to enable". A wizard fill may still sit on
+    // a sub-screen — resolveAddButton Saves its way back to the top level.
+    const addBtn = await resolveAddButton(liveDialog, wait, doc, line);
     if (!addBtn) {
       dlog(`"${line.name}": no enabled add button appeared — dismissing dialog, line failed`);
       dismissDialog(doc, liveDialog());

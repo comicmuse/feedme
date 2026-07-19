@@ -221,7 +221,9 @@ function findModifierTarget(dialog, mod) {
   const scope = findGroupContainer(dialog, mod.group) || dialog;
   // pie-radio carries role=radio but pie-checkbox has NO role attribute (live
   // McDonald's multi-select, 2026-07-11) — include the hosts by tag name too.
-  const candidates = [...scope.querySelectorAll('label, li, button, [role="checkbox"], [role="radio"], pie-radio, pie-checkbox')]
+  // Uber "Choose up to N" stepper rows (#54) carry the text in an input-less
+  // div[data-testid="customization-option-label"], so match that too.
+  const candidates = [...scope.querySelectorAll('label, li, button, [role="checkbox"], [role="radio"], pie-radio, pie-checkbox, [data-testid="customization-option-label"]')]
     .filter((el) => norm(el.textContent).includes(name));
   candidates.sort((a, b) => a.textContent.length - b.textContent.length);
   return candidates[0] || null;
@@ -235,6 +237,31 @@ function ownInput(target) {
   if (target.tagName === 'INPUT') return target;
   if (target.tagName === 'LABEL' && target.control) return target.control;
   return target.querySelector('input');
+}
+
+// Uber's "Choose up to N" add-on groups (live 2026-07-18, #54) render each
+// option as a QUANTITY STEPPER, not an input: the text sits in a
+// div[data-testid="customization-option-label"] with NO input, and the control
+// is the row's button[data-testid="quantity-increment-selection-button"] (svg
+// only). Selecting means clicking Increment once; "selected" shows as a matching
+// decrement button (quantity ≥ 1) appearing in the row — there is no `checked`.
+// Return the row container (nearest ancestor of the label holding an increment
+// button) so both the control and the readback stay scoped to this one option;
+// non-stepper targets yield null and every other shape is left untouched.
+const STEPPER_INC = '[data-testid="quantity-increment-selection-button"]';
+const STEPPER_DEC = '[data-testid="quantity-decrement-selection-button"]';
+function stepperRow(target) {
+  if (!target.closest) return null;
+  const label = target.matches && target.matches('[data-testid="customization-option-label"]')
+    ? target
+    : target.closest('[data-testid="customization-option-label"]');
+  if (!label) return null;
+  let row = label;
+  for (let i = 0; i < 5 && row.parentElement; i++) {
+    row = row.parentElement;
+    if (row.querySelector(STEPPER_INC)) return row;
+  }
+  return null;
 }
 
 // The element to actually click for a modifier target. Web components only
@@ -251,12 +278,19 @@ function modifierClickTarget(target) {
   }
   const input = ownInput(target);
   if (input) return input.closest('button') || input;
+  // Uber quantity-stepper add-on (#54): no input — click the Increment button.
+  const row = stepperRow(target);
+  if (row) return row.querySelector(STEPPER_INC);
   return target;
 }
 
 function modifierSelected(target) {
   const input = (target.shadowRoot && target.shadowRoot.querySelector('input')) || ownInput(target);
   if (input && input.checked) return true;
+  // Uber quantity-stepper add-on (#54): selected = quantity ≥ 1, which surfaces
+  // as a Decrement button appearing in the row (there is no `checked` to read).
+  const row = stepperRow(target);
+  if (row) return !!row.querySelector(STEPPER_DEC);
   const host = target.closest('[aria-checked], [role="radio"], [role="checkbox"]') || target;
   return host.getAttribute && host.getAttribute('aria-checked') === 'true';
 }

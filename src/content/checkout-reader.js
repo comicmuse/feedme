@@ -11,12 +11,68 @@ function waitForElement(doc, selector, timeout = 10000) {
     const existing = doc.querySelector(selector);
     if (existing) { resolve(existing); return; }
     const timer = setTimeout(() => { mo.disconnect(); resolve(null); }, timeout);
-    const mo = new MutationObserver(() => {
+    const MO = doc.defaultView?.MutationObserver ?? MutationObserver;
+    const mo = new MO(() => {
       const found = doc.querySelector(selector);
       if (found) { clearTimeout(timer); mo.disconnect(); resolve(found); }
     });
     mo.observe(doc.body, { childList: true, subtree: true });
   });
+}
+
+// Resolves true once predicate() holds, or false after a bounded timeout.
+function waitUntil(doc, predicate, timeout) {
+  return new Promise((resolve) => {
+    if (predicate()) { resolve(true); return; }
+    const timer = setTimeout(() => { mo.disconnect(); resolve(false); }, timeout);
+    const MO = doc.defaultView?.MutationObserver ?? MutationObserver;
+    const mo = new MO(() => {
+      if (predicate()) { clearTimeout(timer); mo.disconnect(); resolve(true); }
+    });
+    mo.observe(doc.body, { childList: true, subtree: true });
+  });
+}
+
+// A dotted identifier with no spaces (e.g. "store.shared.backToStore") is a
+// raw i18n key that leaked before translations hydrated — never a real name.
+const I18N_KEY = /^[\w-]+(\.[\w-]+)+$/;
+
+// Derive a usable name from the store-link slug: /gb/store/kfc-bethnal-green/id
+// → "kfc bethnal green". Correct the moment the href exists, independent of
+// i18n hydration; enumeration matches on lowercase tokens so the slug is usable.
+function storeSlugName(href) {
+  const segs = (href || '').split('?')[0].split('/').filter(Boolean);
+  const i = segs.indexOf('store');
+  const slug = i >= 0 && i + 1 < segs.length ? segs[i + 1] : '';
+  return slug.replace(/-/g, ' ').trim();
+}
+
+// Read the Uber restaurant identity from the store links. `hydrated` is false
+// while the name is still a raw i18n key, so callers can wait for it to resolve.
+function readUberRestaurant(doc) {
+  const storeLinks = [...doc.querySelectorAll('a[href*="/store/"]')];
+  // Pick the store link that is neither the "Back to store" nav link nor a link
+  // still showing a raw key. The back link is first in the DOM, so before this
+  // guard a leaked key (which slips past /back to store/i) got chosen as the name.
+  const restLink =
+    storeLinks.find((a) => {
+      const t = a.textContent.trim();
+      return t && !/back to store/i.test(t) && !I18N_KEY.test(t);
+    }) ?? storeLinks[0];
+  const href = restLink?.getAttribute('href') ?? '';
+  // The name is the first leaf element with text; the address follows in a
+  // sibling <p>, so we can't just read the link's whole textContent.
+  const nameLeaf = restLink
+    ? [...restLink.querySelectorAll('*')].find(
+        (e) => e.children.length === 0 && e.textContent.trim()
+      )
+    : null;
+  const leaf = nameLeaf?.textContent.trim() ?? restLink?.textContent.trim() ?? '';
+  const hydrated = !!leaf && !I18N_KEY.test(leaf);
+  // The store UUID (last path segment) identifies this exact branch, so the
+  // enumerator can drop it from the Uber column (avoids showing it twice).
+  const sourceStoreId = href.split('?')[0].split('/').filter(Boolean).pop() ?? '';
+  return { name: hydrated ? leaf : storeSlugName(href), sourceStoreId, hydrated };
 }
 
 async function extractUberEats(doc) {
@@ -133,22 +189,20 @@ async function extractUberEats(doc) {
   const postcodeMatch = addressText.match(/[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}/);
 
   // The checkout page title is just "Checkout | Uber Eats", so derive the
-  // restaurant name from the store link (the one that isn't "Back to store").
-  const storeLinks = [...doc.querySelectorAll('a[href*="/store/"]')];
-  const restLink =
-    storeLinks.find((a) => !/back to store/i.test(a.textContent)) ?? storeLinks[0];
-  // The name is the first leaf element with text; the address follows in a
-  // sibling <p>, so we can't just read the link's whole textContent.
-  const nameLeaf = restLink
-    ? [...restLink.querySelectorAll('*')].find(
-        (e) => e.children.length === 0 && e.textContent.trim()
-      )
-    : null;
-  const restaurantName = nameLeaf?.textContent.trim() ?? restLink?.textContent.trim() ?? '';
-  // The store UUID (last path segment of the store link) identifies this exact
-  // branch, so the enumerator can drop it from the Uber column (avoids showing the
-  // cart's own store twice).
-  const sourceStoreId = (restLink?.getAttribute('href') ?? '').split('?')[0].split('/').filter(Boolean).pop() ?? '';
+  // restaurant name from the store link. Uber sometimes renders the cart panel
+  // (our readiness gate above) before i18n strings resolve, leaving the links
+  // showing raw keys like "store.shared.backToStore"; wait — bounded — for the
+  // name to hydrate before reading, then fall back to the URL slug if it never
+  // does, so enumeration and display never inherit a leaked key (#53, #55).
+  // Only block while a store link is present but still key-like — if there's no
+  // link at all, waiting can't help, so don't stall the read.
+  await waitUntil(
+    doc,
+    () => readUberRestaurant(doc).hydrated || !doc.querySelector('a[href*="/store/"]'),
+    3000
+  );
+  const { name: restaurantName, sourceStoreId, hydrated } = readUberRestaurant(doc);
+  console.info('[FeedMe checkout] restaurant name:', JSON.stringify(restaurantName), '— hydrated:', hydrated);
 
   const feeEl = (testid) =>
     doc.querySelector(`[data-testid="${testid}"]`);

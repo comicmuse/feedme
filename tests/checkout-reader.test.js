@@ -250,6 +250,70 @@ describe('extractOrder - Uber Eats free & grouped options', () => {
   });
 });
 
+describe('extractOrder - Uber Eats restaurant name hydration (#53/#55)', () => {
+  // Uber sometimes renders the cart panel (our readiness gate) before i18n
+  // strings resolve, so the store links still carry raw keys: the "Back to
+  // store" nav link reads `store.shared.backToStore` (no spaces). It is FIRST
+  // in the DOM, so the old `!/back to store/i` filter — which a raw key slips
+  // past — picked it and scraped the key as the restaurant name.
+  const gateEls = `
+    <div data-testid="cart-summary-panel"></div>
+    <div data-testid="fare-breakdown-charge-badge-total">£9.99</div>
+    <div data-testid="cart-items-list">
+      <li><div data-testid="cart-item-1"><img alt="Fries" /><span>£9.99</span></div></li>
+    </div>`;
+  const flakyLinks = `
+    <a href="/gb/store/kfc-bethnal-green/uuid1">store.shared.backToStore</a>
+    <a href="/gb/store/kfc-bethnal-green/uuid1">
+      <div data-testid="store-name">store.shared.backToStore</div>
+      <p>406 Bethnal Green Road</p>
+    </a>`;
+  const docOf = (inner) =>
+    new JSDOM(`<!DOCTYPE html><html><body>${inner}</body></html>`).window.document;
+
+  test('#53 skips a raw-key "Back to store" link and reads the real hydrated name', async () => {
+    // Back link shows a leaked key; the real store link has hydrated. The link
+    // filter must reject the key-like back link and pick the real one.
+    const doc = docOf(gateEls + `
+      <a href="/gb/store/kfc-bethnal-green/uuid1">store.shared.backToStore</a>
+      <a href="/gb/store/kfc-bethnal-green/uuid1">
+        <div>KFC Bethnal Green</div>
+        <p>406 Bethnal Green Road</p>
+      </a>`);
+    const order = await extractOrder(PLATFORM.UBER_EATS, doc);
+    expect(order.restaurantName).toBe('KFC Bethnal Green');
+    expect(order.sourceStoreId).toBe('uuid1');
+  });
+
+  test('#53 falls back to the URL slug when the name never leaves i18n-key form', async () => {
+    // Both links still show raw keys after the bounded wait — derive the name
+    // deterministically from the store-link slug instead of scraping a key.
+    jest.useFakeTimers();
+    try {
+      const doc = docOf(gateEls + flakyLinks);
+      const p = extractOrder(PLATFORM.UBER_EATS, doc);
+      await jest.advanceTimersByTimeAsync(3000);
+      const order = await p;
+      expect(order.restaurantName).toBe('kfc bethnal green');
+      expect(order.sourceStoreId).toBe('uuid1');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('#55 waits for the name region to hydrate, then reads the translated name', async () => {
+    // The name leaf starts as a raw key and hydrates a tick later; the reader
+    // must hold until it resolves rather than reading the key (or the slug).
+    const doc = docOf(gateEls + flakyLinks);
+    const p = extractOrder(PLATFORM.UBER_EATS, doc);
+    setTimeout(() => {
+      doc.querySelector('[data-testid="store-name"]').textContent = 'KFC Bethnal Green';
+    }, 10);
+    const order = await p;
+    expect(order.restaurantName).toBe('KFC Bethnal Green');
+  });
+});
+
 describe('extractOrder - Deliveroo', () => {
   let order;
   beforeAll(async () => {

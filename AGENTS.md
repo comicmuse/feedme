@@ -5,6 +5,7 @@ Browser extension comparing a takeaway order across Uber Eats / Deliveroo / Just
 ## Commands
 
 - `npm test` — Jest; `npm run build` — esbuild to `dist/` (what the manifest loads; rebuild after every src change).
+- `npm run package` — builds, then assembles a clean loadable extension in `build/` (manifest + `dist/`, `popup/`, `icons/` only). **Load `build/` as the unpacked extension in Chrome, never the repo root** — loading the root makes Chrome hash the whole tree (node_modules, .git, .playwright-mcp: thousands of files, ~40s per load). `build/` is gitignored.
 - `src/shared/` is plain CommonJS: it runs in Jest, Node scripts, and the bundles alike.
 
 ## Rules

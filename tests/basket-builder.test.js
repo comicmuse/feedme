@@ -552,6 +552,40 @@ describe('selectModifier live dialog shapes', () => {
     expect(dialog.querySelector('#qv-1').checked).toBe(false);
   });
 
+  // Live shape (#54, KFC Mile End, 2026-07-18): Uber "Choose up to N" add-on
+  // groups render each option as a QUANTITY STEPPER, not a checkbox/radio. The
+  // option text sits in a div[data-testid="customization-option-label"] with NO
+  // input; the control is the row's button[data-testid="quantity-increment-
+  // selection-button"] (svg only), and "selected" means a matching decrement
+  // button (quantity ≥ 1) appeared — there is no `checked` to read. Before this
+  // the row matched nothing, the click was a no-op, and the paid add-on was lost
+  // (honest "NOT selected" in #52's logs).
+  test('adds a quantity-stepper add-on and verifies via the decrement button (Uber Choose up to N)', async () => {
+    document.body.innerHTML = `
+      <div role="dialog">
+        <div>Add a dip?</div>
+        <div id="dip-row">
+          <div><button aria-label="Increment" data-testid="quantity-increment-selection-button"><svg></svg></button></div>
+          <div></div>
+          <div data-testid="customization-option-label"><div><div>Sweet Teriyaki Dip</div><div>+ £0.95</div><div><span>52 kcal</span></div></div></div>
+        </div>
+      </div>`;
+    const dialog = document.querySelector('[role="dialog"]');
+    const row = dialog.querySelector('#dip-row');
+    const inc = row.querySelector('[data-testid="quantity-increment-selection-button"]');
+    // Real behaviour: incrementing to qty 1 inserts a decrement button + count.
+    inc.addEventListener('click', () => {
+      if (row.querySelector('[data-testid="quantity-decrement-selection-button"]')) return;
+      const dec = document.createElement('button');
+      dec.setAttribute('aria-label', 'Decrement');
+      dec.setAttribute('data-testid', 'quantity-decrement-selection-button');
+      inc.parentElement.insertBefore(dec, inc);
+    });
+    const ok = await selectModifier(dialog, { name: 'Sweet Teriyaki Dip', group: 'Add a dip?' }, pollWait);
+    expect(ok).toBe(true);
+    expect(row.querySelector('[data-testid="quantity-decrement-selection-button"]')).not.toBeNull();
+  });
+
   // Live shape re-pinned 2026-07-12 (#37, McDonald's Commercial Road): the row
   // input is readonly, tabindex=-1 and React-CONTROLLED — clicking it registers
   // with the platform only via bubbling and leaves `checked` false (the false

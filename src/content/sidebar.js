@@ -234,6 +234,23 @@ function buildBranchCard(branch, isCheapest) {
     });
   }
   if (t.discountTotal > 0) appendDetRow(det, 'Discounts', `-${fmt(t.discountTotal)}`);
+  // Some of the cart's items may not exist on this branch's menu. We can't price
+  // them, so they're excluded from the total — which makes a poor-coverage branch
+  // look cheaper than the equivalent full basket. Surface the coverage and mark
+  // the total as understated so it's visible before switching (#50).
+  if (t.totalCount > t.matchedCount) {
+    const missing = t.totalCount - t.matchedCount;
+    const itemWord = missing === 1 ? "item isn't" : "items aren't";
+    appendDetRow(det, 'Items matched', `${t.matchedCount} of ${t.totalCount}`, {
+      marker: 'approx.',
+      tooltip: `${missing} ${itemWord} on this menu, so this total is lower than your full basket.`,
+    });
+    const mark = document.createElement('span');
+    mark.className = 'approx';
+    mark.textContent = ' *';
+    mark.title = `Total excludes ${missing} item${missing === 1 ? '' : 's'} not on this menu.`;
+    totalEl.appendChild(mark);
+  }
   card.appendChild(det);
 
   // Non-current branches get a CTA to open them and fill the basket.

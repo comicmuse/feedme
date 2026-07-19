@@ -178,6 +178,25 @@ function buildBasketLine(ref, item, matchedModifiers, unresolved, unmatchedOptio
   };
 }
 
+// A plan line for a source item that matched NO item on this platform's menu.
+// It carries the item by NAME only (no id) so the builder's live-DOM matching —
+// looser than the menu-data match — can still attempt it; when it can't, the
+// line fails honestly into the overlay's "add these manually" list rather than
+// vanishing from the plan and inflating "Added N of N" (#50). It never counts
+// toward the branch total (computeTotal prices matched lines only).
+function buildUnmatchedLine(ref) {
+  return {
+    id: null,
+    variationId: null,
+    name: ref.name,
+    quantity: ref.quantity ?? 1,
+    modifiers: (ref.options ?? []).map((o) => ({ id: null, groupId: null, group: o.group, name: o.name })),
+    prefillable: false,
+    unmatched: true,
+    uncarried: 0,
+  };
+}
+
 /**
  * @param {Array<{name: string, quantity: number, unitPrice: number}>} referenceItems
  * @param {Array<{name: string, description?: string, unitPrice: number}>} platformItems
@@ -222,7 +241,7 @@ function matchItems(referenceItems, platformItems) {
     // lowering the total with a £0 (or wildly inflating it with a meal deal).
     const item = pickBestPricedMatch(results, effectiveRef.name);
     if (!item) {
-      return { referenceItem: ref, platformItem: null, matched: false, basketLine: null };
+      return { referenceItem: ref, platformItem: null, matched: false, basketLine: buildUnmatchedLine(ref) };
     }
     // Price the user's selected options using THIS platform's own modifier prices
     // where it lists them (exact); fall back to the source price and flag as an

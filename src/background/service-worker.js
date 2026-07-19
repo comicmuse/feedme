@@ -395,8 +395,11 @@ browser.runtime.onMessage.addListener((msg, sender) => {
     }
     const total = computeTotal(matches, deliveryFee, serviceFee, msg.parsed.offers ?? [], feeOpts);
     branch.status = 'done';
-    // Compact instructions for the basket-builder: one entry per matched line.
-    const basketPlan = matches.filter((m) => m.matched && m.basketLine).map((m) => m.basketLine);
+    // Compact instructions for the basket-builder: one entry per source line —
+    // including items that matched NO menu item, carried name-only so the builder
+    // attempts them and honestly lists any it can't add, instead of them silently
+    // vanishing from the fill and the "Added N of N" count (#50).
+    const basketPlan = matches.filter((m) => m.basketLine).map((m) => m.basketLine);
     branch.result = { restaurantName: msg.parsed.restaurantName, matches, total, offers: msg.parsed.offers ?? [], basketPlan };
     if (!branch.label && msg.parsed.restaurantName) branch.label = msg.parsed.restaurantName;
 

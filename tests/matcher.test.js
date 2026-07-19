@@ -472,11 +472,12 @@ describe('matchItems basketLine (for scripted basket pre-fill)', () => {
     expect(result.basketLine.id).toBeUndefined();
   });
 
-  test('unmatched lines carry no basketLine', () => {
+  test('unmatched lines carry a name-only basketLine (attempted, not dropped — #50)', () => {
     const ref = [{ name: 'Vegan Artisan Flatbread', quantity: 1, unitPrice: 9 }];
     const platform = [{ id: 'x', name: 'Whopper', unitPrice: 5.89 }];
     const [result] = matchItems(ref, platform);
-    expect(result.basketLine).toBeNull();
+    expect(result.matched).toBe(false);
+    expect(result.basketLine).toMatchObject({ id: null, name: 'Vegan Artisan Flatbread', prefillable: false, unmatched: true });
   });
 
   test('returns one result per reference item', () => {
@@ -787,5 +788,41 @@ describe('computeTotal — item-level deals', () => {
     ];
     const result = computeTotal(matches, 0, 0, offers);
     expect(result.appliedDeals).toEqual([{ description: 'Buy one get one free', discount: 5.0 }]);
+  });
+});
+
+describe('matchItems unmatched items carry a name-only line (#50)', () => {
+  test('an unmatched source item yields a name-only basketLine, not null', () => {
+    // Before #50 an unmatched line was dropped from the plan entirely, so the
+    // builder never attempted it and the overlay's "Added N of N" hid it.
+    const ref = [{
+      name: 'Vegan Artisan Flatbread', quantity: 2, unitPrice: 9,
+      options: [{ group: 'Sauce', name: 'Vegan Mayo', price: 0 }],
+    }];
+    const [result] = matchItems(ref, PLATFORM_ITEMS);
+    expect(result.matched).toBe(false);
+    expect(result.platformItem).toBeNull();
+    expect(result.basketLine).toMatchObject({
+      id: null, variationId: null, name: 'Vegan Artisan Flatbread',
+      quantity: 2, prefillable: false, unmatched: true,
+    });
+    // Source options ride along id-less so the builder's live-DOM name matching
+    // can still attempt them if it does find the item.
+    expect(result.basketLine.modifiers).toEqual([
+      { id: null, groupId: null, group: 'Sauce', name: 'Vegan Mayo' },
+    ]);
+  });
+
+  test('an unmatched item does not count toward matchedCount or the total', () => {
+    const ref = [
+      { name: 'Whopper', quantity: 1, unitPrice: 5.49 },
+      { name: 'Vegan Artisan Flatbread', quantity: 1, unitPrice: 9 },
+    ];
+    const matches = matchItems(ref, PLATFORM_ITEMS);
+    const total = computeTotal(matches, 0, 0, []);
+    expect(total.matchedCount).toBe(1);
+    expect(total.totalCount).toBe(2);
+    // The flatbread has no price on this menu, so the total excludes it.
+    expect(total.itemsTotal).toBeCloseTo(matches[0].platformItem.unitPrice);
   });
 });

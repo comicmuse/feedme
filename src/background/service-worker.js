@@ -242,6 +242,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
 
 browser.runtime.onMessage.addListener(async (msg, sender) => {
   if (msg.type !== MSG.RETRY_PLATFORM) return;
+  // The sidebar runs in the source tab, which keys the comparison.
   const comparison = comparisons.get(sender.tab?.id);
   if (!comparison) {
     console.info('[FeedMe retry] platform retry ignored — no comparison for tab', sender.tab?.id);
@@ -261,6 +262,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
 
 browser.runtime.onMessage.addListener((msg, sender) => {
   if (msg.type !== MSG.RETRY_BRANCH) return;
+  // The sidebar runs in the source tab, which keys the comparison.
   const comparison = comparisons.get(sender.tab?.id);
   if (!comparison) {
     console.info('[FeedMe retry] branch retry ignored — no comparison for tab', sender.tab?.id);

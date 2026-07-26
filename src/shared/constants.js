@@ -45,6 +45,8 @@ const MSG = {
   BRANCHES_FOUND: 'BRANCHES_FOUND',       // enumerator -> service-worker
   COMPARISON_UPDATE: 'COMPARISON_UPDATE', // service-worker -> sidebar (progressive)
   SWITCH_TO_BRANCH: 'SWITCH_TO_BRANCH',   // sidebar -> service-worker (open + build basket)
+  RETRY_BRANCH: 'RETRY_BRANCH',           // sidebar -> service-worker (retry a failed branch)
+  RETRY_PLATFORM: 'RETRY_PLATFORM',       // sidebar -> service-worker (retry a timed-out enumeration)
 };
 
 const SCRAPER_TIMEOUT_MS = 15000;

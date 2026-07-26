@@ -162,6 +162,7 @@ browser.runtime.onMessage.addListener(async (msg) => {
     loading: new Set(ALL_PLATFORMS),
     injectedUrls: new Set(),
     timeouts: new Map(),
+    enumErrors: new Set(),             // platforms whose enumeration timed out (retryable)
   };
   comparisons.set(tabId, comparison);
 
@@ -170,16 +171,31 @@ browser.runtime.onMessage.addListener(async (msg) => {
   pushUpdate(comparison);
 
   for (const platform of ALL_PLATFORMS) {
-    const url = buildSearchUrl(platform, order.restaurantName, order.postcode);
-    if (!url) { onPlatformDone(comparison, platform); continue; }
-    const bgTab = await browser.tabs.create({ url, active: false });
-    comparison.enumTabs.set(bgTab.id, platform);
-    comparison.timeouts.set(`enum|${platform}`, setTimeout(
-      () => { onPlatformDone(comparison, platform); browser.tabs.remove(bgTab.id).catch(() => {}); },
-      ENUM_TIMEOUT_MS
-    ));
+    await startEnumeration(comparison, platform);
   }
 });
+
+// ── Enumeration bootstrap — used at initial START_COMPARISON and on retry ───
+
+async function startEnumeration(comparison, platform) {
+  const url = buildSearchUrl(platform, comparison.order.restaurantName, comparison.order.postcode);
+  if (!url) { onPlatformDone(comparison, platform); return; }
+  const bgTab = await browser.tabs.create({ url, active: false });
+  comparison.enumTabs.set(bgTab.id, platform);
+  comparison.timeouts.set(`enum|${platform}`, setTimeout(
+    () => {
+      // Unmap the stale tab before anything else — otherwise a late BRANCHES_FOUND
+      // from it could still route via findTab() (keyed by tabId, not by any status
+      // gate) after RETRY_PLATFORM has moved on, mirroring the analogous menuTabs
+      // leak fixed in pump()'s timeout path.
+      comparison.enumTabs.delete(bgTab.id);
+      comparison.enumErrors.add(platform);
+      onPlatformDone(comparison, platform);
+      browser.tabs.remove(bgTab.id).catch(() => {});
+    },
+    ENUM_TIMEOUT_MS
+  ));
+}
 
 // ── SWITCH_TO_BRANCH: open the chosen branch foreground + queue basket build ──
 
@@ -222,6 +238,51 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   if (basketPlan.length) pendingBuilds.set(tab.id, { platform: branch.platform, basketPlan });
 });
 
+// ── RETRY_PLATFORM: re-run enumeration for a platform whose scan timed out ──
+
+browser.runtime.onMessage.addListener(async (msg, sender) => {
+  if (msg.type !== MSG.RETRY_PLATFORM) return;
+  // The sidebar runs in the source tab, which keys the comparison.
+  const comparison = comparisons.get(sender.tab?.id);
+  if (!comparison) {
+    console.info('[FeedMe retry] platform retry ignored — no comparison for tab', sender.tab?.id);
+    return;
+  }
+  if (comparison.loading.has(msg.platform)) {
+    console.info('[FeedMe retry] platform retry ignored — already enumerating', msg.platform);
+    return;
+  }
+  comparison.enumErrors.delete(msg.platform);
+  comparison.loading.add(msg.platform);
+  pushUpdate(comparison);
+  await startEnumeration(comparison, msg.platform);
+});
+
+// ── RETRY_BRANCH: re-run a single branch's menu scrape after a failure ──────
+
+browser.runtime.onMessage.addListener((msg, sender) => {
+  if (msg.type !== MSG.RETRY_BRANCH) return;
+  // The sidebar runs in the source tab, which keys the comparison.
+  const comparison = comparisons.get(sender.tab?.id);
+  if (!comparison) {
+    console.info('[FeedMe retry] branch retry ignored — no comparison for tab', sender.tab?.id);
+    return;
+  }
+  const branch = comparison.branches.get(msg.branchKey);
+  if (!branch || branch.status !== 'error' || branch.result?.error === 'bad-url') {
+    console.info('[FeedMe retry] branch retry ignored —',
+      !branch ? 'unknown branch key' : branch.status !== 'error' ? 'branch is not in an error state' : 'bad-url is permanent, not retryable',
+      msg.branchKey);
+    return;
+  }
+  branch.status = 'pending';
+  branch.result = null;
+  comparison.queued.set(msg.branchKey, { platform: branch.platform });
+  comparison.scheduler.add([msg.branchKey]);
+  pushUpdate(comparison);
+  pump(comparison);
+});
+
 // ── Seed + snapshot helpers ──────────────────────────────────────────────────
 
 // Build the "YOUR CART" branch from the live checkout order.
@@ -257,7 +318,7 @@ function seedCurrentBranch(comparison) {
 }
 
 function pushUpdate(comparison, done = false) {
-  const snapshot = buildSnapshot(comparison.order, [...comparison.branches.values()], comparison.loading);
+  const snapshot = buildSnapshot(comparison.order, [...comparison.branches.values()], comparison.loading, comparison.enumErrors);
   browser.tabs.sendMessage(comparison.sourceTabId, {
     type: MSG.COMPARISON_UPDATE, order: comparison.order, snapshot, done,
   }).catch(() => {});
@@ -272,6 +333,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   const { comparison, platform } = owner;
 
   clearTimeout(comparison.timeouts.get(`enum|${platform}`));
+  comparison.enumErrors.delete(platform);
   browser.tabs.remove(sender.tab.id).catch(() => {});
   comparison.enumTabs.delete(sender.tab.id);
 
@@ -326,7 +388,15 @@ async function pump(comparison) {
     const tab = await browser.tabs.create({ url, active: false }).catch(() => null);
     if (!tab) { failBranch(comparison, key, 'tab-failed'); continue; }
     comparison.menuTabs.set(tab.id, key);
-    comparison.timeouts.set(key, setTimeout(() => failBranch(comparison, key, 'timeout'), MENU_TIMEOUT_MS));
+    comparison.timeouts.set(key, setTimeout(() => {
+      // Close and unmap the stale tab before failing the branch — otherwise a
+      // late response from it, after a later RETRY_BRANCH reactivates this key
+      // to 'pending', could be matched via findTab() and wrongly accepted as
+      // the retry's result while the real retry's tab leaks open forever.
+      comparison.menuTabs.delete(tab.id);
+      browser.tabs.remove(tab.id).catch(() => {});
+      failBranch(comparison, key, 'timeout');
+    }, MENU_TIMEOUT_MS));
   }
 }
 

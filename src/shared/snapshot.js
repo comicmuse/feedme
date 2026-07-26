@@ -12,14 +12,16 @@ function isComplete(b) {
  * @param {{platform:string}} order
  * @param {Array} branches  branch records (see Task 5 interface)
  * @param {Set<string>} loadingPlatforms
+ * @param {Set<string>} enumErrors platforms whose enumeration timed out
  */
-function buildSnapshot(order, branches, loadingPlatforms) {
+function buildSnapshot(order, branches, loadingPlatforms, enumErrors = new Set()) {
   const current = branches.find((b) => b.isCurrent);
   const currentTotal = current && current.status === 'done' ? current.result.total.total : Infinity;
 
   const platforms = ORDER.map((platform) => ({
     platform,
     spinner: loadingPlatforms.has(platform),
+    enumFailed: enumErrors.has(platform),
     branches: branches.filter((b) => b.platform === platform),
   }));
 

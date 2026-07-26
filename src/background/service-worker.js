@@ -381,7 +381,15 @@ async function pump(comparison) {
     const tab = await browser.tabs.create({ url, active: false }).catch(() => null);
     if (!tab) { failBranch(comparison, key, 'tab-failed'); continue; }
     comparison.menuTabs.set(tab.id, key);
-    comparison.timeouts.set(key, setTimeout(() => failBranch(comparison, key, 'timeout'), MENU_TIMEOUT_MS));
+    comparison.timeouts.set(key, setTimeout(() => {
+      // Close and unmap the stale tab before failing the branch — otherwise a
+      // late response from it, after a later RETRY_BRANCH reactivates this key
+      // to 'pending', could be matched via findTab() and wrongly accepted as
+      // the retry's result while the real retry's tab leaks open forever.
+      comparison.menuTabs.delete(tab.id);
+      browser.tabs.remove(tab.id).catch(() => {});
+      failBranch(comparison, key, 'timeout');
+    }, MENU_TIMEOUT_MS));
   }
 }
 

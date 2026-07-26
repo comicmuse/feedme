@@ -252,6 +252,30 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   await startEnumeration(comparison, msg.platform);
 });
 
+// ── RETRY_BRANCH: re-run a single branch's menu scrape after a failure ──────
+
+browser.runtime.onMessage.addListener((msg, sender) => {
+  if (msg.type !== MSG.RETRY_BRANCH) return;
+  const comparison = comparisons.get(sender.tab?.id);
+  if (!comparison) {
+    console.info('[FeedMe retry] branch retry ignored — no comparison for tab', sender.tab?.id);
+    return;
+  }
+  const branch = comparison.branches.get(msg.branchKey);
+  if (!branch || branch.status !== 'error' || branch.result?.error === 'bad-url') {
+    console.info('[FeedMe retry] branch retry ignored —',
+      !branch ? 'unknown branch key' : branch.status !== 'error' ? 'branch is not in an error state' : 'bad-url is permanent, not retryable',
+      msg.branchKey);
+    return;
+  }
+  branch.status = 'pending';
+  branch.result = null;
+  comparison.queued.set(msg.branchKey, { platform: branch.platform });
+  comparison.scheduler.add([msg.branchKey]);
+  pushUpdate(comparison);
+  pump(comparison);
+});
+
 // ── Seed + snapshot helpers ──────────────────────────────────────────────────
 
 // Build the "YOUR CART" branch from the live checkout order.

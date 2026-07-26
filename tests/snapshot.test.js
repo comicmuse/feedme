@@ -59,4 +59,16 @@ describe('buildSnapshot', () => {
     expect(del.spinner).toBe(true);
     expect(snap.footer.kind).toBe('unknown');
   });
+  test('marks a platform enumFailed when enumErrors names it, independent of spinner/branches', () => {
+    const snap = buildSnapshot(order, [], new Set(), new Set([PLATFORM.JUST_EAT]));
+    const je = snap.platforms.find((p) => p.platform === PLATFORM.JUST_EAT);
+    expect(je.enumFailed).toBe(true);
+    expect(je.spinner).toBe(false);
+    const uber = snap.platforms.find((p) => p.platform === PLATFORM.UBER_EATS);
+    expect(uber.enumFailed).toBe(false);
+  });
+  test('enumFailed defaults to false when the 4th argument is omitted (backward compatible)', () => {
+    const snap = buildSnapshot(order, branches(), new Set());
+    expect(snap.platforms.every((p) => p.enumFailed === false)).toBe(true);
+  });
 });

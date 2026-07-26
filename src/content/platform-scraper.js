@@ -8,6 +8,14 @@ if (!platform) throw new Error('FeedMe: scraper loaded on unsupported URL');
 if (window._feedmeScraperActive) return;
 window._feedmeScraperActive = true;
 
+// Privacy boundary: this file only ever runs on the platform's own host — manifest
+// host_permissions scope where it's injected, and `platform` above is derived from
+// window.location and throws if unrecognised. Below, every fetch/XHR response on
+// the page is read (to check its classification), but handleJson only ever forwards
+// one to the extension when classifyResponse recognises it as menu data — nothing
+// else is ever sent. Keep both constraints if this file changes: don't widen host
+// coverage past host_permissions, and don't forward a response that isn't
+// menu-classified.
 function handleJson(url, data) {
   if (!data || typeof data !== 'object') return;
   const classification = classifyResponse(platform, data);

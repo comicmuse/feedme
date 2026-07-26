@@ -115,6 +115,23 @@ function isAllowedMenuUrl(platform, url) {
   return host === suffix || host.endsWith('.' + suffix);
 }
 
+// Just Eat's own internal APIs — menu/dynamic (fees), consumer offers, and the CDN
+// that serves large menus' catalogue — live on hosts distinct from just-eat.co.uk.
+// just-eat-scraper.js builds these URLs from page-supplied data (__NEXT_DATA__), so
+// validate them the same way as isAllowedMenuUrl before fetching: a compromised page
+// shouldn't be able to redirect these requests off-platform.
+const JE_API_HOSTS = ['uk.api.just-eat.io', 'menu-globalmenucdn.je-apis.com'];
+
+function isJeApiUrl(url) {
+  let host;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch (_) {
+    return false;
+  }
+  return JE_API_HOSTS.some((h) => host === h || host.endsWith('.' + h));
+}
+
 // Path shape of each platform's restaurant menu page. Interstitials (consent,
 // login, area listing) often live on the SAME host, so a host check alone can't
 // tell "the menu finished loading" from "a redirect stopped short of it".
@@ -159,6 +176,7 @@ module.exports = {
   platformFromUrl,
   buildSearchUrl,
   isAllowedMenuUrl,
+  isJeApiUrl,
   isMenuPageUrl,
   getConfig,
   browser,

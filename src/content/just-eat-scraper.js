@@ -1,5 +1,5 @@
 const { selectNearestBranches, justEatCandidates } = require('../shared/branches');
-const { MSG, PLATFORM } = require('../shared/constants');
+const { MSG, PLATFORM, isJeApiUrl } = require('../shared/constants');
 const { parseMenuResponse } = require('../shared/parsers');
 
 // Just Eat, like Deliveroo, server-renders its menu into __NEXT_DATA__ and destroys
@@ -82,7 +82,11 @@ const { parseMenuResponse } = require('../shared/parsers');
     // Fetch the exact fee rules (delivery band + service fee formula) and current
     // offers. Same-origin CORS lets the just-eat.co.uk page call these; failures
     // just leave fees at 0 / offers empty.
-    const restaurantId = data?.props?.appProps?.preloadedState?.menu?.restaurant?.cdn?.restaurant?.restaurantId;
+    const rawRestaurantId = data?.props?.appProps?.preloadedState?.menu?.restaurant?.cdn?.restaurant?.restaurantId;
+    // restaurantId comes from the page's own __NEXT_DATA__ and is interpolated
+    // straight into request paths/query strings below; reject anything that isn't
+    // a bare numeric id rather than trusting a potentially-tampered page.
+    const restaurantId = /^\d+$/.test(String(rawRestaurantId)) ? rawRestaurantId : null;
     if (restaurantId) {
       const dynamicReq = fetch(
         `https://uk.api.just-eat.io/restaurant/uk/${restaurantId}/menu/dynamic?orderTime=${new Date().toISOString()}`
@@ -107,23 +111,33 @@ const { parseMenuResponse } = require('../shared/parsers');
       const reqs = [dynamicReq, offersReq];
       if (!Object.keys(cdn.items ?? {}).length && cdn.restaurant?.itemsUrl) {
         const base = 'https://menu-globalmenucdn.je-apis.com/';
-        reqs.push(
-          fetch(base + cdn.restaurant.itemsUrl)
-            .then((r) => r.json())
-            .then((d) => {
-              data._feedmeItems = d?.Items ?? [];
-            })
-            .catch(() => {})
-        );
-        if (cdn.restaurant.itemDetailsUrl) {
+        // itemsUrl/itemDetailsUrl are also page-supplied — a plain string
+        // concatenation onto a fixed origin can't itself redirect elsewhere, but
+        // assert it explicitly so a later refactor (e.g. to new URL()) can't
+        // silently reopen that door.
+        const itemsUrl = base + cdn.restaurant.itemsUrl;
+        if (isJeApiUrl(itemsUrl)) {
           reqs.push(
-            fetch(base + cdn.restaurant.itemDetailsUrl)
+            fetch(itemsUrl)
               .then((r) => r.json())
               .then((d) => {
-                data._feedmeItemDetails = d;
+                data._feedmeItems = d?.Items ?? [];
               })
               .catch(() => {})
           );
+        }
+        if (cdn.restaurant.itemDetailsUrl) {
+          const itemDetailsUrl = base + cdn.restaurant.itemDetailsUrl;
+          if (isJeApiUrl(itemDetailsUrl)) {
+            reqs.push(
+              fetch(itemDetailsUrl)
+                .then((r) => r.json())
+                .then((d) => {
+                  data._feedmeItemDetails = d;
+                })
+                .catch(() => {})
+            );
+          }
         }
       }
       await Promise.all(reqs);

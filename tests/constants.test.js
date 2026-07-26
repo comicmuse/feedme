@@ -1,4 +1,4 @@
-const { MSG, DEFAULT_BRANCH_COUNT, DEFAULT_MAX_CONCURRENT, getConfig, buildSearchUrl, isAllowedMenuUrl, isMenuPageUrl, PLATFORM } = require('../src/shared/constants');
+const { MSG, DEFAULT_BRANCH_COUNT, DEFAULT_MAX_CONCURRENT, getConfig, buildSearchUrl, isAllowedMenuUrl, isJeApiUrl, isMenuPageUrl, PLATFORM } = require('../src/shared/constants');
 
 describe('isAllowedMenuUrl', () => {
   test('allows the platform\'s own origin (www and apex)', () => {
@@ -18,6 +18,24 @@ describe('isAllowedMenuUrl', () => {
   });
   test('rejects a malformed URL', () => {
     expect(isAllowedMenuUrl(PLATFORM.UBER_EATS, 'not a url')).toBe(false);
+  });
+});
+
+describe('isJeApiUrl', () => {
+  test('allows the menu/dynamic + offers host', () => {
+    expect(isJeApiUrl('https://uk.api.just-eat.io/restaurant/uk/123/menu/dynamic')).toBe(true);
+  });
+  test('allows the CDN host', () => {
+    expect(isJeApiUrl('https://menu-globalmenucdn.je-apis.com/items/123.json')).toBe(true);
+  });
+  test('rejects an off-platform host', () => {
+    expect(isJeApiUrl('https://evil.com/restaurant/uk/123/menu/dynamic')).toBe(false);
+  });
+  test('rejects a look-alike suffix host', () => {
+    expect(isJeApiUrl('https://uk.api.just-eat.io.evil.com/x')).toBe(false);
+  });
+  test('rejects a malformed URL', () => {
+    expect(isJeApiUrl('not a url')).toBe(false);
   });
 });
 

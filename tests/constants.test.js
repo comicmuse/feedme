@@ -70,6 +70,8 @@ describe('constants', () => {
   test('exposes new message types', () => {
     expect(MSG.BRANCHES_FOUND).toBe('BRANCHES_FOUND');
     expect(MSG.COMPARISON_UPDATE).toBe('COMPARISON_UPDATE');
+    expect(MSG.RETRY_BRANCH).toBe('RETRY_BRANCH');
+    expect(MSG.RETRY_PLATFORM).toBe('RETRY_PLATFORM');
   });
   test('exposes config defaults', () => {
     expect(DEFAULT_BRANCH_COUNT).toBe(3);

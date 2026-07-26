@@ -184,6 +184,11 @@ async function startEnumeration(comparison, platform) {
   comparison.enumTabs.set(bgTab.id, platform);
   comparison.timeouts.set(`enum|${platform}`, setTimeout(
     () => {
+      // Unmap the stale tab before anything else — otherwise a late BRANCHES_FOUND
+      // from it could still route via findTab() (keyed by tabId, not by any status
+      // gate) after RETRY_PLATFORM has moved on, mirroring the analogous menuTabs
+      // leak fixed in pump()'s timeout path.
+      comparison.enumTabs.delete(bgTab.id);
       comparison.enumErrors.add(platform);
       onPlatformDone(comparison, platform);
       browser.tabs.remove(bgTab.id).catch(() => {});

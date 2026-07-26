@@ -162,6 +162,7 @@ browser.runtime.onMessage.addListener(async (msg) => {
     loading: new Set(ALL_PLATFORMS),
     injectedUrls: new Set(),
     timeouts: new Map(),
+    enumErrors: new Set(),             // platforms whose enumeration timed out (retryable)
   };
   comparisons.set(tabId, comparison);
 
@@ -170,16 +171,26 @@ browser.runtime.onMessage.addListener(async (msg) => {
   pushUpdate(comparison);
 
   for (const platform of ALL_PLATFORMS) {
-    const url = buildSearchUrl(platform, order.restaurantName, order.postcode);
-    if (!url) { onPlatformDone(comparison, platform); continue; }
-    const bgTab = await browser.tabs.create({ url, active: false });
-    comparison.enumTabs.set(bgTab.id, platform);
-    comparison.timeouts.set(`enum|${platform}`, setTimeout(
-      () => { onPlatformDone(comparison, platform); browser.tabs.remove(bgTab.id).catch(() => {}); },
-      ENUM_TIMEOUT_MS
-    ));
+    await startEnumeration(comparison, platform);
   }
 });
+
+// ── Enumeration bootstrap — used at initial START_COMPARISON and on retry ───
+
+async function startEnumeration(comparison, platform) {
+  const url = buildSearchUrl(platform, comparison.order.restaurantName, comparison.order.postcode);
+  if (!url) { onPlatformDone(comparison, platform); return; }
+  const bgTab = await browser.tabs.create({ url, active: false });
+  comparison.enumTabs.set(bgTab.id, platform);
+  comparison.timeouts.set(`enum|${platform}`, setTimeout(
+    () => {
+      comparison.enumErrors.add(platform);
+      onPlatformDone(comparison, platform);
+      browser.tabs.remove(bgTab.id).catch(() => {});
+    },
+    ENUM_TIMEOUT_MS
+  ));
+}
 
 // ── SWITCH_TO_BRANCH: open the chosen branch foreground + queue basket build ──
 
@@ -222,6 +233,25 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   if (basketPlan.length) pendingBuilds.set(tab.id, { platform: branch.platform, basketPlan });
 });
 
+// ── RETRY_PLATFORM: re-run enumeration for a platform whose scan timed out ──
+
+browser.runtime.onMessage.addListener(async (msg, sender) => {
+  if (msg.type !== MSG.RETRY_PLATFORM) return;
+  const comparison = comparisons.get(sender.tab?.id);
+  if (!comparison) {
+    console.info('[FeedMe retry] platform retry ignored — no comparison for tab', sender.tab?.id);
+    return;
+  }
+  if (comparison.loading.has(msg.platform)) {
+    console.info('[FeedMe retry] platform retry ignored — already enumerating', msg.platform);
+    return;
+  }
+  comparison.enumErrors.delete(msg.platform);
+  comparison.loading.add(msg.platform);
+  pushUpdate(comparison);
+  await startEnumeration(comparison, msg.platform);
+});
+
 // ── Seed + snapshot helpers ──────────────────────────────────────────────────
 
 // Build the "YOUR CART" branch from the live checkout order.
@@ -257,7 +287,7 @@ function seedCurrentBranch(comparison) {
 }
 
 function pushUpdate(comparison, done = false) {
-  const snapshot = buildSnapshot(comparison.order, [...comparison.branches.values()], comparison.loading);
+  const snapshot = buildSnapshot(comparison.order, [...comparison.branches.values()], comparison.loading, comparison.enumErrors);
   browser.tabs.sendMessage(comparison.sourceTabId, {
     type: MSG.COMPARISON_UPDATE, order: comparison.order, snapshot, done,
   }).catch(() => {});
@@ -272,6 +302,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   const { comparison, platform } = owner;
 
   clearTimeout(comparison.timeouts.get(`enum|${platform}`));
+  comparison.enumErrors.delete(platform);
   browser.tabs.remove(sender.tab.id).catch(() => {});
   comparison.enumTabs.delete(sender.tab.id);
 

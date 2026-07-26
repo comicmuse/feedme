@@ -63,7 +63,11 @@ styleEl.textContent = `
 .ft.sw { background:#fff7ed; border-top-color:#fed7aa; color:#c2410c; }
 .ft.sw .save { color:#7c2d12; }
 .cv { font-size:10px; color:#6b7280; margin-top:3px; }
-.errc { border:1px solid #fecaca; border-radius:10px; padding:12px; font-size:12px; color:#ef4444; }
+.errc { border:1px solid #fecaca; border-radius:10px; padding:12px; font-size:12px; color:#ef4444;
+  display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
+.retrybtn { background:#f3f4f6; color:#374151; border:none; border-radius:6px;
+  padding:6px 10px; font-size:10px; font-weight:700; cursor:pointer; }
+.retrybtn:hover { background:#e5e7eb; }
 .cols { display:flex; flex-direction:row; gap:10px; padding:12px; align-items:flex-start; width:100%; }
 .col { flex:1 1 0; min-width:0; }
 .colhd { font-size:12px; font-weight:700; color:#374151; padding:0 2px 6px; display:flex; align-items:center; gap:5px; }
@@ -151,6 +155,16 @@ function switchToBranch(branchKey) {
   browser.runtime.sendMessage({ type: MSG.SWITCH_TO_BRANCH, branchKey });
 }
 
+// Ask the worker to retry a single branch's menu scrape after a failure.
+function retryBranch(branchKey) {
+  browser.runtime.sendMessage({ type: MSG.RETRY_BRANCH, branchKey });
+}
+
+// Ask the worker to retry a platform's enumeration after a timeout.
+function retryPlatform(platform) {
+  browser.runtime.sendMessage({ type: MSG.RETRY_PLATFORM, platform });
+}
+
 // Label for a branch's switch button, reflecting how much of the basket can be
 // pre-filled (vs. opened for manual add). Returns null when there's no usable URL.
 function switchButtonLabel(branch) {
@@ -200,7 +214,7 @@ function buildBranchCard(branch, isCheapest) {
   }
   const totalEl = document.createElement('span');
   totalEl.className = 'bt';
-  totalEl.textContent = branch.status === 'error' ? '—' : fmt(branchTotal(branch));
+  totalEl.textContent = (branch.status === 'error' || branch.status === 'pending') ? '—' : fmt(branchTotal(branch));
   head.appendChild(nameWrap);
   head.appendChild(totalEl);
   card.appendChild(head);
@@ -210,6 +224,25 @@ function buildBranchCard(branch, isCheapest) {
     err.className = 'det';
     err.textContent = `Could not load (${branch.result.error})`;
     card.appendChild(err);
+    // 'bad-url' is a permanent origin-validation failure — retrying it fails the
+    // same way every time, so no button for it.
+    if (branch.result.error !== 'bad-url') {
+      const retry = document.createElement('button');
+      retry.className = 'retrybtn';
+      retry.textContent = 'Retry ↻';
+      retry.addEventListener('click', (e) => { e.stopPropagation(); retryBranch(branch.key); });
+      card.appendChild(retry);
+    }
+    return card;
+  }
+  // A branch a user expanded while it was 'error' stays in the `expanded` Set;
+  // a retry flips it back to 'pending', so this card renders again before the
+  // scrape resolves. branch.result is null in this state.
+  if (branch.status === 'pending') {
+    const pending = document.createElement('div');
+    pending.className = 'det';
+    pending.textContent = 'Retrying…';
+    card.appendChild(pending);
     return card;
   }
   const det = document.createElement('div');
@@ -361,6 +394,16 @@ function render(snapshot, order) {
       const s = document.createElement('div'); s.className = 'spin';
       sp.appendChild(s); sp.appendChild(document.createTextNode('Finding branches…'));
       colEl.appendChild(sp);
+    } else if (col.enumFailed) {
+      const none = document.createElement('div');
+      none.className = 'errc';
+      none.textContent = 'Could not load branches (timeout)';
+      const retry = document.createElement('button');
+      retry.className = 'retrybtn';
+      retry.textContent = 'Retry ↻';
+      retry.addEventListener('click', () => retryPlatform(col.platform));
+      none.appendChild(retry);
+      colEl.appendChild(none);
     } else if (!col.branches.length) {
       const none = document.createElement('div');
       none.className = 'errc';

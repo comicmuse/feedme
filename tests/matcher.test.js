@@ -1,4 +1,52 @@
-const { matchItems, computeTotal, estimateUberFees } = require('../src/shared/matcher');
+const { matchItems, computeTotal, estimateUberFees, uberOneWaiverOffer } = require('../src/shared/matcher');
+
+// Uber never publishes the basket minimum its £0-delivery benefit requires, so the
+// waiver is expressed as a bound rather than a guessed constant: the source cart was
+// proven waived at ITS subtotal, so any sibling at or above that subtotal is also
+// above the minimum. Encoding it as a free-delivery offer with minSpend lets
+// applyOffers decide, with no new branching in computeTotal (#64).
+// An Uber sibling's delivery fee is exact when read from its own store blob and a
+// guess when copied from the source cart. The total carries which it was so the
+// sidebar can mark only the guess (#63).
+describe('computeTotal delivery-fee provenance', () => {
+  const basket = [{ referenceItem: { quantity: 1 }, platformItem: { name: 'Sub', unitPrice: 10 }, matched: true }];
+
+  test('reports the delivery fee as estimated when told it is', () => {
+    expect(computeTotal(basket, 2.79, 0, [], { deliveryFeeEstimated: true }).deliveryFeeEstimated).toBe(true);
+  });
+
+  test('reports an exact delivery fee as not estimated', () => {
+    expect(computeTotal(basket, 2.79, 0, []).deliveryFeeEstimated).toBe(false);
+  });
+});
+
+describe('uberOneWaiverOffer', () => {
+  const waivedOrder = { items: [{ unitPrice: 8, quantity: 2 }], deliveryFee: 0, serviceFee: 2, checkoutTotal: 18, discounts: [], uberOneDeliveryWaived: true };
+  const eligibleBranch = { uberOneFreeDelivery: true };
+
+  test('offers free delivery above the subtotal the waiver was proven at', () => {
+    const offer = uberOneWaiverOffer(waivedOrder, eligibleBranch);
+    expect(offer).toMatchObject({ type: 'free-delivery', minSpend: 16 });
+    expect(offer.description).toMatch(/Uber One/);
+  });
+
+  test('no offer when the source cart was not waived (non-member, or below the minimum)', () => {
+    expect(uberOneWaiverOffer({ ...waivedOrder, uberOneDeliveryWaived: false }, eligibleBranch)).toBeNull();
+  });
+
+  test('no offer when the branch does not carry the £0-delivery benefit', () => {
+    expect(uberOneWaiverOffer(waivedOrder, { uberOneFreeDelivery: false })).toBeNull();
+  });
+
+  test('the offer only fires for a branch at or above the proven subtotal', () => {
+    const offer = uberOneWaiverOffer(waivedOrder, eligibleBranch);
+    const line = (unitPrice) => ({ referenceItem: { quantity: 1 }, platformItem: { name: 'Sub', unitPrice }, matched: true });
+    // At the bound: waived.
+    expect(computeTotal([line(16)], 3.5, 0, [offer]).deliveryFee).toBe(0);
+    // Below it: nothing is proven, so the branch keeps its real fee.
+    expect(computeTotal([line(12)], 3.5, 0, [offer]).deliveryFee).toBeCloseTo(3.5);
+  });
+});
 
 describe('estimateUberFees', () => {
   test('derives the service-fee percentage and delivery fee from the live cart', () => {

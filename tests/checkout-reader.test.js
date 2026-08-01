@@ -596,3 +596,58 @@ describe('extractOrder - Just Eat', () => {
   test('extracts two items', () => { expect(order.items).toHaveLength(2); });
   test('first item unitPrice in pounds', () => { expect(order.items[0].unitPrice).toBeCloseTo(5.69); });
 });
+
+// Uber One's £0 delivery benefit is what lets sibling branches be priced with the
+// fee waived (#64). The checkout row shows the struck-through fee next to the
+// waived one ("£1.79 £0.00") with the Uber One logo between them — live shape,
+// 2026-08-01. The logo is what tells the waiver apart from an ordinary store
+// free-delivery promotion, which renders the same two prices without it.
+describe('extractOrder - Uber One delivery waiver (#64)', () => {
+  const cart = `
+    <div data-testid="cart-summary-panel"></div>
+    <div data-testid="fare-breakdown-charge-badge-total">£24.39</div>
+    <div data-testid="cart-items-list">
+      <li><div data-testid="cart-item-1"><img alt="Sub" /><span>£24.95</span></div></li>
+    </div>`;
+  const docWith = (deliveryRow) =>
+    new JSDOM(`<!DOCTYPE html><html><body>${cart}${deliveryRow}</body></html>`).window.document;
+
+  const waivedRow = `<div data-testid="fare-breakdown-charge-badge-delivery-fee">
+      <span><span>£1.79</span>&nbsp;<span>
+      <span><img src="https://d3smpkehiq8afm.cloudfront.net/email/2022/05/mt_40_costco/uber_one.png" width="14" height="14"></span>
+      <span> £0.00</span></span></span></div>`;
+
+  test('flags the waiver when the row shows a struck-through fee and the Uber One logo', async () => {
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(waivedRow));
+    expect(order.uberOneDeliveryWaived).toBe(true);
+    // The fee actually charged is still the waived one.
+    expect(order.deliveryFee).toBe(0);
+  });
+
+  test('does not flag a £0 fee with no Uber One logo (a store free-delivery promo)', async () => {
+    const row = `<div data-testid="fare-breakdown-charge-badge-delivery-fee">
+      <span><span>£1.79</span>&nbsp;<span> £0.00</span></span></div>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(row));
+    expect(order.uberOneDeliveryWaived).toBe(false);
+  });
+
+  test('does not flag an ordinary charged fee', async () => {
+    const row = `<div data-testid="fare-breakdown-charge-badge-delivery-fee">£2.79</div>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(row));
+    expect(order.uberOneDeliveryWaived).toBe(false);
+  });
+
+  test('does not flag a member row whose fee was NOT waived to zero', async () => {
+    // Logo present but the final price is non-zero — the benefit didn't apply
+    // (e.g. below the basket minimum), so no waiver may be inferred for siblings.
+    const row = `<div data-testid="fare-breakdown-charge-badge-delivery-fee">
+      <span><span>£1.79</span>&nbsp;<span><img src="/uber_one.png"><span> £0.99</span></span></span></div>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(row));
+    expect(order.uberOneDeliveryWaived).toBe(false);
+  });
+
+  test('does not flag when there is no delivery-fee row at all', async () => {
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(''));
+    expect(order.uberOneDeliveryWaived).toBe(false);
+  });
+});

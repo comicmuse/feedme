@@ -1,5 +1,5 @@
 const { classifyResponse, parseMenuResponse, parseUberStore, justEatItemModifiers } = require('../src/shared/parsers');
-const { matchItems, computeTotal } = require('../src/shared/matcher');
+const { matchItems, computeTotal, uberOneWaiverOffer } = require('../src/shared/matcher');
 const { PLATFORM } = require('../src/shared/constants');
 
 const ubereats = require('./fixtures/ubereats-menu.json');
@@ -60,6 +60,72 @@ describe('parseUberStore (Uber store-page JSON-LD)', () => {
     const m = parseUberStore(ld, catalog);
     expect(m.items.find((i) => i.name === 'Regular Fries').id).toBeUndefined();
     expect(m.items.find((i) => i.name === 'Whopper').id).toBe('item-2');
+  });
+});
+
+// Uber's store blob publishes the branch's OWN delivery fee, which siblings
+// previously inherited from the source cart (#63). Despite the key name,
+// fareInfo.serviceFee is the delivery fee — fareBadge.text is the cross-check
+// that proves it, so a disagreement between the two means neither is trusted.
+describe('parseUberStore delivery fee (#63)', () => {
+  const ld = { name: 'S', hasMenu: { hasMenuSection: [{ hasMenuItem: [{ name: 'Sub', offers: { price: '5.00' } }] }] } };
+
+  test('reads the branch delivery fee from fareInfo when fareBadge agrees', () => {
+    const m = parseUberStore(ld, { fareInfo: { serviceFee: 5.29 }, fareBadge: { text: '£5.29 Delivery Fee' } });
+    expect(m.deliveryFee).toBeCloseTo(5.29);
+    expect(m.deliveryFeeKnown).toBe(true);
+  });
+
+  test('distrusts the fee when fareInfo and fareBadge disagree', () => {
+    const m = parseUberStore(ld, { fareInfo: { serviceFee: 5.29 }, fareBadge: { text: '£2.79 Delivery Fee' } });
+    expect(m.deliveryFeeKnown).toBe(false);
+    expect(m.deliveryFee).toBe(0);
+  });
+
+  test('distrusts the fee when there is no fareBadge to cross-check', () => {
+    const m = parseUberStore(ld, { fareInfo: { serviceFee: 5.29 } });
+    expect(m.deliveryFeeKnown).toBe(false);
+  });
+
+  test('a genuinely free branch is known, not treated as missing', () => {
+    const m = parseUberStore(ld, { fareInfo: { serviceFee: 0 }, fareBadge: { text: '£0.00 Delivery Fee' } });
+    expect(m.deliveryFee).toBe(0);
+    expect(m.deliveryFeeKnown).toBe(true);
+  });
+
+  test('without a catalog blob the fee stays unknown (back-compat)', () => {
+    const m = parseUberStore(ld);
+    expect(m.deliveryFee).toBe(0);
+    expect(m.deliveryFeeKnown).toBe(false);
+  });
+});
+
+// Uber One's £0 delivery benefit is published per store as a typed enum (#64).
+// Anything unrecognised means NOT eligible: all 14 stores probed live carried the
+// identical badge, so no excluded store was ever seen and the enum must not be
+// assumed constant.
+describe('parseUberStore Uber One eligibility (#64)', () => {
+  const ld = { name: 'S', hasMenu: { hasMenuSection: [{ hasMenuItem: [{ name: 'Sub', offers: { price: '5.00' } }] }] } };
+  const badge = (membership) => ({ eatsPassExclusionBadge: { text: '£0 Delivery Fee', badgeDataWithFallback: { membership } } });
+
+  test('flags a store carrying the typed £0-delivery membership badge', () => {
+    const m = parseUberStore(ld, badge({ brandingType: 'UBER_ONE', badgeTextType: 'STANDARD_ZERO_DELIVERY_FEE' }));
+    expect(m.uberOneFreeDelivery).toBe(true);
+  });
+
+  test('does not flag a different membership benefit type', () => {
+    const m = parseUberStore(ld, badge({ brandingType: 'UBER_ONE', badgeTextType: 'SOMETHING_ELSE' }));
+    expect(m.uberOneFreeDelivery).toBe(false);
+  });
+
+  test('does not flag a non-Uber-One branding', () => {
+    const m = parseUberStore(ld, badge({ brandingType: 'OTHER_BRAND', badgeTextType: 'STANDARD_ZERO_DELIVERY_FEE' }));
+    expect(m.uberOneFreeDelivery).toBe(false);
+  });
+
+  test('does not flag a store with no badge at all', () => {
+    expect(parseUberStore(ld, { fareInfo: { serviceFee: 1 } }).uberOneFreeDelivery).toBe(false);
+    expect(parseUberStore(ld).uberOneFreeDelivery).toBe(false);
   });
 });
 
@@ -164,6 +230,47 @@ describe('Uber store buy-one-get-one deal applied end-to-end', () => {
     const result = computeTotal(matches, 0, 0, parsed.offers);
     expect(result.discountTotal).toBe(0);
     expect(result.appliedDeals).toEqual([]);
+  });
+});
+
+// Parse -> match -> computeTotal over the pinned live Subway blob, with the fee and
+// membership shapes captured from the real store page on 2026-08-01 (#63, #64).
+describe('Uber sibling fees and the Uber One waiver, end to end', () => {
+  const parsed = parseUberStore(uberStoreLd, uberStoreCatalog);
+  const waivedCart = {
+    items: [{ unitPrice: 8.0, quantity: 2 }],
+    deliveryFee: 0, serviceFee: 2, checkoutTotal: 18, discounts: [],
+    uberOneDeliveryWaived: true,
+  };
+  const cart = (name, quantity) => [{ name, quantity }];
+
+  test('the branch is priced with its own published delivery fee', () => {
+    expect(parsed.deliveryFeeKnown).toBe(true);
+    expect(parsed.deliveryFee).toBeCloseTo(0.79);
+  });
+
+  test('an eligible branch at or above the proven subtotal has the fee waived', () => {
+    // 5 x £3.89 = £19.45, above the £16 the cart proved the waiver at.
+    const matches = matchItems(cart('Chipotle Cheesy Bites - 5 pieces', 5), parsed.items);
+    const offers = [...parsed.offers, uberOneWaiverOffer(waivedCart, parsed)];
+    const total = computeTotal(matches, parsed.deliveryFee, 0, offers);
+    expect(total.deliveryFee).toBe(0);
+  });
+
+  test('below the proven subtotal the branch keeps its real fee', () => {
+    // 2 x £3.89 = £7.78: nothing proves the waiver applies this low, so it doesn't.
+    const matches = matchItems(cart('Chipotle Cheesy Bites - 5 pieces', 2), parsed.items);
+    const offers = [...parsed.offers, uberOneWaiverOffer(waivedCart, parsed)];
+    const total = computeTotal(matches, parsed.deliveryFee, 0, offers);
+    expect(total.deliveryFee).toBeCloseTo(0.79);
+  });
+
+  test('a non-member cart never waives the fee, however large the basket', () => {
+    const matches = matchItems(cart('Chipotle Cheesy Bites - 5 pieces', 5), parsed.items);
+    const offers = [...parsed.offers, uberOneWaiverOffer({ ...waivedCart, uberOneDeliveryWaived: false }, parsed)]
+      .filter(Boolean);
+    const total = computeTotal(matches, parsed.deliveryFee, 0, offers);
+    expect(total.deliveryFee).toBeCloseTo(0.79);
   });
 });
 

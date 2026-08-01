@@ -401,6 +401,9 @@ function computeTotal(matches, deliveryFee, serviceFee, offers, opts = {}) {
   return {
     itemsTotal,
     deliveryFee: effectiveDelivery,
+    // Provenance, not a computation: exact when the branch published its own fee,
+    // estimated when it was copied from the source cart (#63).
+    deliveryFeeEstimated: opts.deliveryFeeEstimated ?? false,
     serviceFee: effectiveServiceFee,
     serviceFeeEstimated,
     bagFee,
@@ -413,21 +416,47 @@ function computeTotal(matches, deliveryFee, serviceFee, offers, opts = {}) {
   };
 }
 
-// Other Uber branches are scraped from their store page's JSON-LD, which carries
-// item prices but no fees. Estimate their fees from the live cart (same platform,
-// same delivery area): reuse its delivery fee and apply its service-fee rate
-// (serviceFee / subtotal) to each branch's subtotal. Totals built this way are
-// flagged estimated via computeTotal's serviceFeeEstimated.
-function estimateUberFees(order) {
+// The captured cart's subtotal, from item prices when they're known and backed out
+// of the checkout total when they aren't.
+function uberOrderSubtotal(order) {
   const discountTotal = (order.discounts ?? []).reduce((s, d) => s + d.amount, 0);
   const itemsKnown = (order.items ?? []).some((i) => i.unitPrice > 0);
-  const subtotal = itemsKnown
+  return itemsKnown
     ? order.items.reduce((s, i) => s + i.unitPrice * i.quantity, 0)
     : order.checkoutTotal - order.deliveryFee - order.serviceFee + discountTotal;
+}
+
+// Uber One waives the delivery fee above a basket minimum Uber never publishes
+// (prose only: "the minimum basket size displayed on the merchant's shopfront").
+// Rather than invent a threshold, bound it with what the captured cart proves: the
+// source cart WAS waived at its own subtotal, so any sibling at or above that
+// subtotal is above the minimum too. Expressed as a free-delivery offer with
+// minSpend, so applyOffers already implements the rule — and a branch below the
+// bound simply keeps its real fee rather than claiming an unproven saving.
+// Returns null unless the member's waiver and the branch's eligibility are BOTH
+// established (#64).
+function uberOneWaiverOffer(order, parsed) {
+  if (!order?.uberOneDeliveryWaived || !parsed?.uberOneFreeDelivery) return null;
+  return {
+    type: 'free-delivery',
+    minSpend: uberOrderSubtotal(order),
+    description: '£0 Delivery Fee with Uber One',
+  };
+}
+
+// Fee fallback for other Uber branches, from the live cart (same platform, same
+// delivery area): its delivery fee, and its service-fee rate (serviceFee / subtotal)
+// applied to the branch's subtotal. The service fee is always estimated this way —
+// the store page never carries one. The delivery fee is only a fallback now that the
+// store blob publishes each branch's own (#63); copying it across branches assumes a
+// fee that in fact ranges £0.29–£5.29 between stores at one address. Totals built
+// this way are flagged estimated via computeTotal.
+function estimateUberFees(order) {
+  const subtotal = uberOrderSubtotal(order);
   return {
     deliveryFee: order.deliveryFee ?? 0,
     serviceFeePct: subtotal > 0 ? order.serviceFee / subtotal : 0,
   };
 }
 
-module.exports = { matchItems, computeTotal, estimateUberFees };
+module.exports = { matchItems, computeTotal, estimateUberFees, uberOneWaiverOffer };

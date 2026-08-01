@@ -251,9 +251,14 @@ function buildBranchCard(branch, isCheapest) {
   appendDetRow(det, 'Subtotal', fmt(t.itemsTotal));
   // Just Eat's delivery fee varies with demand (busy surge) and by basket band, so
   // the value we snapshot at comparison time can differ at checkout — flag it.
+  // An Uber sibling's fee is exact when its own store page published it, and a copy
+  // of your cart's fee when it didn't — mark only the copy, so the exact case stops
+  // being labelled like a guess (#63).
   const deliveryNote = branch.platform === PLATFORM.JUST_EAT
     ? { marker: 'approx.', tooltip: "Just Eat's delivery fee varies with demand, so it may differ at checkout." }
-    : null;
+    : t.deliveryFeeEstimated
+      ? { marker: 'approx.', tooltip: "This branch didn't publish a delivery fee, so your current cart's is used." }
+      : null;
   appendDetRow(det, 'Delivery', fmt(t.deliveryFee), deliveryNote);
   appendDetRow(det, `Service${t.serviceFeeEstimated ? ' (est.)' : ''}`, fmt(t.serviceFee));
   if (t.bagFee > 0) appendDetRow(det, 'Bag fee', fmt(t.bagFee));

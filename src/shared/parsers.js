@@ -149,8 +149,36 @@ function uberCatalogIdByName(catalog) {
   return byName;
 }
 
+// The branch's own delivery fee. Despite the key name, `fareInfo.serviceFee` is
+// the DELIVERY fee — `fareBadge.text` ("£5.29 Delivery Fee") is what proves it, so
+// the badge doubles as a cross-check: if the two disagree the shape has drifted and
+// neither is trusted, leaving the caller on its existing estimate. `serviceFeeCents`
+// is deliberately unused (it came back as 28.999999999999996 for a £0.29 fee).
+// Returns null when the fee can't be established. Live spread, same address
+// 2026-08-01: £5.29 Burger King, £0.29 Pizza Hut, £0.79 Subway, £2.79 McDonald's.
+function uberStoreDeliveryFee(catalog) {
+  const fee = catalog?.fareInfo?.serviceFee;
+  if (typeof fee !== 'number' || !Number.isFinite(fee) || fee < 0) return null;
+  const badgeText = catalog?.fareBadge?.text;
+  if (typeof badgeText !== 'string') return null;
+  const badgeFee = parseFloat((badgeText.match(/£\s*([\d.]+)/) ?? [])[1]);
+  if (!Number.isFinite(badgeFee) || Math.abs(badgeFee - fee) > 0.005) return null;
+  return fee;
+}
+
+// Whether Uber One's £0 delivery benefit covers this store. The membership badge is
+// typed, so eligibility never depends on reading its text. Anything unrecognised —
+// another benefit type, another brand, or no badge — means NOT eligible: every store
+// probed live carried the identical badge, so an excluded store's shape was never
+// observed and the enum can't be assumed constant.
+function uberStoreOneFreeDelivery(catalog) {
+  const m = catalog?.eatsPassExclusionBadge?.badgeDataWithFallback?.membership;
+  return m?.brandingType === 'UBER_ONE' && m?.badgeTextType === 'STANDARD_ZERO_DELIVERY_FEE';
+}
+
 function parseUberStore(ld, catalog) {
   const idByName = catalog ? uberCatalogIdByName(catalog) : null;
+  const deliveryFee = uberStoreDeliveryFee(catalog);
   const sections = asArray(ld?.hasMenu?.hasMenuSection ?? ld?.hasMenu);
   const items = [];
   for (const section of sections) {
@@ -171,7 +199,9 @@ function parseUberStore(ld, catalog) {
     restaurantName: ld?.name ?? '',
     postcode: ld?.address?.postalCode ?? '',
     items,
-    deliveryFee: 0,
+    deliveryFee: deliveryFee ?? 0,
+    deliveryFeeKnown: deliveryFee != null,
+    uberOneFreeDelivery: uberStoreOneFreeDelivery(catalog),
     serviceFee: 0,
     serviceFeePct: 0,
     offers: catalog ? uberStoreOffers(catalog) : [],

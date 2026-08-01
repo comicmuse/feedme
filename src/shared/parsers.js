@@ -80,6 +80,14 @@ function collectUberPromoItems(node, acc = [], seen = new Set()) {
 // share its terms (Subway's "Buy 1, get 1 free" section), so those items collapse
 // into one deal whose eligibleItems are their names. Sourced from the blob, not the
 // JSON-LD section title, so the signal stays deterministic and typed.
+// Item-level is ALL Uber publishes: probing nine live offers-hub stores on
+// 2026-08-01 found `promotion: null`, empty `suggestedPromotion`, null
+// `storeBanners` and empty `nuggets` on every one, with `hasStorePromotion: true`
+// as a payload-free flag. The "15% off" cards on the page are account-scoped
+// claimable promo codes from an authenticated getStoreV1 XHR (issue #5 territory),
+// with their percent/cap/min-spend only in marketing prose — so there is no
+// order-level offer to map here. See
+// docs/superpowers/specs/2026-08-01-uber-order-level-offers-findings.md.
 function uberStoreOffers(catalog) {
   const byTerms = new Map();
   for (const it of collectUberPromoItems(catalog)) {

@@ -88,15 +88,21 @@ function uberStoreOffers(catalog) {
     const name = it.title || it.name;
     const buy = promo.buyQuantity ?? 1;
     const get = promo.getQuantity ?? 1;
-    const key = `${buy}-${get}`;
+    // maxRedemptionCount caps how many free units one order can claim; it is part
+    // of the terms, so a capped and an uncapped promotion with the same buy/get
+    // stay separate deals rather than collapsing under one cap.
+    const cap = promo.maxRedemptionCount;
+    const key = `${buy}-${get}-${cap ?? ''}`;
     if (!byTerms.has(key)) {
-      byTerms.set(key, {
+      const deal = {
         type: 'item-deal',
         rule: 'cheapest-free',
         quantity: buy + get,
         eligibleItems: [],
         description: `Buy ${buy}, get ${get} free`,
-      });
+      };
+      if (cap != null) deal.maxRedemptions = cap;
+      byTerms.set(key, deal);
     }
     const deal = byTerms.get(key);
     if (!deal.eligibleItems.includes(name)) deal.eligibleItems.push(name);

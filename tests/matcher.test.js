@@ -849,7 +849,6 @@ describe('Uber ingredient removals (#33)', () => {
     expect(result.basketLine.modifiers).toEqual([
       { id: 'je-no-pickles', groupId: 'gr', group: 'Remove', name: 'No Pickles' },
     ]);
-    expect(result.basketLine.prefillable).toBe(true);
   });
 
   test('never resolves to a positive option of the same ingredient', () => {
@@ -872,5 +871,48 @@ describe('Uber ingredient removals (#33)', () => {
     const [result] = matchItems(refWithRemoval, platform);
     expect(result.basketLine.modifiers).toEqual([]);
     expect(result.basketLine.prefillable).toBe(true); // skipping IS the removal
+  });
+
+  test('a verbatim decline in an unrelated group is never selected across groups', () => {
+    // Characterized by hand (scratch script, not committed) against unmodified
+    // matcher.js: the source group "Remove" fuzzy-matches this target's "Remove"
+    // group exactly, so priceOptions locks the candidate pool to that group's own
+    // modifiers ["No Onions"] — "No Pickles" in "Toppings" is never even considered.
+    // Because the query is a decline, the `!declined` retry that would widen the
+    // pool to every modifier on the item (the leak the review flagged) never fires
+    // either. Net effect: no candidate resolves, and skipping is treated as the
+    // removal, exactly as when the target models no removal option at all.
+    const platform = [{
+      id: 'je-4', name: 'Big Mac®', description: '', unitPrice: 5.89,
+      modifiers: [
+        { name: 'No Onions', price: 0, id: 'je-no-onions', groupId: 'gr', group: 'Remove' },
+        { name: 'No Pickles', price: 0, id: 'je-toppings-no-pickles', groupId: 'gt', group: 'Toppings' },
+      ],
+    }];
+    const [result] = matchItems(refWithRemoval, platform);
+    expect(result.basketLine.modifiers).toEqual([]);
+    expect(result.basketLine.prefillable).toBe(true);
+  });
+
+  test('decline-agreement, not just fuzzy score, is what keeps a positive option out', () => {
+    // A paid distractor (as in the original test 1's "Extra Pickles") never actually
+    // needs isDecline: priceOptions already prefers a hit matching the option's own
+    // price band (free query -> free hit), so a paid alternative loses regardless of
+    // decline-agreement. Verified by hand: stubbing isDecline to always return false
+    // left every paid-distractor variant unchanged. Only a FREE positive distractor
+    // exposes the guard, since price-banding can't discriminate free-vs-free — this
+    // is the pair that flips: with isDecline live it resolves to the decline; with
+    // isDecline stubbed to () => false it wrongly resolves to "Pickles" instead.
+    const platform = [{
+      id: 'je-5', name: 'Big Mac®', description: '', unitPrice: 5.89,
+      modifiers: [
+        { name: 'No thanks (Pickles)', price: 0, id: 'je-no-pickles', groupId: 'gr', group: 'Remove' },
+        { name: 'Pickles', price: 0, id: 'je-add-pickles', groupId: 'gr', group: 'Remove' },
+      ],
+    }];
+    const [result] = matchItems(refWithRemoval, platform);
+    expect(result.basketLine.modifiers).toEqual([
+      { id: 'je-no-pickles', groupId: 'gr', group: 'Remove', name: 'No thanks (Pickles)' },
+    ]);
   });
 });

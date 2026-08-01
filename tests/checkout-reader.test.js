@@ -53,9 +53,15 @@ describe('extractOrder - Uber Eats', () => {
   });
   test('extracts delivery fee as 0', () => { expect(order.deliveryFee).toBe(0); });
   test('extracts service fee', () => { expect(order.serviceFee).toBeCloseTo(1.50); });
-  test('extracts membership discount', () => {
-    expect(order.discounts).toHaveLength(1);
-    expect(order.discounts[0].amount).toBeCloseTo(1.80);
+  // Uber One's two entitlements are separate fare rows and are captured
+  // separately, each tagged with a stable id so sibling pricing can identify them
+  // without matching on localised label text (#65).
+  test('extracts both Uber One entitlements as identified discounts', () => {
+    expect(order.discounts).toHaveLength(2);
+    expect(order.discounts).toEqual([
+      { id: 'uber-one-monthly-benefit', amount: 1.80, label: 'Uber One monthly benefit' },
+      { id: 'uber-one-credits', amount: 0.55, label: 'Uber One credits' },
+    ]);
   });
   test('extracts checkout total', () => {
     expect(order.checkoutTotal).toBeCloseTo(12.58);
@@ -649,5 +655,58 @@ describe('extractOrder - Uber One delivery waiver (#64)', () => {
   test('does not flag when there is no delivery-fee row at all', async () => {
     const order = await extractOrder(PLATFORM.UBER_EATS, docWith(''));
     expect(order.uberOneDeliveryWaived).toBe(false);
+  });
+});
+
+// The monthly-benefit amount carries NO testid of its own — it renders as an
+// untestidded baseweb tag beside the label, so it has to be read from the row.
+// Credits do carry a value testid. Live shapes, 2026-08-01. The testid the reader
+// used before this (fare-breakdown-charge-badge-membership-benefit) no longer
+// exists on the page at all (#65).
+describe('extractOrder - Uber One entitlements (#65)', () => {
+  const cart = `
+    <div data-testid="cart-summary-panel"></div>
+    <div data-testid="fare-breakdown-charge-badge-total">£20.00</div>
+    <div data-testid="cart-items-list">
+      <li><div data-testid="cart-item-1"><img alt="Sub" /><span>£24.95</span></div></li>
+    </div>`;
+  const docWith = (rows) =>
+    new JSDOM(`<!DOCTYPE html><html><body>${cart}${rows}</body></html>`).window.document;
+
+  const monthlyRow = `<li>
+      <div><div data-testid="fare-breakdown-charge-badge-uber-one-monthly-benefit-label">Uber One monthly benefit</div></div>
+      <span data-baseweb="tag"><svg><title>Uber one</title></svg><span>-£3.00</span></span>
+    </li>`;
+  const creditsRow = `<li>
+      <div><div data-testid="fare-breakdown-charge-badge-uber-one-credits-label">Uber One credits</div></div>
+      <div data-testid="fare-breakdown-charge-badge-uber-one-credits"><span> -£0.55</span></div>
+    </li>`;
+
+  test('reads the monthly benefit from the row when its amount has no testid', async () => {
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(monthlyRow));
+    expect(order.discounts).toEqual([
+      { id: 'uber-one-monthly-benefit', amount: 3.0, label: 'Uber One monthly benefit' },
+    ]);
+  });
+
+  test('reads the credits row from its own value testid', async () => {
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(creditsRow));
+    expect(order.discounts).toEqual([
+      { id: 'uber-one-credits', amount: 0.55, label: 'Uber One credits' },
+    ]);
+  });
+
+  test('captures nothing when neither entitlement is on the cart', async () => {
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(''));
+    expect(order.discounts).toEqual([]);
+  });
+
+  test('ignores a row whose amount cannot be read rather than discounting £0', async () => {
+    const broken = `<li>
+      <div><div data-testid="fare-breakdown-charge-badge-uber-one-monthly-benefit-label">Uber One monthly benefit</div></div>
+      <span data-baseweb="tag"><svg><title>Uber one</title></svg><span>—</span></span>
+    </li>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(broken));
+    expect(order.discounts).toEqual([]);
   });
 });

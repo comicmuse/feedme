@@ -1,5 +1,5 @@
 const { PLATFORM, CHECKOUT_PATTERNS, MSG, JUST_EAT_SMALL_ORDER_THRESHOLD, buildSearchUrl, isAllowedMenuUrl, isMenuPageUrl, getConfig, browser } = require('../shared/constants');
-const { matchItems, computeTotal, estimateUberFees, uberOneWaiverOffer } = require('../shared/matcher');
+const { matchItems, computeTotal, estimateUberFees, uberOneWaiverOffer, uberOneAccountOffers } = require('../shared/matcher');
 const { buildSnapshot } = require('../shared/snapshot');
 const { createScheduler } = require('../shared/pool');
 
@@ -476,6 +476,9 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       // applyOffers decides and the sidebar can explain the £0 (#64).
       const waiver = uberOneWaiverOffer(comparison.order, msg.parsed);
       if (waiver) offers.push(waiver);
+      // The monthly benefit and credits are account-level, so they follow the user
+      // to whichever Uber branch they order from (#65).
+      offers.push(...uberOneAccountOffers(comparison.order));
     }
     const total = computeTotal(matches, deliveryFee, serviceFee, offers, feeOpts);
     branch.status = 'done';

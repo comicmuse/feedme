@@ -340,11 +340,29 @@ async function extractUberEats(doc) {
     parseFloat(deliveryPrices[deliveryPrices.length - 1][1]) === 0 &&
     !!deliveryEl?.querySelector('img[src*="uber_one"]');
 
-  const membershipEl = feeEl('fare-breakdown-charge-badge-membership-benefit');
-  const membershipText = membershipEl?.textContent?.trim() ?? '';
-  const membershipAmount = membershipText
-    ? Math.abs(parsePrice(membershipText))
-    : 0;
+  // Uber One's two entitlements are separate fare rows, and only one of them
+  // labels its amount: `uber-one-credits` has a value testid, while the monthly
+  // benefit renders its amount as an untestidded baseweb tag beside the label, so
+  // it has to be read from the enclosing row (live shapes, 2026-08-01). The
+  // `membership-benefit` testid this used to read no longer exists on the page at
+  // all, so the old capture silently returned nothing. Each row keeps a stable id
+  // so sibling pricing can identify it without matching localised label text (#65).
+  const uberOneDiscount = (key, label) => {
+    const labelEl = feeEl(`fare-breakdown-charge-badge-${key}-label`);
+    if (!labelEl) return null;
+    const valueEl = feeEl(`fare-breakdown-charge-badge-${key}`);
+    // Fall back to the whole row, minus the label, so the untestidded amount is
+    // still found — and so a future testid appearing for it changes nothing.
+    const text = valueEl
+      ? valueEl.textContent ?? ''
+      : (labelEl.closest('li')?.textContent ?? '').replace(labelEl.textContent ?? '', '');
+    if (!/\d/.test(text)) return null; // an unreadable row is skipped, not discounted by £0
+    return { id: key, amount: Math.abs(parsePrice(text)), label };
+  };
+  const discounts = [
+    uberOneDiscount('uber-one-monthly-benefit', 'Uber One monthly benefit'),
+    uberOneDiscount('uber-one-credits', 'Uber One credits'),
+  ].filter((d) => d && d.amount > 0);
 
   return {
     platform: PLATFORM.UBER_EATS,
@@ -355,9 +373,7 @@ async function extractUberEats(doc) {
     deliveryFee: parsePrice(deliveryEl?.textContent),
     uberOneDeliveryWaived,
     serviceFee: parsePrice(feeEl('fare-breakdown-charge-badge-fees')?.textContent),
-    discounts: membershipAmount > 0
-      ? [{ amount: membershipAmount, label: membershipText }]
-      : [],
+    discounts,
     // Actual total from the checkout page (avoids needing per-item prices)
     checkoutTotal: parsePrice(feeEl('fare-breakdown-charge-badge-total')?.textContent),
   };

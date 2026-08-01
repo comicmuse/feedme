@@ -1,5 +1,6 @@
-const { uberCompositionDefaults, uberRemovals } = require('../src/shared/uber-composition');
+const { uberCompositionDefaults, uberRemovals, uberCartItemIds, normalizeTitle } = require('../src/shared/uber-composition');
 const bigMac = require('./fixtures/ubereats-item-bigmac.json');
+const drafts = require('./fixtures/ubereats-draft-orders.json');
 
 describe('uberCompositionDefaults', () => {
   test('finds a "Comes With" group nested under childCustomizationList', () => {
@@ -109,5 +110,58 @@ describe('uberRemovals', () => {
     expect(uberRemovals([], defaults())).toEqual([]);
     expect(uberRemovals(null, defaults())).toEqual([]);
     expect(uberRemovals(row('Sauce'), new Map())).toEqual([]);
+  });
+});
+
+describe('uberCartItemIds', () => {
+  test('indexes every cart line across every draft order by normalised title', () => {
+    const ids = uberCartItemIds(drafts.data.draftOrders);
+    expect([...ids.keys()].sort()).toEqual(['big arch® with bacon', 'big mac®', 'whopper']);
+  });
+
+  test('carries the four ids getMenuItemV1 needs', () => {
+    expect(uberCartItemIds(drafts.data.draftOrders).get('big mac®')).toEqual({
+      storeUuid: '7c0b936e-53cc-4f7b-9558-b41691071f19',
+      sectionUuid: '82a88175-4085-50b2-9ac1-9cfda241af83',
+      subsectionUuid: '6af6e4d6-c531-53d8-bb5f-82109718d392',
+      itemUuid: '436063f7-19ba-5d0f-ba15-137deab02561',
+    });
+  });
+
+  test('the same title in two lines is one entry, not an ambiguity', () => {
+    // Two Big Mac lines with different removals share one item, so the second
+    // occurrence must not knock the entry out.
+    const twice = [{ shoppingCart: { items: [
+      ...drafts.data.draftOrders[0].shoppingCart.items,
+      { ...drafts.data.draftOrders[0].shoppingCart.items[0], shoppingCartItemUuid: 'line-1b' },
+    ] } }];
+    expect(uberCartItemIds(twice).has('big mac®')).toBe(true);
+  });
+
+  test('a title genuinely pointing at two different items is dropped', () => {
+    const conflicting = [{ shoppingCart: { items: [
+      drafts.data.draftOrders[0].shoppingCart.items[0],
+      { ...drafts.data.draftOrders[0].shoppingCart.items[0], uuid: 'different-item-uuid' },
+    ] } }];
+    expect(uberCartItemIds(conflicting).has('big mac®')).toBe(false);
+  });
+
+  test('a line missing any id is skipped rather than half-indexed', () => {
+    const partial = [{ shoppingCart: { items: [
+      { uuid: 'x', storeUuid: 'y', title: 'Half Item' },
+    ] } }];
+    expect(uberCartItemIds(partial).size).toBe(0);
+  });
+
+  test('handles junk input without throwing', () => {
+    expect(uberCartItemIds(null).size).toBe(0);
+    expect(uberCartItemIds([{}]).size).toBe(0);
+  });
+});
+
+describe('normalizeTitle', () => {
+  test('lowercases and collapses whitespace so img alt text matches cart titles', () => {
+    expect(normalizeTitle('  Big   Mac®  ')).toBe('big mac®');
+    expect(normalizeTitle(null)).toBe('');
   });
 });

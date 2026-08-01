@@ -1,0 +1,56 @@
+{
+  "status": "success",
+  "data": {
+    "draftOrders": [
+      {
+        "uuid": "draft-mcdonalds",
+        "storeUuid": "7c0b936e-53cc-4f7b-9558-b41691071f19",
+        "shoppingCart": {
+          "items": [
+            {
+              "shoppingCartItemUuid": "line-1",
+              "uuid": "436063f7-19ba-5d0f-ba15-137deab02561",
+              "storeUuid": "7c0b936e-53cc-4f7b-9558-b41691071f19",
+              "sectionUuid": "82a88175-4085-50b2-9ac1-9cfda241af83",
+              "subsectionUuid": "6af6e4d6-c531-53d8-bb5f-82109718d392",
+              "quantity": 1,
+              "title": "Big Mac®",
+              "price": 589,
+              "customizations": []
+            },
+            {
+              "shoppingCartItemUuid": "line-2",
+              "uuid": "0e7c3532-80b3-5277-a8d5-c5220363445b",
+              "storeUuid": "7c0b936e-53cc-4f7b-9558-b41691071f19",
+              "sectionUuid": "82a88175-4085-50b2-9ac1-9cfda241af83",
+              "subsectionUuid": "6af6e4d6-c531-53d8-bb5f-82109718d392",
+              "quantity": 1,
+              "title": "Big Arch® with Bacon",
+              "price": 1089,
+              "customizations": []
+            }
+          ]
+        }
+      },
+      {
+        "uuid": "draft-other-store",
+        "storeUuid": "8e519a15-5e64-549e-a463-1a0840e33ca7",
+        "shoppingCart": {
+          "items": [
+            {
+              "shoppingCartItemUuid": "line-3",
+              "uuid": "aaaaaaaa-0000-0000-0000-000000000001",
+              "storeUuid": "8e519a15-5e64-549e-a463-1a0840e33ca7",
+              "sectionUuid": "bbbbbbbb-0000-0000-0000-000000000001",
+              "subsectionUuid": "cccccccc-0000-0000-0000-000000000001",
+              "quantity": 2,
+              "title": "Whopper",
+              "price": 799,
+              "customizations": []
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

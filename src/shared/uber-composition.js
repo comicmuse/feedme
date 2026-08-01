@@ -106,4 +106,51 @@ function uberRemovals(compositionRows, defaults) {
   return removals;
 }
 
-module.exports = { uberCompositionDefaults, uberRemovals };
+// The cart line's name comes from the row's <img alt>, the draft order's from
+// its `title` field. Normalise both sides so incidental case/spacing drift
+// between the two doesn't lose the lookup.
+const normalizeTitle = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+const sameIds = (a, b) =>
+  a.storeUuid === b.storeUuid && a.sectionUuid === b.sectionUuid
+  && a.subsectionUuid === b.subsectionUuid && a.itemUuid === b.itemUuid;
+
+/**
+ * Index the ids getMenuItemV1 needs, per cart item, from a
+ * getDraftOrdersByEaterUuidV1 response's `draftOrders` array.
+ *
+ * Keyed by title because composition defaults belong to the *item*, not to the
+ * line's own customisations: two differently-customised Big Mac lines resolve
+ * through one entry. A title that genuinely points at two different items is
+ * dropped rather than tagged with whichever line came first.
+ *
+ * @param {Array<object>} draftOrders
+ * @returns {Map<string, {storeUuid: string, sectionUuid: string, subsectionUuid: string, itemUuid: string}>}
+ */
+function uberCartItemIds(draftOrders) {
+  const byTitle = new Map();
+  const ambiguous = new Set();
+  for (const draft of draftOrders ?? []) {
+    for (const item of draft?.shoppingCart?.items ?? []) {
+      const key = normalizeTitle(item?.title);
+      if (!key || ambiguous.has(key)) continue;
+      const ids = {
+        storeUuid: item.storeUuid,
+        sectionUuid: item.sectionUuid,
+        subsectionUuid: item.subsectionUuid,
+        itemUuid: item.uuid,
+      };
+      if (Object.values(ids).some((v) => !v)) continue;
+      const existing = byTitle.get(key);
+      if (existing == null) {
+        byTitle.set(key, ids);
+      } else if (!sameIds(existing, ids)) {
+        byTitle.delete(key);
+        ambiguous.add(key);
+      }
+    }
+  }
+  return byTitle;
+}
+
+module.exports = { uberCompositionDefaults, uberRemovals, uberCartItemIds, normalizeTitle };

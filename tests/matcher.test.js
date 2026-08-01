@@ -769,6 +769,30 @@ describe('computeTotal — item-level deals', () => {
     ).toBe(0);
   });
 
+  // Uber's BOGOF carries a maxRedemptionCount (e.g. 3): the promotion only frees
+  // that many units however many eligible items are in the basket. Without the cap
+  // a 8-sub basket would claim 4 free subs the real checkout never gives (#15).
+  test('cheapest-free frees no more units than maxRedemptions allows', () => {
+    const matches = [
+      line('Sub', 6.0), line('Sub', 5.5), line('Sub', 5.0), line('Sub', 4.5),
+      line('Sub', 4.0), line('Sub', 3.5), line('Sub', 3.0), line('Sub', 2.5),
+    ];
+    const offers = [
+      { type: 'item-deal', rule: 'cheapest-free', eligibleItems: ['Sub'], quantity: 2, maxRedemptions: 3, description: 'Buy 1, get 1 free' },
+    ];
+    // floor(8/2) = 4 earned, capped at 3 -> the three cheapest (2.50 + 3.00 + 3.50).
+    const result = computeTotal(matches, 0, 0, offers);
+    expect(result.discountTotal).toBeCloseTo(9.0);
+  });
+
+  test('cheapest-free is uncapped when the deal carries no maxRedemptions', () => {
+    const matches = [line('Sub', 6.0), line('Sub', 5.0), line('Sub', 4.0), line('Sub', 3.0)];
+    const offers = [
+      { type: 'item-deal', rule: 'cheapest-free', eligibleItems: ['Sub'], quantity: 2, description: 'BOGOF' },
+    ];
+    expect(computeTotal(matches, 0, 0, offers).discountTotal).toBeCloseTo(7.0);
+  });
+
   test('an item-deal composes with an order-level percentage offer', () => {
     const matches = [line('Sub', 6.0), line('Sub', 6.0)];
     const offers = [

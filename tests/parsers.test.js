@@ -82,6 +82,42 @@ describe('parseUberStore item-level deals (catalog blob)', () => {
     ]);
   });
 
+  // Live Uber BOGOFs cap how many free units one order can claim
+  // (maxRedemptionCount: 3 in the pinned Subway blob). Carrying it through keeps
+  // the engine from freeing a fourth item the real checkout would charge for (#15).
+  test('carries the promotion maxRedemptionCount onto the deal', () => {
+    const m = parseUberStore(uberStoreLd, uberStoreCatalog);
+    const deal = m.offers.find((o) => o.type === 'item-deal');
+    expect(deal.maxRedemptions).toBe(3);
+  });
+
+  test('leaves maxRedemptions unset when the promotion publishes no cap', () => {
+    const ld = { name: 'S', hasMenu: { hasMenuSection: [{ hasMenuItem: [{ name: 'Sub', offers: { price: '5.00' } }] }] } };
+    const catalog = { sections: [{ title: 'Sub', uuid: 'i1', itemPromotion: { buyXGetYItemPromotion: { buyQuantity: 1, getQuantity: 1 } } }] };
+    const deal = parseUberStore(ld, catalog).offers.find((o) => o.type === 'item-deal');
+    expect(deal.maxRedemptions).toBeUndefined();
+  });
+
+  // Items are grouped by identical terms, and the redemption cap is part of the
+  // terms — collapsing a capped and an uncapped promotion into one deal would
+  // apply the wrong cap to half its eligible items.
+  test('does not group promotions that share buy/get but differ in cap', () => {
+    const ld = { name: 'S', hasMenu: { hasMenuSection: [{ hasMenuItem: [
+      { name: 'Sub', offers: { price: '5.00' } },
+      { name: 'Wrap', offers: { price: '4.00' } },
+    ] }] } };
+    const catalog = { sections: [
+      { title: 'Sub', uuid: 'i1', itemPromotion: { buyXGetYItemPromotion: { buyQuantity: 1, getQuantity: 1, maxRedemptionCount: 3 } } },
+      { title: 'Wrap', uuid: 'i2', itemPromotion: { buyXGetYItemPromotion: { buyQuantity: 1, getQuantity: 1, maxRedemptionCount: 1 } } },
+    ] };
+    const deals = parseUberStore(ld, catalog).offers.filter((o) => o.type === 'item-deal');
+    expect(deals).toHaveLength(2);
+    expect(deals.map((d) => [d.eligibleItems, d.maxRedemptions])).toEqual([
+      [['Sub'], 3],
+      [['Wrap'], 1],
+    ]);
+  });
+
   test('ignores items that carry no itemPromotion', () => {
     const m = parseUberStore(uberStoreLd, uberStoreCatalog);
     const deals = m.offers.filter((o) => o.type === 'item-deal');
@@ -103,6 +139,21 @@ describe('Uber store buy-one-get-one deal applied end-to-end', () => {
     const result = computeTotal(matches, 0, 0, parsed.offers);
     expect(result.discountTotal).toBeCloseTo(3.89);
     expect(result.appliedDeals).toHaveLength(1);
+  });
+
+  // Parse -> match -> computeTotal with the pinned live blob: 8 eligible units
+  // earn 4 free, but the blob's maxRedemptionCount of 3 bounds it (#15).
+  test('honours the blob maxRedemptionCount over a large eligible cart', () => {
+    const matches = matchItems(
+      [
+        { name: 'Chipotle Cheesy Bites - 5 pieces', quantity: 4 },
+        { name: 'Nacho Chicken Bites - 6 Bites', quantity: 4 },
+      ],
+      parsed.items
+    );
+    const result = computeTotal(matches, 0, 0, parsed.offers);
+    // The three cheapest units are the £3.89 bites: 3 x 3.89, not 4 x 3.89.
+    expect(result.discountTotal).toBeCloseTo(11.67);
   });
 
   test('does not discount when only one eligible unit is in the cart', () => {

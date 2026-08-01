@@ -313,7 +313,11 @@ function eligibleUnitPrices(offer, matches) {
 function itemDealDiscount(offer, matches) {
   const units = eligibleUnitPrices(offer, matches);
   if (offer.rule === 'cheapest-free') {
-    const freeCount = Math.floor(units.length / (offer.quantity || 2));
+    // Uber publishes a maxRedemptionCount on its BOGOFs: the promotion frees at
+    // most that many units per order, however many eligible items are bought.
+    // Platforms that publish no cap leave maxRedemptions unset (uncapped).
+    const earned = Math.floor(units.length / (offer.quantity || 2));
+    const freeCount = Math.min(earned, offer.maxRedemptions ?? Infinity);
     if (freeCount <= 0) return 0;
     return units
       .slice()

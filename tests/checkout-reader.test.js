@@ -60,6 +60,265 @@ describe('extractOrder - Uber Eats', () => {
   test('extracts checkout total', () => {
     expect(order.checkoutTotal).toBeCloseTo(12.58);
   });
+
+  // Issue #33: an ingredient the user removed on Uber shows only as an absence
+  // from the "Comes With" list. The defaults come from the per-item API, so the
+  // capture fetches them and emits the difference as a decline the target's
+  // Remove group can satisfy.
+  const bigMacDetail = require('./fixtures/ubereats-item-bigmac.json');
+  const draftOrders = require('./fixtures/ubereats-draft-orders.json');
+
+  const compositionDom = (keptList) => new JSDOM(`<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£5.89</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Big Mac®" />
+          <span data-testid="rich-text">Big Mac® Comes With:</span><span data-testid="rich-text">${keptList}</span>
+          <span>£5.89</span>
+        </div></li>
+      </div></body></html>`);
+
+  // Two composition lines for different items: one call per distinct item.
+  const twoItemCompositionDom = (secondName) => new JSDOM(`<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£11.78</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Big Mac®" />
+          <span data-testid="rich-text">Big Mac® Comes With:</span><span data-testid="rich-text">Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun</span>
+          <span>£5.89</span>
+        </div></li>
+        <li><div data-testid="cart-item-2">
+          <img alt="${secondName}" />
+          <span data-testid="rich-text">${secondName} Comes With:</span><span data-testid="rich-text">Sauce, Bun</span>
+          <span>£5.89</span>
+        </div></li>
+      </div></body></html>`);
+
+  const okJson = (payload) => Promise.resolve({ ok: true, json: () => Promise.resolve(payload) });
+
+  const stubUberApis = (dom) => {
+    const calls = [];
+    dom.window.fetch = (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body), credentials: init.credentials });
+      if (url.includes('getDraftOrdersByEaterUuidV1')) return okJson(draftOrders);
+      if (url.includes('getMenuItemV1')) return okJson(bigMacDetail);
+      return Promise.reject(new Error(`unexpected ${url}`));
+    };
+    return calls;
+  };
+
+  test('a removed ingredient becomes a "No X" decline option', async () => {
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    stubUberApis(dom);
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options).toEqual([
+      { group: 'Remove', name: 'No Pickles', price: 0 },
+    ]);
+  });
+
+  test('the composition row itself is still excluded from options', async () => {
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    stubUberApis(dom);
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options.some((o) => /Comes With/i.test(o.group))).toBe(false);
+  });
+
+  test('untouched defaults produce no Remove selections', async () => {
+    const dom = compositionDom('Sauce, Pickles, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    stubUberApis(dom);
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options).toEqual([]);
+  });
+
+  test('the item detail is requested with the ids from the draft order', async () => {
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    const calls = stubUberApis(dom);
+    await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    const itemCall = calls.find((c) => c.url.includes('getMenuItemV1'));
+    expect(itemCall.body).toMatchObject({
+      itemRequestType: 'ITEM',
+      storeUuid: '7c0b936e-53cc-4f7b-9558-b41691071f19',
+      sectionUuid: '82a88175-4085-50b2-9ac1-9cfda241af83',
+      subsectionUuid: '6af6e4d6-c531-53d8-bb5f-82109718d392',
+      menuItemUuid: '436063f7-19ba-5d0f-ba15-137deab02561',
+    });
+  });
+
+  test('a failing fetch leaves the capture exactly as it was (no removals, no throw)', async () => {
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    dom.window.fetch = () => Promise.reject(new Error('offline'));
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options).toEqual([]);
+    expect(order.items[0].name).toBe('Big Mac®');
+  });
+
+  test('a non-200 response yields no removals', async () => {
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    dom.window.fetch = () => Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options).toEqual([]);
+  });
+
+  test('no composition row means no network call at all', async () => {
+    const dom = new JSDOM(`<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£9.99</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Whopper" />
+          <span data-testid="rich-text">Choose Drink:</span><span data-testid="rich-text">Coke</span>
+          <span>£9.99</span>
+        </div></li>
+      </div></body></html>`);
+    let called = false;
+    dom.window.fetch = () => { called = true; return Promise.reject(new Error('should not fetch')); };
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(called).toBe(false);
+    expect(order.items[0].options).toEqual([{ group: 'Choose Drink', name: 'Coke', price: 0 }]);
+  });
+
+  test('internal composition rows never leak onto the returned item', async () => {
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    stubUberApis(dom);
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(Object.keys(order.items[0]).sort()).toEqual(
+      ['name', 'options', 'optionsTotal', 'quantity', 'unitPrice'].sort()
+    );
+  });
+
+  test('a fetch that throws synchronously does not reject the capture', async () => {
+    // The page's fetch is called unbound in Chrome, which throws "Illegal
+    // invocation" rather than returning a rejected promise (#33 review).
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    dom.window.fetch = () => { throw new TypeError('Illegal invocation'); };
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options).toEqual([]);
+  });
+
+  test('a drifted response shape yields no removals instead of throwing', async () => {
+    // `??` guards null/undefined but not a wrong TYPE: customizationsList as a
+    // number would make the for…of raise "not iterable".
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    dom.window.fetch = (url) => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve(
+        url.includes('getDraftOrdersByEaterUuidV1')
+          ? draftOrders
+          : { data: { customizationsList: 42 } }
+      ),
+    });
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options).toEqual([]);
+  });
+
+  test('the authenticated POST carries the page session cookie explicitly', async () => {
+    // A content script's fetch defaults to credentials: 'same-origin', which can
+    // be treated as extension-initiated and drop the cookie — the drafts call
+    // then 401s and the feature dies silently in Chrome only (#33 review).
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    const calls = stubUberApis(dom);
+    await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((c) => c.credentials === 'include')).toBe(true);
+  });
+
+  test('two lines of the same item fetch its detail exactly once', async () => {
+    // Both lines resolve through one cache entry — and a cached null is not
+    // retried either, which is what bounds the call count on failure (#33 review).
+    const dom = twoItemCompositionDom('Big Mac®');
+    const calls = stubUberApis(dom);
+    await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(calls.filter((c) => c.url.includes('getMenuItemV1'))).toHaveLength(1);
+  });
+
+  test('a stale draft holding the same item title does not kill the lookup', async () => {
+    // getDraftOrdersByEaterUuidV1 returns EVERY open cart. Indexing them all made
+    // "Big Mac®" ambiguous across stores and silently dropped the feature; the
+    // captured cart's names must pick the one draft that covers them (#33 review).
+    const stale = {
+      data: {
+        draftOrders: [
+          { uuid: 'draft-stale', shoppingCart: { items: [{
+            ...draftOrders.data.draftOrders[0].shoppingCart.items[0],
+            uuid: 'stale-item-uuid',
+            storeUuid: 'stale-store-uuid',
+          }] } },
+          draftOrders.data.draftOrders[0],
+        ],
+      },
+    };
+    const dom = twoItemCompositionDom('Big Arch® with Bacon');
+    const calls = [];
+    dom.window.fetch = (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body) });
+      if (url.includes('getDraftOrdersByEaterUuidV1')) return okJson(stale);
+      return okJson(bigMacDetail);
+    };
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options).toEqual([{ group: 'Remove', name: 'No Pickles', price: 0 }]);
+    expect(calls.find((c) => c.url.includes('getMenuItemV1')).body.menuItemUuid)
+      .toBe('436063f7-19ba-5d0f-ba15-137deab02561');
+  });
+
+  test('one shared deadline bounds the whole enrichment, not each item', async () => {
+    // Item fetches run in sequence, so a per-call timeout makes the worst case
+    // 4s x (1 + N) of blocked first render. One deadline for the lot keeps the
+    // added latency at UBER_API_TIMEOUT regardless of item count (#33 review).
+    jest.useFakeTimers();
+    try {
+      const dom = twoItemCompositionDom('Big Arch® with Bacon');
+      dom.window.fetch = (url) => (url.includes('getDraftOrdersByEaterUuidV1')
+        ? okJson(draftOrders)
+        : new Promise(() => {})); // item detail never answers
+      let settled = false;
+      const pending = extractOrder(PLATFORM.UBER_EATS, dom.window.document)
+        .then((o) => { settled = true; return o; });
+      await jest.advanceTimersByTimeAsync(4100); // UBER_API_TIMEOUT + slack
+      expect(settled).toBe(true);
+      const order = await pending;
+      expect(order.items[0].options).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  describe('give-up logging', () => {
+    // The capture has no other visibility during live testing: a 401 on the
+    // drafts call, an unresolvable item title and "nothing was removed" are
+    // otherwise indistinguishable (AGENTS.md keeps the [FeedMe …] logging).
+    let info;
+    beforeEach(() => { info = jest.spyOn(console, 'info').mockImplementation(() => {}); });
+    afterEach(() => { info.mockRestore(); });
+
+    const logged = () => info.mock.calls.map((c) => c.join(' ')).join('\n');
+
+    test('logs when the draft-orders call comes back empty', async () => {
+      const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+      dom.window.fetch = () => Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+      await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+      expect(logged()).toMatch(/\[FeedMe checkout\].*draft/i);
+    });
+
+    test('logs the item whose title no draft line resolves', async () => {
+      const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+      dom.window.fetch = (url) => (url.includes('getDraftOrdersByEaterUuidV1')
+        ? okJson({ data: { draftOrders: [] } })
+        : okJson(bigMacDetail));
+      await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+      expect(logged()).toMatch(/\[FeedMe checkout\].*Big Mac®/);
+    });
+
+    test('logs the item whose detail call comes back empty', async () => {
+      const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+      dom.window.fetch = (url) => (url.includes('getDraftOrdersByEaterUuidV1')
+        ? okJson(draftOrders)
+        : Promise.resolve({ ok: false, json: () => Promise.resolve({}) }));
+      await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+      expect(logged()).toMatch(/\[FeedMe checkout\].*detail.*Big Mac®/i);
+    });
+  });
 });
 
 describe('extractOrder - Uber Eats quantities (real DOM)', () => {

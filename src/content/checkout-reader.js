@@ -1,4 +1,117 @@
 const { PLATFORM, MSG, platformFromUrl } = require('../shared/constants');
+const {
+  uberCompositionDefaults,
+  uberRemovals,
+  uberCartItemIds,
+  normalizeTitle,
+} = require('../shared/uber-composition');
+
+const UBER_DRAFTS_API = '/_p/api/getDraftOrdersByEaterUuidV1?localeCode=gb';
+const UBER_ITEM_API = '/_p/api/getMenuItemV1?localeCode=gb';
+// The capture blocks the sidebar's first render, so a hung request must not hold
+// it open — a timed-out call is treated exactly like a failed one. This is the
+// budget for the WHOLE enrichment, not per call: the item fetches run in
+// sequence, so a per-call timeout would put the worst case at 4s x (1 + items).
+// Every call races the time remaining against one deadline set at the start.
+const UBER_API_TIMEOUT = 4000;
+
+// Same-origin POST to one of Uber's own web APIs, abandoned at `deadline`
+// (epoch ms). Resolves the parsed body, or null on any failure (non-200,
+// network error, timeout, unparseable). Never rejects: the capture must not
+// throw, and no removals is a correct answer.
+function uberPost(fetchFn, url, body, deadline) {
+  // Started inside a resolved promise so a SYNCHRONOUS throw from fetchFn
+  // (e.g. Chrome's "Illegal invocation" when fetch is called unbound) lands in
+  // the .catch below instead of escaping the chain outright.
+  const request = Promise.resolve()
+    .then(() => fetchFn(url, {
+      method: 'POST',
+      // The drafts endpoint is authenticated. A content script's fetch defaults
+      // to 'same-origin', which Chrome may treat as extension-initiated and
+      // strip the session cookie from — be explicit (#33 review).
+      credentials: 'include',
+      headers: { 'content-type': 'application/json', 'x-csrf-token': 'x' },
+      body: JSON.stringify(body),
+    }))
+    .then((r) => (r && r.ok ? r.json() : null))
+    .catch(() => null);
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), Math.max(0, deadline - Date.now()));
+  });
+  return Promise.race([request, timeout]).then((result) => {
+    clearTimeout(timer);
+    return result;
+  });
+}
+
+// Uber's cart lists only the KEPT defaults of a composition group, so an
+// ingredient the user removed is visible only as an absence. Fetch the item's
+// full defaults and append the difference as decline options the target's
+// "Remove" group can satisfy (#33). Bounded: one draft-order call for the whole
+// cart, then one item call per distinct composition-bearing item. Any failure
+// leaves the items untouched, which is the pre-#33 behaviour.
+async function addUberRemovals(doc, items) {
+  const needing = items.filter((i) => i._compositionRows.length);
+  // The page's own fetch, with deliberately no global-fetch fallback (that would
+  // fire real requests in tests). Bound to the window: an unbound page `fetch`
+  // throws "Illegal invocation" in Chrome, and a synchronous throw would escape
+  // the promise chain in uberPost.
+  const rawFetch = doc.defaultView?.fetch;
+  if (!needing.length || typeof rawFetch !== 'function') return;
+  const fetchFn = rawFetch.bind(doc.defaultView);
+  const deadline = Date.now() + UBER_API_TIMEOUT;
+  // The capture must never throw: a drifted response shape (wrong type where
+  // an array/object was expected) can raise downstream in uberCompositionDefaults
+  // / uberRemovals just as easily as a network failure can, and no removals is
+  // the correct answer either way — so the whole enrichment is best-effort.
+  try {
+    const drafts = await uberPost(fetchFn, UBER_DRAFTS_API, {}, deadline);
+    if (!drafts) {
+      console.info('[FeedMe checkout] no draft-order response — skipping Uber removals');
+      return;
+    }
+    // The response holds every cart the user has open, so the captured item
+    // names are what pick this store's draft out of it.
+    const idsByTitle = uberCartItemIds(drafts?.data?.draftOrders, items.map((i) => i.name));
+    const detailByItem = new Map();
+    for (const item of needing) {
+      const ids = idsByTitle.get(normalizeTitle(item.name));
+      if (!ids) {
+        console.info('[FeedMe checkout] no draft-order ids for', JSON.stringify(item.name));
+        continue;
+      }
+      if (!detailByItem.has(ids.itemUuid)) {
+        detailByItem.set(
+          ids.itemUuid,
+          await uberPost(fetchFn, UBER_ITEM_API, {
+            itemRequestType: 'ITEM',
+            storeUuid: ids.storeUuid,
+            sectionUuid: ids.sectionUuid,
+            subsectionUuid: ids.subsectionUuid,
+            menuItemUuid: ids.itemUuid,
+            isEditFlow: false,
+            cbType: 'EATER_ENDORSED',
+            includeCheaperAlternatives: false,
+          }, deadline)
+        );
+      }
+      const detail = detailByItem.get(ids.itemUuid);
+      if (!detail) {
+        console.info('[FeedMe checkout] no item detail for', JSON.stringify(item.name));
+        continue;
+      }
+      const removals = uberRemovals(item._compositionRows, uberCompositionDefaults(detail));
+      if (removals.length) {
+        console.info('[FeedMe checkout] removals on', JSON.stringify(item.name), '—',
+          removals.map((r) => r.name).join(', '));
+        item.options.push(...removals);
+      }
+    }
+  } catch (_) {
+    // Drifted shape somewhere downstream — leave items untouched.
+  }
+}
 
 function parsePrice(text) {
   // If multiple prices exist (e.g. "£0.99  £0.00" with a strikethrough), take the last one
@@ -179,10 +292,16 @@ async function extractUberEats(doc) {
             unitPrice: quantity > 0 ? lineTotal / quantity : lineTotal,
             options,
             optionsTotal,
+            // The dropped composition rows, kept only long enough for
+            // addUberRemovals to diff them; stripped before the order is sent.
+            _compositionRows: allOptions.filter((o) => /comes with$/i.test(o.group)),
           };
         })
         .filter((i) => i.name)
     : [];
+
+  await addUberRemovals(doc, items);
+  for (const item of items) delete item._compositionRows;
 
   const addressText =
     doc.querySelector('[data-testid="checkout-delivery-address-section"]')?.textContent ?? '';

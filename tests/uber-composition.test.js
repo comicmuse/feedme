@@ -34,8 +34,9 @@ describe('uberCompositionDefaults', () => {
   });
 
   test('merges the same group title repeated across meal branches', () => {
-    // The fixture carries "Big Mac® Comes With" twice (Large meal + plain item)
-    // with identical options; one merged entry is the right answer.
+    // This fixture is trimmed to two of the live response's size branches, and
+    // so carries "Big Mac® Comes With" twice (Large meal + plain item) with
+    // identical options; one merged entry is the right answer.
     expect(uberCompositionDefaults(bigMac).get('Big Mac® Comes With').size).toBe(7);
   });
 
@@ -104,6 +105,60 @@ describe('uberRemovals', () => {
   test('an unknown group yields nothing rather than declining every default', () => {
     const rows = [{ group: 'Side Salad Comes With', name: 'Cucumber, Tomato' }];
     expect(uberRemovals(rows, defaults())).toEqual([]);
+  });
+
+  test('a kept list split across two rows is one list, not two partial ones', () => {
+    // The cart parser can emit more than one value span for a single group
+    // label, so the kept defaults arrive split. Diffing each half against the
+    // full defaults would decline every ingredient missing from that half —
+    // seven bogus removals for an item the user never touched (#33 review).
+    const rows = [
+      { group: 'Big Mac® Comes With', name: 'Sauce, Pickles' },
+      { group: 'Big Mac® Comes With', name: 'Lettuce, Onions, Cheese, 2 Beef Patty, Bun' },
+    ];
+    expect(uberRemovals(rows, defaults())).toEqual([]);
+  });
+
+  test('a split kept list still reports a genuine removal exactly once', () => {
+    const rows = [
+      { group: 'Big Mac® Comes With', name: 'Sauce' },
+      { group: 'Big Mac® Comes With', name: 'Lettuce, Onions, Cheese, 2 Beef Patty, Bun' },
+    ];
+    expect(uberRemovals(rows, defaults())).toEqual([
+      { group: 'Remove', name: 'No Pickles', price: 0 },
+    ]);
+  });
+
+  test('a kept entry matching no default silences that whole group', () => {
+    // "Pickle" vs the catalogue's "Pickles" means the two sides do not name
+    // ingredients identically, so every absence is suspect. Prefer honest
+    // incompleteness (no removals) over inventing "No Pickles" (#33 review).
+    const rows = [{
+      group: 'Big Mac® Comes With',
+      name: 'Sauce, Pickle, Lettuce, Onions, Cheese, 2 Beef Patty, Bun',
+    }];
+    expect(uberRemovals(rows, defaults())).toEqual([]);
+  });
+
+  test('an unrecognised entry silences only its own group', () => {
+    const defs = new Map([
+      ['Burger Comes With', new Map([['Cheese', 1], ['Pickles', 1]])],
+      ['Wrap Comes With', new Map([['Lettuce', 1], ['Mayo', 1]])],
+    ]);
+    const rows = [
+      { group: 'Burger Comes With', name: 'Cheese, Gherkin' },
+      { group: 'Wrap Comes With', name: 'Lettuce' },
+    ];
+    expect(uberRemovals(rows, defs)).toEqual([
+      { group: 'Remove', name: 'No Mayo', price: 0 },
+    ]);
+  });
+
+  test('group titles are matched after case and whitespace normalisation', () => {
+    const defs = new Map([['Burger  Comes With', new Map([['Cheese', 1], ['Pickles', 1]])]]);
+    expect(uberRemovals([{ group: 'burger comes with', name: 'Cheese' }], defs)).toEqual([
+      { group: 'Remove', name: 'No Pickles', price: 0 },
+    ]);
   });
 
   test('handles empty and junk input without throwing', () => {

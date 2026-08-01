@@ -58,21 +58,21 @@ function uberCompositionDefaults(itemDetail) {
 }
 
 // The cart packs the kept defaults into one comma-joined value, each entry
-// optionally prefixed with its quantity ("2 Beef Patty"). Strip the prefix so
-// the name matches the catalogue option it came from.
-function keptNames(value) {
-  const kept = new Set();
+// optionally prefixed with its quantity ("2 Beef Patty"). Returns one array of
+// candidate readings per entry, so a caller can tell "this entry matched the
+// catalogue somehow" from "this entry matched nothing at all".
+function keptEntries(value) {
+  const entries = [];
   for (const part of String(value ?? '').split(',')) {
     const entry = part.trim();
     if (!entry) continue;
     // Entries carry the kept quantity as a prefix ("2 Beef Patty"), but an
     // option's own name may legitimately start with a digit ("4 Chicken
     // McNuggets®"), so record both readings and let an exact catalogue match win.
-    kept.add(entry);
     const stripped = entry.replace(/^\d+\s+/, '');
-    if (stripped) kept.add(stripped);
+    entries.push(stripped && stripped !== entry ? [entry, stripped] : [entry]);
   }
-  return kept;
+  return entries;
 }
 
 /**
@@ -80,25 +80,66 @@ function keptNames(value) {
  *
  * A default missing from the kept list is an ingredient the user removed on
  * Uber. It's emitted as a decline in a synthetic "Remove" group: `priceOptions`
- * already treats a name matching /^(no|none|without)\b/ as a decline, so it can
- * only resolve to another decline inside the target's own Remove-style group,
- * and clean-skips when the target has no such group. Carrying the source group
- * name instead would fuzzy-match nothing on any target.
+ * treats a name matching /^(no|none|without)\b/ as a decline, and a decline's
+ * candidate pool locks to whichever target group "Remove" fuzzy-matched — it
+ * never takes the widening retry that other options get (matcher.js:105-132).
+ * Wherever it lands it can only pair with another decline, and finding none is
+ * clean: omitting the selection IS the decline. Carrying the source group name
+ * ("Big Mac® Comes With") instead would fuzzy-match nothing on any target.
  *
  * A quantity that was reduced but not to zero (2 patties -> 1) emits nothing:
  * no target platform models a partial reduction, so there is nothing honest to
  * put in the plan.
+ *
+ * Two guards keep a naming mismatch from removing food the user asked for:
+ * the kept entries of one group are unioned across rows before diffing (the
+ * cart parser can split one group's value over several spans), and a group with
+ * any kept entry that matches no default is dropped whole — if the two sides
+ * don't name ingredients identically, every absence is suspect.
  *
  * @param {Array<{group: string, name: string}>} compositionRows cart "Comes With" rows
  * @param {Map<string, Map<string, number>>} defaults from uberCompositionDefaults
  * @returns {Array<{group: string, name: string, price: number}>}
  */
 function uberRemovals(compositionRows, defaults) {
-  const removals = [];
+  // Item titles already normalise on both sides of the lookup; group titles are
+  // rendered by the cart and the API independently too, so key them the same way.
+  const defaultsByGroup = new Map();
+  const clashing = new Set();
+  for (const [title, groupDefaults] of defaults ?? []) {
+    const key = normalizeTitle(title);
+    if (!key || clashing.has(key)) continue;
+    const existing = defaultsByGroup.get(key);
+    if (existing == null) {
+      defaultsByGroup.set(key, groupDefaults);
+    } else if (!sameDefaults(existing, groupDefaults)) {
+      // Same group under two spellings with different defaults: no basis to pick.
+      defaultsByGroup.delete(key);
+      clashing.add(key);
+    }
+  }
+
+  // One group's kept list may arrive as several rows; union them before diffing.
+  const keptByGroup = new Map();
   for (const row of compositionRows ?? []) {
-    const groupDefaults = defaults?.get(String(row?.group ?? '').trim());
-    if (!groupDefaults) continue;
-    const kept = keptNames(row?.name);
+    const key = normalizeTitle(row?.group);
+    if (!key || !defaultsByGroup.has(key)) continue;
+    const entries = keptByGroup.get(key) ?? [];
+    entries.push(...keptEntries(row?.name));
+    keptByGroup.set(key, entries);
+  }
+
+  const removals = [];
+  for (const [key, entries] of keptByGroup) {
+    const groupDefaults = defaultsByGroup.get(key);
+    const kept = new Set();
+    let unrecognised = false;
+    for (const readings of entries) {
+      const known = readings.filter((r) => groupDefaults.has(r));
+      if (!known.length) { unrecognised = true; break; }
+      for (const name of known) kept.add(name);
+    }
+    if (unrecognised) continue;
     for (const name of groupDefaults.keys()) {
       if (!kept.has(name)) removals.push({ group: 'Remove', name: `No ${name}`, price: 0 });
     }

@@ -57,4 +57,47 @@ function uberCompositionDefaults(itemDetail) {
   return byGroup;
 }
 
-module.exports = { uberCompositionDefaults };
+// The cart packs the kept defaults into one comma-joined value, each entry
+// optionally prefixed with its quantity ("2 Beef Patty"). Strip the prefix so
+// the name matches the catalogue option it came from.
+function keptNames(value) {
+  const kept = new Set();
+  for (const part of String(value ?? '').split(',')) {
+    const name = part.trim().replace(/^\d+\s+/, '');
+    if (name) kept.add(name);
+  }
+  return kept;
+}
+
+/**
+ * Diff the cart's kept composition against the item's defaults.
+ *
+ * A default missing from the kept list is an ingredient the user removed on
+ * Uber. It's emitted as a decline in a synthetic "Remove" group: `priceOptions`
+ * already treats a name matching /^(no|none|without)\b/ as a decline, so it can
+ * only resolve to another decline inside the target's own Remove-style group,
+ * and clean-skips when the target has no such group. Carrying the source group
+ * name instead would fuzzy-match nothing on any target.
+ *
+ * A quantity that was reduced but not to zero (2 patties -> 1) emits nothing:
+ * no target platform models a partial reduction, so there is nothing honest to
+ * put in the plan.
+ *
+ * @param {Array<{group: string, name: string}>} compositionRows cart "Comes With" rows
+ * @param {Map<string, Map<string, number>>} defaults from uberCompositionDefaults
+ * @returns {Array<{group: string, name: string, price: number}>}
+ */
+function uberRemovals(compositionRows, defaults) {
+  const removals = [];
+  for (const row of compositionRows ?? []) {
+    const groupDefaults = defaults?.get(String(row?.group ?? '').trim());
+    if (!groupDefaults) continue;
+    const kept = keptNames(row?.name);
+    for (const name of groupDefaults.keys()) {
+      if (!kept.has(name)) removals.push({ group: 'Remove', name: `No ${name}`, price: 0 });
+    }
+  }
+  return removals;
+}
+
+module.exports = { uberCompositionDefaults, uberRemovals };

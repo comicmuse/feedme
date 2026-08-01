@@ -1,4 +1,4 @@
-const { matchItems, computeTotal, estimateUberFees, uberOneWaiverOffer } = require('../src/shared/matcher');
+const { matchItems, computeTotal, estimateUberFees, uberOneWaiverOffer, uberOneAccountOffers } = require('../src/shared/matcher');
 
 // Uber never publishes the basket minimum its £0-delivery benefit requires, so the
 // waiver is expressed as a bound rather than a guessed constant: the source cart was
@@ -17,6 +17,48 @@ describe('computeTotal delivery-fee provenance', () => {
 
   test('reports an exact delivery fee as not estimated', () => {
     expect(computeTotal(basket, 2.79, 0, []).deliveryFeeEstimated).toBe(false);
+  });
+});
+
+// Uber One's monthly benefit and credits are account entitlements, so they apply to
+// whichever Uber branch the user ends up ordering from — not just the captured one.
+// They shift every Uber branch by the same constant (so they can't reorder Uber
+// branches among themselves) but Just Eat and Deliveroo get nothing, so omitting
+// them overstates every Uber total against its rivals (#65).
+describe('uberOneAccountOffers', () => {
+  const order = {
+    items: [{ unitPrice: 8, quantity: 2 }],
+    deliveryFee: 0, serviceFee: 2, checkoutTotal: 18,
+    discounts: [
+      { id: 'uber-one-monthly-benefit', amount: 3.0, label: 'Uber One monthly benefit' },
+      { id: 'uber-one-credits', amount: 0.55, label: 'Uber One credits' },
+    ],
+  };
+
+  test('turns each captured entitlement into a discount offer', () => {
+    expect(uberOneAccountOffers(order)).toEqual([
+      { amount: 3.0, minSpend: 16, description: 'Uber One monthly benefit' },
+      { amount: 0.55, minSpend: 16, description: 'Uber One credits' },
+    ]);
+  });
+
+  test('ignores discounts that are not Uber One entitlements', () => {
+    const withPromo = { ...order, discounts: [{ id: 'some-store-promo', amount: 5, label: 'Store promo' }] };
+    expect(uberOneAccountOffers(withPromo)).toEqual([]);
+  });
+
+  test('no entitlements captured means no offers', () => {
+    expect(uberOneAccountOffers({ ...order, discounts: [] })).toEqual([]);
+  });
+
+  // Bounded exactly like the delivery waiver (#64): the entitlements are known to
+  // have applied at the captured cart's subtotal, and Uber publishes no minimum, so
+  // a smaller basket can't be assumed to earn them.
+  test('applies at or above the captured subtotal, not below it', () => {
+    const offers = uberOneAccountOffers(order);
+    const line = (unitPrice) => ({ referenceItem: { quantity: 1 }, platformItem: { name: 'Sub', unitPrice }, matched: true });
+    expect(computeTotal([line(16)], 0, 0, offers).discountTotal).toBeCloseTo(3.55);
+    expect(computeTotal([line(12)], 0, 0, offers).discountTotal).toBe(0);
   });
 });
 

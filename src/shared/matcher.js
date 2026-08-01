@@ -435,6 +435,23 @@ function uberOrderSubtotal(order) {
 // bound simply keeps its real fee rather than claiming an unproven saving.
 // Returns null unless the member's waiver and the branch's eligibility are BOTH
 // established (#64).
+// Uber One entitlements captured from the cart, as offers other Uber branches can
+// carry. They are account-level, so they apply to whichever Uber branch the user
+// actually orders from — and since Just Eat and Deliveroo get nothing, leaving them
+// off overstates every Uber total against its rivals. They shift all Uber branches
+// by the same constant, so they cannot reorder Uber branches among themselves.
+// Bounded like the delivery waiver: they demonstrably applied at the captured
+// cart's subtotal, and Uber publishes no minimum, so a smaller basket isn't assumed
+// to earn them (#65).
+const UBER_ONE_DISCOUNT_IDS = ['uber-one-monthly-benefit', 'uber-one-credits'];
+
+function uberOneAccountOffers(order) {
+  const minSpend = uberOrderSubtotal(order);
+  return (order?.discounts ?? [])
+    .filter((d) => UBER_ONE_DISCOUNT_IDS.includes(d.id) && d.amount > 0)
+    .map((d) => ({ amount: d.amount, minSpend, description: d.label }));
+}
+
 function uberOneWaiverOffer(order, parsed) {
   if (!order?.uberOneDeliveryWaived || !parsed?.uberOneFreeDelivery) return null;
   return {
@@ -459,4 +476,4 @@ function estimateUberFees(order) {
   };
 }
 
-module.exports = { matchItems, computeTotal, estimateUberFees, uberOneWaiverOffer };
+module.exports = { matchItems, computeTotal, estimateUberFees, uberOneWaiverOffer, uberOneAccountOffers };

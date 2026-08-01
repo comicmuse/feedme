@@ -63,8 +63,14 @@ function uberCompositionDefaults(itemDetail) {
 function keptNames(value) {
   const kept = new Set();
   for (const part of String(value ?? '').split(',')) {
-    const name = part.trim().replace(/^\d+\s+/, '');
-    if (name) kept.add(name);
+    const entry = part.trim();
+    if (!entry) continue;
+    // Entries carry the kept quantity as a prefix ("2 Beef Patty"), but an
+    // option's own name may legitimately start with a digit ("4 Chicken
+    // McNuggets®"), so record both readings and let an exact catalogue match win.
+    kept.add(entry);
+    const stripped = entry.replace(/^\d+\s+/, '');
+    if (stripped) kept.add(stripped);
   }
   return kept;
 }

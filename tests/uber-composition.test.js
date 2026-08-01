@@ -80,11 +80,18 @@ describe('uberRemovals', () => {
     ]);
   });
 
-  test('a quantity prefix is stripped when matching ("2 Beef Patty")', () => {
-    // Without stripping, "2 Beef Patty" wouldn't match the default named
-    // "Beef Patty" and every Big Mac would claim the patties were removed.
-    const kept = 'Sauce, Pickles, Lettuce, Onions, Cheese, 2 Beef Patty, Bun';
-    expect(uberRemovals(row(kept), defaults())).toEqual([]);
+  test('a quantity prefix is stripped so "2 Beef Patty" matches the "Beef Patty" default', () => {
+    // Without stripping, the kept entry would not match and the patties would
+    // be reported as removed. This is the only test that isolates that step.
+    const defs = new Map([['Burger Comes With', new Map([['Beef Patty', 2]])]]);
+    expect(uberRemovals([{ group: 'Burger Comes With', name: '2 Beef Patty' }], defs)).toEqual([]);
+  });
+
+  test('a default whose own name starts with a digit still matches itself', () => {
+    // "4 Chicken McNuggets®" is a real Uber option title: stripping alone would
+    // turn it into "Chicken McNuggets®", miss the default, and invent a removal.
+    const defs = new Map([['Meal Comes With', new Map([['4 Chicken McNuggets®', 1]])]]);
+    expect(uberRemovals([{ group: 'Meal Comes With', name: '4 Chicken McNuggets®' }], defs)).toEqual([]);
   });
 
   test('a quantity reduced but not to zero emits nothing (no target models it)', () => {

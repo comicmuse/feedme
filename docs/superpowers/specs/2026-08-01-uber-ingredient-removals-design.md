@@ -73,7 +73,7 @@ Walks `customizationsList` recursively through each option's
 `childCustomizationList`, keeps groups whose title ends in `Comes With`, and
 records options with `defaultQuantity >= 1`.
 
-`"Big Mac® Comes With"` occurs three times in one response — under the plain item,
+`"Big Mac® Comes With"` occurs three times in the live response — under the plain item,
 the Medium meal and the Large meal — with identical options each time, so entries
 **merge by title**. A title seen with genuinely conflicting defaults is **dropped**
 rather than resolved by guessing, mirroring how `uberCatalogIdByName` handles a
@@ -110,14 +110,19 @@ no honest option to emit; it is ignored exactly as it is today.
 `extractUberEats` gains a bounded, fail-soft enrichment step for the lines that
 have a composition row (usually one or two per order):
 
-1. Resolve each composition-bearing line's ids. **Check first** whether the
-   existing `data-testid="cart-item-…"` suffix already carries the item uuid — if
-   it does, it replaces step 2's index outright. Otherwise call
-   `getDraftOrdersByEaterUuidV1` once for the whole cart and index
+1. Resolve each composition-bearing line's ids by calling
+   `getDraftOrdersByEaterUuidV1` once for the whole cart and indexing
    `{storeUuid, sectionUuid, subsectionUuid, itemUuid}` **by item title**.
    Defaults are a property of the item, not of the line, so two differently
    customised Big Mac lines share one lookup; a title seen with two different id
-   sets is dropped, as above.
+   sets is dropped, as above. That call returns *every* cart the user has open,
+   so only the single draft order best covering the captured cart's item names is
+   indexed — a tie, or no draft matching any name, means no index at all.
+
+   (An earlier draft of this design proposed reading the item uuid from the
+   `data-testid="cart-item-…"` suffix instead. Live testids are truncated —
+   `cart-item-3b48b40a` — so they are not the uuid, and that shortcut does not
+   exist.)
 2. Call `getMenuItemV1` once per **distinct** composition-bearing item.
 3. Feed the response to `uberCompositionDefaults`, diff with `uberRemovals`, and
    append the results to that line's `options`.
@@ -142,14 +147,16 @@ TDD throughout — failing test first, watched fail.
   customisation tree, pinned as `tests/fixtures/ubereats-item-bigmac.json`.
 - **`uberCompositionDefaults`:** finds groups nested under
   `childCustomizationList`; keeps only `defaultQuantity >= 1`; merges the three
-  identical `Big Mac® Comes With` occurrences; drops a title whose defaults
-  genuinely conflict.
+  identical `Big Mac® Comes With` occurrences (the trimmed fixture keeps two of
+  the three); drops a title whose defaults genuinely conflict.
 - **`uberRemovals`:** pickles removed → `[{group:'Remove', name:'No Pickles',
   price:0}]`; every default kept → `[]`; the `2 Beef Patty` quantity prefix parses;
   a reduction to a non-zero quantity emits nothing; an unknown group → `[]`.
-- **`checkout-reader`:** the real McDonald's cart DOM with a stubbed fetch yields
-  the removal in `options` while the composition row itself stays excluded; and a
-  **failing** fetch reproduces today's output unchanged.
+- **`checkout-reader`:** a McDonald's-shaped cart DOM with a stubbed fetch yields
+  the removal in `options` while the composition row itself stays excluded; a
+  **failing** fetch, a non-200, a synchronously-throwing `fetch` and a drifted
+  response shape each reproduce today's output unchanged; and no composition row
+  means no network call at all.
 - **`matcher`:** `No Pickles` resolves to Just Eat's Remove-group `No Pickles`, and
   clean-skips (no `unresolved`, no review flag) when the target has no Remove
   group.

@@ -1,4 +1,75 @@
 const { PLATFORM, MSG, platformFromUrl } = require('../shared/constants');
+const {
+  uberCompositionDefaults,
+  uberRemovals,
+  uberCartItemIds,
+  normalizeTitle,
+} = require('../shared/uber-composition');
+
+const UBER_DRAFTS_API = '/_p/api/getDraftOrdersByEaterUuidV1?localeCode=gb';
+const UBER_ITEM_API = '/_p/api/getMenuItemV1?localeCode=gb';
+// The capture blocks the sidebar's first render, so a hung request must not
+// hold it open — a timed-out call is treated exactly like a failed one.
+const UBER_API_TIMEOUT = 4000;
+
+// Same-origin POST to one of Uber's own web APIs. Resolves the parsed body, or
+// null on any failure (non-200, network error, timeout, unparseable). Never
+// rejects: the capture must not throw, and no removals is a correct answer.
+function uberPost(fetchFn, url, body) {
+  const request = fetchFn(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-csrf-token': 'x' },
+    body: JSON.stringify(body),
+  })
+    .then((r) => (r && r.ok ? r.json() : null))
+    .catch(() => null);
+  const timeout = new Promise((resolve) => setTimeout(() => resolve(null), UBER_API_TIMEOUT));
+  return Promise.race([request, timeout]).catch(() => null);
+}
+
+// Uber's cart lists only the KEPT defaults of a composition group, so an
+// ingredient the user removed is visible only as an absence. Fetch the item's
+// full defaults and append the difference as decline options the target's
+// "Remove" group can satisfy (#33). Bounded: one draft-order call for the whole
+// cart, then one item call per distinct composition-bearing item. Any failure
+// leaves the items untouched, which is the pre-#33 behaviour.
+async function addUberRemovals(doc, items) {
+  const needing = items.filter((i) => i._compositionRows.length);
+  // Only the page's own window can reach these same-origin APIs; there is
+  // deliberately no global-fetch fallback (it would fire real requests in tests).
+  const fetchFn = doc.defaultView?.fetch;
+  if (!needing.length || typeof fetchFn !== 'function') return;
+  const drafts = await uberPost(fetchFn, UBER_DRAFTS_API, {});
+  const idsByTitle = uberCartItemIds(drafts?.data?.draftOrders);
+  const detailByItem = new Map();
+  for (const item of needing) {
+    const ids = idsByTitle.get(normalizeTitle(item.name));
+    if (!ids) continue;
+    if (!detailByItem.has(ids.itemUuid)) {
+      detailByItem.set(
+        ids.itemUuid,
+        await uberPost(fetchFn, UBER_ITEM_API, {
+          itemRequestType: 'ITEM',
+          storeUuid: ids.storeUuid,
+          sectionUuid: ids.sectionUuid,
+          subsectionUuid: ids.subsectionUuid,
+          menuItemUuid: ids.itemUuid,
+          isEditFlow: false,
+          cbType: 'EATER_ENDORSED',
+          includeCheaperAlternatives: false,
+        })
+      );
+    }
+    const detail = detailByItem.get(ids.itemUuid);
+    if (!detail) continue;
+    const removals = uberRemovals(item._compositionRows, uberCompositionDefaults(detail));
+    if (removals.length) {
+      console.info('[FeedMe checkout] removals on', JSON.stringify(item.name), '—',
+        removals.map((r) => r.name).join(', '));
+      item.options.push(...removals);
+    }
+  }
+}
 
 function parsePrice(text) {
   // If multiple prices exist (e.g. "£0.99  £0.00" with a strikethrough), take the last one
@@ -179,10 +250,16 @@ async function extractUberEats(doc) {
             unitPrice: quantity > 0 ? lineTotal / quantity : lineTotal,
             options,
             optionsTotal,
+            // The dropped composition rows, kept only long enough for
+            // addUberRemovals to diff them; stripped before the order is sent.
+            _compositionRows: allOptions.filter((o) => /comes with$/i.test(o.group)),
           };
         })
         .filter((i) => i.name)
     : [];
+
+  await addUberRemovals(doc, items);
+  for (const item of items) delete item._compositionRows;
 
   const addressText =
     doc.querySelector('[data-testid="checkout-delivery-address-section"]')?.textContent ?? '';

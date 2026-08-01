@@ -60,6 +60,116 @@ describe('extractOrder - Uber Eats', () => {
   test('extracts checkout total', () => {
     expect(order.checkoutTotal).toBeCloseTo(12.58);
   });
+
+  // Issue #33: an ingredient the user removed on Uber shows only as an absence
+  // from the "Comes With" list. The defaults come from the per-item API, so the
+  // capture fetches them and emits the difference as a decline the target's
+  // Remove group can satisfy.
+  const bigMacDetail = require('./fixtures/ubereats-item-bigmac.json');
+  const draftOrders = require('./fixtures/ubereats-draft-orders.json');
+
+  const compositionDom = (keptList) => new JSDOM(`<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£5.89</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Big Mac®" />
+          <span data-testid="rich-text">Big Mac® Comes With:</span><span data-testid="rich-text">${keptList}</span>
+          <span>£5.89</span>
+        </div></li>
+      </div></body></html>`);
+
+  const okJson = (payload) => Promise.resolve({ ok: true, json: () => Promise.resolve(payload) });
+
+  const stubUberApis = (dom) => {
+    const calls = [];
+    dom.window.fetch = (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body) });
+      if (url.includes('getDraftOrdersByEaterUuidV1')) return okJson(draftOrders);
+      if (url.includes('getMenuItemV1')) return okJson(bigMacDetail);
+      return Promise.reject(new Error(`unexpected ${url}`));
+    };
+    return calls;
+  };
+
+  test('a removed ingredient becomes a "No X" decline option', async () => {
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    stubUberApis(dom);
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options).toEqual([
+      { group: 'Remove', name: 'No Pickles', price: 0 },
+    ]);
+  });
+
+  test('the composition row itself is still excluded from options', async () => {
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    stubUberApis(dom);
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options.some((o) => /Comes With/i.test(o.group))).toBe(false);
+  });
+
+  test('untouched defaults produce no Remove selections', async () => {
+    const dom = compositionDom('Sauce, Pickles, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    stubUberApis(dom);
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options).toEqual([]);
+  });
+
+  test('the item detail is requested with the ids from the draft order', async () => {
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    const calls = stubUberApis(dom);
+    await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    const itemCall = calls.find((c) => c.url.includes('getMenuItemV1'));
+    expect(itemCall.body).toMatchObject({
+      itemRequestType: 'ITEM',
+      storeUuid: '7c0b936e-53cc-4f7b-9558-b41691071f19',
+      sectionUuid: '82a88175-4085-50b2-9ac1-9cfda241af83',
+      subsectionUuid: '6af6e4d6-c531-53d8-bb5f-82109718d392',
+      menuItemUuid: '436063f7-19ba-5d0f-ba15-137deab02561',
+    });
+  });
+
+  test('a failing fetch leaves the capture exactly as it was (no removals, no throw)', async () => {
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    dom.window.fetch = () => Promise.reject(new Error('offline'));
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options).toEqual([]);
+    expect(order.items[0].name).toBe('Big Mac®');
+  });
+
+  test('a non-200 response yields no removals', async () => {
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    dom.window.fetch = () => Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options).toEqual([]);
+  });
+
+  test('no composition row means no network call at all', async () => {
+    const dom = new JSDOM(`<!DOCTYPE html><html><body>
+      <div data-testid="cart-summary-panel"></div>
+      <div data-testid="fare-breakdown-charge-badge-total">£9.99</div>
+      <div data-testid="cart-items-list">
+        <li><div data-testid="cart-item-1">
+          <img alt="Whopper" />
+          <span data-testid="rich-text">Choose Drink:</span><span data-testid="rich-text">Coke</span>
+          <span>£9.99</span>
+        </div></li>
+      </div></body></html>`);
+    let called = false;
+    dom.window.fetch = () => { called = true; return Promise.reject(new Error('should not fetch')); };
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(called).toBe(false);
+    expect(order.items[0].options).toEqual([{ group: 'Choose Drink', name: 'Coke', price: 0 }]);
+  });
+
+  test('internal composition rows never leak onto the returned item', async () => {
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    stubUberApis(dom);
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(Object.keys(order.items[0]).sort()).toEqual(
+      ['name', 'options', 'optionsTotal', 'quantity', 'unitPrice'].sort()
+    );
+  });
 });
 
 describe('extractOrder - Uber Eats quantities (real DOM)', () => {

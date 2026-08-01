@@ -826,3 +826,51 @@ describe('matchItems unmatched items carry a name-only line (#50)', () => {
     expect(total.itemsTotal).toBeCloseTo(matches[0].platformItem.unitPrice);
   });
 });
+
+describe('Uber ingredient removals (#33)', () => {
+  // The capture emits a removed ingredient as a decline in a synthetic "Remove"
+  // group. Nothing in matcher.js knows about #33: these tests pin that the
+  // existing decline rules already do the right thing with that shape.
+  const refWithRemoval = [{
+    name: 'Big Mac®', quantity: 1, unitPrice: 5.89, optionsTotal: 0,
+    options: [{ group: 'Remove', name: 'No Pickles', price: 0 }],
+  }];
+
+  test('resolves to the target\'s own Remove-group decline', () => {
+    const platform = [{
+      id: 'je-1', name: 'Big Mac®', description: '', unitPrice: 5.89,
+      modifiers: [
+        { name: 'No Pickles', price: 0, id: 'je-no-pickles', groupId: 'gr', group: 'Remove' },
+        { name: 'No Onions', price: 0, id: 'je-no-onions', groupId: 'gr', group: 'Remove' },
+        { name: 'Extra Pickles', price: 0.5, id: 'je-extra-pickles', groupId: 'ga', group: 'Additions' },
+      ],
+    }];
+    const [result] = matchItems(refWithRemoval, platform);
+    expect(result.basketLine.modifiers).toEqual([
+      { id: 'je-no-pickles', groupId: 'gr', group: 'Remove', name: 'No Pickles' },
+    ]);
+    expect(result.basketLine.prefillable).toBe(true);
+  });
+
+  test('never resolves to a positive option of the same ingredient', () => {
+    const platform = [{
+      id: 'je-2', name: 'Big Mac®', description: '', unitPrice: 5.89,
+      modifiers: [
+        { name: 'Extra Pickles', price: 0.5, id: 'je-extra-pickles', groupId: 'ga', group: 'Additions' },
+      ],
+    }];
+    const [result] = matchItems(refWithRemoval, platform);
+    expect(result.basketLine.modifiers).toEqual([]);
+    expect(result.platformItem.unitPrice).toBeCloseTo(5.89); // no £0.50 add-on priced in
+  });
+
+  test('clean-skips when the target models no removals at all', () => {
+    const platform = [{
+      id: 'je-3', name: 'Big Mac®', description: '', unitPrice: 5.89,
+      modifiers: [{ name: 'Regular Fries', price: 0, id: 'je-fries', groupId: 'gs', group: 'Side' }],
+    }];
+    const [result] = matchItems(refWithRemoval, platform);
+    expect(result.basketLine.modifiers).toEqual([]);
+    expect(result.basketLine.prefillable).toBe(true); // skipping IS the removal
+  });
+});

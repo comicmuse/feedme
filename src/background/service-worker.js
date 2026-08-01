@@ -1,5 +1,5 @@
 const { PLATFORM, CHECKOUT_PATTERNS, MSG, JUST_EAT_SMALL_ORDER_THRESHOLD, buildSearchUrl, isAllowedMenuUrl, isMenuPageUrl, getConfig, browser } = require('../shared/constants');
-const { matchItems, computeTotal, estimateUberFees } = require('../shared/matcher');
+const { matchItems, computeTotal, estimateUberFees, uberOneWaiverOffer } = require('../shared/matcher');
 const { buildSnapshot } = require('../shared/snapshot');
 const { createScheduler } = require('../shared/pool');
 
@@ -455,22 +455,36 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       deliveryFee = branch.listedDeliveryFee.min;
       feeOpts.deliveryFeeBands = null;
     }
-    // Other Uber branches (store-page JSON-LD) have no fees — estimate from the cart.
+    const offers = [...(msg.parsed.offers ?? [])];
+    // Other Uber branches: the store blob publishes the branch's OWN delivery fee,
+    // so prefer it and fall back to copying the cart's only when it can't be
+    // trusted (#63). The service fee is a basket-dependent percentage the store page
+    // never carries, so it stays estimated from the cart either way.
     if (branch.platform === PLATFORM.UBER_EATS && branchKey !== 'current') {
       const est = estimateUberFees(comparison.order);
-      deliveryFee = est.deliveryFee;
       serviceFee = 0;
       feeOpts.serviceFeePct = est.serviceFeePct;
       feeOpts.serviceFeeEstimated = true;
+      if (msg.parsed.deliveryFeeKnown) {
+        deliveryFee = msg.parsed.deliveryFee;
+      } else {
+        deliveryFee = est.deliveryFee;
+        feeOpts.deliveryFeeEstimated = true;
+      }
+      // An Uber One member's waived fee applies to eligible branches too, but only
+      // above the subtotal the captured cart proved it at — as an offer, so
+      // applyOffers decides and the sidebar can explain the £0 (#64).
+      const waiver = uberOneWaiverOffer(comparison.order, msg.parsed);
+      if (waiver) offers.push(waiver);
     }
-    const total = computeTotal(matches, deliveryFee, serviceFee, msg.parsed.offers ?? [], feeOpts);
+    const total = computeTotal(matches, deliveryFee, serviceFee, offers, feeOpts);
     branch.status = 'done';
     // Compact instructions for the basket-builder: one entry per source line —
     // including items that matched NO menu item, carried name-only so the builder
     // attempts them and honestly lists any it can't add, instead of them silently
     // vanishing from the fill and the "Added N of N" count (#50).
     const basketPlan = matches.filter((m) => m.basketLine).map((m) => m.basketLine);
-    branch.result = { restaurantName: msg.parsed.restaurantName, matches, total, offers: msg.parsed.offers ?? [], basketPlan };
+    branch.result = { restaurantName: msg.parsed.restaurantName, matches, total, offers, basketPlan };
     if (!branch.label && msg.parsed.restaurantName) branch.label = msg.parsed.restaurantName;
 
     // Stage-2 validity: first-token brand enumeration can admit a sibling brand

@@ -326,6 +326,20 @@ async function extractUberEats(doc) {
   const feeEl = (testid) =>
     doc.querySelector(`[data-testid="${testid}"]`);
 
+  // Uber One waives the delivery fee rather than the store offering free delivery:
+  // the row renders the real fee struck through, the Uber One logo, then £0.00
+  // ("£1.79 £0.00", live 2026-08-01). Both halves matter — the logo tells the
+  // membership waiver apart from an ordinary store promo, and a final price of 0
+  // proves the benefit actually applied to THIS basket rather than merely being
+  // offered. Sibling pricing uses this as proof the member is above Uber's
+  // unpublished basket minimum at this subtotal (#64).
+  const deliveryEl = feeEl('fare-breakdown-charge-badge-delivery-fee');
+  const deliveryPrices = [...(deliveryEl?.textContent ?? '').matchAll(/£\s*([\d.]+)/g)];
+  const uberOneDeliveryWaived =
+    deliveryPrices.length > 1 &&
+    parseFloat(deliveryPrices[deliveryPrices.length - 1][1]) === 0 &&
+    !!deliveryEl?.querySelector('img[src*="uber_one"]');
+
   const membershipEl = feeEl('fare-breakdown-charge-badge-membership-benefit');
   const membershipText = membershipEl?.textContent?.trim() ?? '';
   const membershipAmount = membershipText
@@ -338,7 +352,8 @@ async function extractUberEats(doc) {
     sourceStoreId,
     postcode: postcodeMatch?.[0]?.replace(/\s+/, ' ') ?? '',
     items,
-    deliveryFee: parsePrice(feeEl('fare-breakdown-charge-badge-delivery-fee')?.textContent),
+    deliveryFee: parsePrice(deliveryEl?.textContent),
+    uberOneDeliveryWaived,
     serviceFee: parsePrice(feeEl('fare-breakdown-charge-badge-fees')?.textContent),
     discounts: membershipAmount > 0
       ? [{ amount: membershipAmount, label: membershipText }]

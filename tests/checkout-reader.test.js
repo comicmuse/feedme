@@ -7,7 +7,7 @@ global.TextEncoder = TextEncoder;
 global.TextDecoder = TextDecoder;
 
 const { JSDOM } = require('jsdom');
-const { extractOrder } = require('../src/content/checkout-reader');
+const { extractOrder, reportFareRowDrift } = require('../src/content/checkout-reader');
 const { PLATFORM } = require('../src/shared/constants');
 
 function docFromFixture(name) {
@@ -708,5 +708,70 @@ describe('extractOrder - Uber One entitlements (#65)', () => {
     </li>`;
     const order = await extractOrder(PLATFORM.UBER_EATS, docWith(broken));
     expect(order.discounts).toEqual([]);
+  });
+});
+
+// Uber's checkout testids have drifted twice (#53/#55, #65) and both times the
+// failure was silent: a missing data-testid reads as "no such row", which is
+// indistinguishable from "this cart has no such row". Asserting that required rows
+// exist would NOT have caught #65 — the row that vanished was a conditional one.
+// The signal that would have caught it is the inverse: a fare row on the page that
+// this reader doesn't recognise, which is exactly what a rename looks like from
+// here (#70).
+describe('extractOrder - Uber fare-row drift guard (#70)', () => {
+  let warn;
+  beforeEach(() => { warn = jest.spyOn(console, 'warn').mockImplementation(() => {}); });
+  afterEach(() => { warn.mockRestore(); });
+
+  const cart = `
+    <div data-testid="cart-summary-panel"></div>
+    <div data-testid="cart-items-list">
+      <li><div data-testid="cart-item-1"><img alt="Sub" /><span>£10.00</span></div></li>
+    </div>`;
+  const docWith = (rows) =>
+    new JSDOM(`<!DOCTYPE html><html><body>${cart}${rows}</body></html>`).window.document;
+  const healthyRows = `
+    <div data-testid="fare-breakdown-charge-badge-subtotal">£10.00</div>
+    <div data-testid="fare-breakdown-charge-badge-delivery-fee">£1.79</div>
+    <div data-testid="fare-breakdown-charge-badge-fees">£2.03</div>
+    <div data-testid="fare-breakdown-charge-badge-total">£13.82</div>`;
+  const warnings = () => warn.mock.calls.map((c) => c.join(' '));
+
+  test('warns about a fare row the reader does not recognise', async () => {
+    // Exactly the shape of the #65 rename: a new row appears under a name we
+    // have no mapping for, while the old one quietly stops existing.
+    await extractOrder(PLATFORM.UBER_EATS, docWith(
+      healthyRows + '<div data-testid="fare-breakdown-charge-badge-uber-one-new-benefit">-£2.00</div>'
+    ));
+    const hit = warnings().find((m) => /unrecognised fare row/i.test(m));
+    expect(hit).toBeDefined();
+    expect(hit).toContain('fare-breakdown-charge-badge-uber-one-new-benefit');
+  });
+
+  test('stays quiet when every fare row on the page is recognised', async () => {
+    await extractOrder(PLATFORM.UBER_EATS, docWith(healthyRows));
+    expect(warnings()).toEqual([]);
+  });
+
+  // Driven directly: a document with no total row makes extractOrder wait out its
+  // full element timeout, and this branch is about the report, not the waiting.
+  // It is the only net for a wholesale prefix rename, where no row matches the
+  // selector at all and the unrecognised-row check therefore sees nothing.
+  test('warns when the total row — which every priced checkout has — is absent', () => {
+    reportFareRowDrift(docWith('<div data-testid="fare-breakdown-charge-badge-subtotal">£10.00</div>'));
+    expect(warnings().some((m) => /total/i.test(m))).toBe(true);
+  });
+
+  test('warns on a wholesale rename, where no known row matches at all', () => {
+    reportFareRowDrift(docWith('<div data-testid="fare-summary-row-total">£13.82</div>'));
+    expect(warnings().some((m) => /total/i.test(m))).toBe(true);
+  });
+
+  test('a drifted page still yields an order — the guard reports, it never throws', async () => {
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(
+      healthyRows + '<div data-testid="fare-breakdown-charge-badge-unknown-thing">£1.00</div>'
+    ));
+    expect(order.platform).toBe(PLATFORM.UBER_EATS);
+    expect(order.items).toHaveLength(1);
   });
 });

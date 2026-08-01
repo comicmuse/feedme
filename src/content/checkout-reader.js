@@ -188,6 +188,47 @@ function readUberRestaurant(doc) {
   return { name: hydrated ? leaf : storeSlugName(href), sourceStoreId, hydrated };
 }
 
+// Every fare row this reader knows about — the ones it reads, plus the labels and
+// siblings it deliberately ignores.
+const KNOWN_UBER_FARE_ROWS = new Set([
+  'fare-breakdown-charge-badge-subtotal',
+  'fare-breakdown-charge-badge-subtotal-label',
+  'fare-breakdown-charge-badge-delivery-fee',
+  'fare-breakdown-charge-badge-delivery-fee-label',
+  'fare-breakdown-charge-badge-fees',
+  'fare-breakdown-charge-badge-fees-label',
+  'fare-breakdown-charge-badge-total',
+  'fare-breakdown-charge-badge-total-label',
+  'fare-breakdown-charge-badge-uber-one-monthly-benefit',
+  'fare-breakdown-charge-badge-uber-one-monthly-benefit-label',
+  'fare-breakdown-charge-badge-uber-one-credits',
+  'fare-breakdown-charge-badge-uber-one-credits-label',
+]);
+
+// Uber's checkout testids have drifted twice (#53/#55, #55's name element and #65's
+// membership row), and both times it failed silently: a missing data-testid reads
+// as "no such row", which is indistinguishable from a cart that genuinely lacks it,
+// so neither the tests nor the console noticed — the fixtures kept passing precisely
+// because they had frozen the old DOM.
+//
+// Asserting that required rows exist would NOT have caught #65, whose vanished row
+// was a conditional one. The signal that would have is the inverse: a fare row on
+// the page this reader has no mapping for, which is exactly what a rename looks
+// like from here. The missing-total check is a cheap second net for a wholesale
+// change. Both only report — the reader must never throw (#70).
+function reportFareRowDrift(doc) {
+  const seen = [...doc.querySelectorAll('[data-testid^="fare-breakdown-charge-badge-"]')]
+    .map((el) => el.getAttribute('data-testid'));
+  const unknown = [...new Set(seen)].filter((id) => !KNOWN_UBER_FARE_ROWS.has(id));
+  if (unknown.length) {
+    console.warn('[FeedMe checkout] unrecognised fare row — Uber may have renamed a testid:',
+      unknown.join(', '));
+  }
+  if (!seen.includes('fare-breakdown-charge-badge-total')) {
+    console.warn('[FeedMe checkout] no total fare row on the page — checkout DOM has drifted');
+  }
+}
+
 async function extractUberEats(doc) {
   // Wait for React to render the checkout UI (SPA loads a spinner first)
   const panel = await waitForElement(doc, '[data-testid="cart-summary-panel"]');
@@ -326,6 +367,8 @@ async function extractUberEats(doc) {
   const feeEl = (testid) =>
     doc.querySelector(`[data-testid="${testid}"]`);
 
+  reportFareRowDrift(doc);
+
   // Uber One waives the delivery fee rather than the store offering free delivery:
   // the row renders the real fee struck through, the Uber One logo, then £0.00
   // ("£1.79 £0.00", live 2026-08-01). Both halves matter — the logo tells the
@@ -433,4 +476,4 @@ if (typeof window !== 'undefined' && typeof chrome !== 'undefined') {
   })();
 }
 
-module.exports = { extractOrder };
+module.exports = { extractOrder, reportFareRowDrift };

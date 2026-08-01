@@ -170,6 +170,31 @@ describe('extractOrder - Uber Eats', () => {
       ['name', 'options', 'optionsTotal', 'quantity', 'unitPrice'].sort()
     );
   });
+
+  test('a fetch that throws synchronously does not reject the capture', async () => {
+    // The page's fetch is called unbound in Chrome, which throws "Illegal
+    // invocation" rather than returning a rejected promise (#33 review).
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    dom.window.fetch = () => { throw new TypeError('Illegal invocation'); };
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options).toEqual([]);
+  });
+
+  test('a drifted response shape yields no removals instead of throwing', async () => {
+    // `??` guards null/undefined but not a wrong TYPE: customizationsList as a
+    // number would make the for…of raise "not iterable".
+    const dom = compositionDom('Sauce, Lettuce, Onions, Cheese, 2 Beef Patty, Bun');
+    dom.window.fetch = (url) => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve(
+        url.includes('getDraftOrdersByEaterUuidV1')
+          ? draftOrders
+          : { data: { customizationsList: 42 } }
+      ),
+    });
+    const order = await extractOrder(PLATFORM.UBER_EATS, dom.window.document);
+    expect(order.items[0].options).toEqual([]);
+  });
 });
 
 describe('extractOrder - Uber Eats quantities (real DOM)', () => {

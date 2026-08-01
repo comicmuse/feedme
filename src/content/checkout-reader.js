@@ -16,11 +16,15 @@ const UBER_API_TIMEOUT = 4000;
 // null on any failure (non-200, network error, timeout, unparseable). Never
 // rejects: the capture must not throw, and no removals is a correct answer.
 function uberPost(fetchFn, url, body) {
-  const request = fetchFn(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-csrf-token': 'x' },
-    body: JSON.stringify(body),
-  })
+  // Started inside a resolved promise so a SYNCHRONOUS throw from fetchFn
+  // (e.g. Chrome's "Illegal invocation" when fetch is called unbound) lands in
+  // the .catch below instead of escaping the chain outright.
+  const request = Promise.resolve()
+    .then(() => fetchFn(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-csrf-token': 'x' },
+      body: JSON.stringify(body),
+    }))
     .then((r) => (r && r.ok ? r.json() : null))
     .catch(() => null);
   const timeout = new Promise((resolve) => setTimeout(() => resolve(null), UBER_API_TIMEOUT));
@@ -37,37 +41,48 @@ async function addUberRemovals(doc, items) {
   const needing = items.filter((i) => i._compositionRows.length);
   // Only the page's own window can reach these same-origin APIs; there is
   // deliberately no global-fetch fallback (it would fire real requests in tests).
-  const fetchFn = doc.defaultView?.fetch;
-  if (!needing.length || typeof fetchFn !== 'function') return;
-  const drafts = await uberPost(fetchFn, UBER_DRAFTS_API, {});
-  const idsByTitle = uberCartItemIds(drafts?.data?.draftOrders);
-  const detailByItem = new Map();
-  for (const item of needing) {
-    const ids = idsByTitle.get(normalizeTitle(item.name));
-    if (!ids) continue;
-    if (!detailByItem.has(ids.itemUuid)) {
-      detailByItem.set(
-        ids.itemUuid,
-        await uberPost(fetchFn, UBER_ITEM_API, {
-          itemRequestType: 'ITEM',
-          storeUuid: ids.storeUuid,
-          sectionUuid: ids.sectionUuid,
-          subsectionUuid: ids.subsectionUuid,
-          menuItemUuid: ids.itemUuid,
-          isEditFlow: false,
-          cbType: 'EATER_ENDORSED',
-          includeCheaperAlternatives: false,
-        })
-      );
+  // Bound to the window: an unbound page `fetch` throws "Illegal invocation" in
+  // Chrome, and a synchronous throw would escape the promise chain in uberPost.
+  const rawFetch = doc.defaultView?.fetch;
+  if (!needing.length || typeof rawFetch !== 'function') return;
+  const fetchFn = rawFetch.bind(doc.defaultView);
+  // The capture must never throw: a drifted response shape (wrong type where
+  // an array/object was expected) can raise downstream in uberCompositionDefaults
+  // / uberRemovals just as easily as a network failure can, and no removals is
+  // the correct answer either way — so the whole enrichment is best-effort.
+  try {
+    const drafts = await uberPost(fetchFn, UBER_DRAFTS_API, {});
+    const idsByTitle = uberCartItemIds(drafts?.data?.draftOrders);
+    const detailByItem = new Map();
+    for (const item of needing) {
+      const ids = idsByTitle.get(normalizeTitle(item.name));
+      if (!ids) continue;
+      if (!detailByItem.has(ids.itemUuid)) {
+        detailByItem.set(
+          ids.itemUuid,
+          await uberPost(fetchFn, UBER_ITEM_API, {
+            itemRequestType: 'ITEM',
+            storeUuid: ids.storeUuid,
+            sectionUuid: ids.sectionUuid,
+            subsectionUuid: ids.subsectionUuid,
+            menuItemUuid: ids.itemUuid,
+            isEditFlow: false,
+            cbType: 'EATER_ENDORSED',
+            includeCheaperAlternatives: false,
+          })
+        );
+      }
+      const detail = detailByItem.get(ids.itemUuid);
+      if (!detail) continue;
+      const removals = uberRemovals(item._compositionRows, uberCompositionDefaults(detail));
+      if (removals.length) {
+        console.info('[FeedMe checkout] removals on', JSON.stringify(item.name), '—',
+          removals.map((r) => r.name).join(', '));
+        item.options.push(...removals);
+      }
     }
-    const detail = detailByItem.get(ids.itemUuid);
-    if (!detail) continue;
-    const removals = uberRemovals(item._compositionRows, uberCompositionDefaults(detail));
-    if (removals.length) {
-      console.info('[FeedMe checkout] removals on', JSON.stringify(item.name), '—',
-        removals.map((r) => r.name).join(', '));
-      item.options.push(...removals);
-    }
+  } catch (_) {
+    // Drifted shape somewhere downstream — leave items untouched.
   }
 }
 

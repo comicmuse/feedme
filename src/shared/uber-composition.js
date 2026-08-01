@@ -156,39 +156,76 @@ const sameIds = (a, b) =>
   a.storeUuid === b.storeUuid && a.sectionUuid === b.sectionUuid
   && a.subsectionUuid === b.subsectionUuid && a.itemUuid === b.itemUuid;
 
+const draftTitles = (draft) => {
+  const titles = new Set();
+  for (const item of draft?.shoppingCart?.items ?? []) {
+    const key = normalizeTitle(item?.title);
+    if (key) titles.add(key);
+  }
+  return titles;
+};
+
 /**
  * Index the ids getMenuItemV1 needs, per cart item, from a
  * getDraftOrdersByEaterUuidV1 response's `draftOrders` array.
  *
- * Keyed by title because composition defaults belong to the *item*, not to the
- * line's own customisations: two differently-customised Big Mac lines resolve
- * through one entry. A title that genuinely points at two different items is
- * dropped rather than tagged with whichever line came first.
+ * The endpoint returns EVERY draft cart the eater has open, not just the one at
+ * checkout (a live probe found five), so a stale cart elsewhere holding the same
+ * item title would either make the title ambiguous — silently killing the
+ * feature — or, worse, answer with another store's item. Only the single draft
+ * whose titles best cover the captured cart's own item names is indexed; a tie,
+ * or no draft matching any name, means no index at all. The checkout page can't
+ * settle it by store: its `sourceStoreId` is the store URL's short slug id, not
+ * the `storeUuid` a draft carries.
+ *
+ * Within that draft, entries are keyed by title because composition defaults
+ * belong to the *item*, not to the line's own customisations: two
+ * differently-customised Big Mac lines resolve through one entry. A title that
+ * genuinely points at two different items is dropped rather than tagged with
+ * whichever line came first.
  *
  * @param {Array<object>} draftOrders
+ * @param {Array<string>} cartItemNames item names read off the checkout page
  * @returns {Map<string, {storeUuid: string, sectionUuid: string, subsectionUuid: string, itemUuid: string}>}
  */
-function uberCartItemIds(draftOrders) {
+function uberCartItemIds(draftOrders, cartItemNames) {
+  const wanted = new Set((cartItemNames ?? []).map(normalizeTitle).filter(Boolean));
+  let best = null;
+  let bestScore = 0;
+  let tied = false;
+  for (const draft of draftOrders ?? []) {
+    const titles = draftTitles(draft);
+    let score = 0;
+    for (const name of wanted) if (titles.has(name)) score += 1;
+    if (score === 0) continue;
+    if (score > bestScore) {
+      best = draft;
+      bestScore = score;
+      tied = false;
+    } else if (score === bestScore) {
+      tied = true;
+    }
+  }
+  if (!best || tied) return new Map();
+
   const byTitle = new Map();
   const ambiguous = new Set();
-  for (const draft of draftOrders ?? []) {
-    for (const item of draft?.shoppingCart?.items ?? []) {
-      const key = normalizeTitle(item?.title);
-      if (!key || ambiguous.has(key)) continue;
-      const ids = {
-        storeUuid: item.storeUuid,
-        sectionUuid: item.sectionUuid,
-        subsectionUuid: item.subsectionUuid,
-        itemUuid: item.uuid,
-      };
-      if (Object.values(ids).some((v) => !v)) continue;
-      const existing = byTitle.get(key);
-      if (existing == null) {
-        byTitle.set(key, ids);
-      } else if (!sameIds(existing, ids)) {
-        byTitle.delete(key);
-        ambiguous.add(key);
-      }
+  for (const item of best?.shoppingCart?.items ?? []) {
+    const key = normalizeTitle(item?.title);
+    if (!key || ambiguous.has(key)) continue;
+    const ids = {
+      storeUuid: item.storeUuid,
+      sectionUuid: item.sectionUuid,
+      subsectionUuid: item.subsectionUuid,
+      itemUuid: item.uuid,
+    };
+    if (Object.values(ids).some((v) => !v)) continue;
+    const existing = byTitle.get(key);
+    if (existing == null) {
+      byTitle.set(key, ids);
+    } else if (!sameIds(existing, ids)) {
+      byTitle.delete(key);
+      ambiguous.add(key);
     }
   }
   return byTitle;

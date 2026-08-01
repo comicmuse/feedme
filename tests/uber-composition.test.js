@@ -169,13 +169,49 @@ describe('uberRemovals', () => {
 });
 
 describe('uberCartItemIds', () => {
-  test('indexes every cart line across every draft order by normalised title', () => {
-    const ids = uberCartItemIds(drafts.data.draftOrders);
-    expect([...ids.keys()].sort()).toEqual(['big arch® with bacon', 'big mac®', 'whopper']);
+  // The drafts endpoint returns EVERY cart the user has open, not the one being
+  // checked out (a live probe found five). The captured cart's own item names
+  // pick the draft; the checkout page's sourceStoreId can't, being the store
+  // URL's short slug id rather than the storeUuid the draft carries (#33 review).
+  const captured = ['Big Mac®', 'Big Arch® with Bacon'];
+
+  test('indexes only the draft order covering the captured cart names', () => {
+    const ids = uberCartItemIds(drafts.data.draftOrders, captured);
+    expect([...ids.keys()].sort()).toEqual(['big arch® with bacon', 'big mac®']);
+  });
+
+  test('a stale draft at another store is never indexed', () => {
+    // "Whopper" lives only in the other-store draft; indexing it would let an
+    // unrelated cart answer for an item on this one.
+    expect(uberCartItemIds(drafts.data.draftOrders, captured).has('whopper')).toBe(false);
+  });
+
+  test('two drafts covering the captured names equally are a tie: no index', () => {
+    const tied = [
+      drafts.data.draftOrders[0],
+      { uuid: 'draft-copy', shoppingCart: { items: [
+        { ...drafts.data.draftOrders[0].shoppingCart.items[0], uuid: 'other-item-uuid' },
+      ] } },
+    ];
+    expect(uberCartItemIds(tied, ['Big Mac®']).size).toBe(0);
+  });
+
+  test('the draft covering more of the captured cart wins', () => {
+    const partial = { uuid: 'draft-partial', shoppingCart: { items: [
+      { ...drafts.data.draftOrders[0].shoppingCart.items[0], uuid: 'wrong-item-uuid' },
+    ] } };
+    const ids = uberCartItemIds([partial, drafts.data.draftOrders[0]], captured);
+    expect(ids.get('big mac®').itemUuid).toBe('436063f7-19ba-5d0f-ba15-137deab02561');
+  });
+
+  test('no draft matching any captured name yields no index', () => {
+    expect(uberCartItemIds(drafts.data.draftOrders, ['Filet-O-Fish®']).size).toBe(0);
+    expect(uberCartItemIds(drafts.data.draftOrders, []).size).toBe(0);
+    expect(uberCartItemIds(drafts.data.draftOrders).size).toBe(0);
   });
 
   test('carries the four ids getMenuItemV1 needs', () => {
-    expect(uberCartItemIds(drafts.data.draftOrders).get('big mac®')).toEqual({
+    expect(uberCartItemIds(drafts.data.draftOrders, captured).get('big mac®')).toEqual({
       storeUuid: '7c0b936e-53cc-4f7b-9558-b41691071f19',
       sectionUuid: '82a88175-4085-50b2-9ac1-9cfda241af83',
       subsectionUuid: '6af6e4d6-c531-53d8-bb5f-82109718d392',
@@ -190,7 +226,7 @@ describe('uberCartItemIds', () => {
       ...drafts.data.draftOrders[0].shoppingCart.items,
       { ...drafts.data.draftOrders[0].shoppingCart.items[0], shoppingCartItemUuid: 'line-1b' },
     ] } }];
-    expect(uberCartItemIds(twice).has('big mac®')).toBe(true);
+    expect(uberCartItemIds(twice, ['Big Mac®']).has('big mac®')).toBe(true);
   });
 
   test('a title genuinely pointing at two different items is dropped', () => {
@@ -198,19 +234,19 @@ describe('uberCartItemIds', () => {
       drafts.data.draftOrders[0].shoppingCart.items[0],
       { ...drafts.data.draftOrders[0].shoppingCart.items[0], uuid: 'different-item-uuid' },
     ] } }];
-    expect(uberCartItemIds(conflicting).has('big mac®')).toBe(false);
+    expect(uberCartItemIds(conflicting, ['Big Mac®']).has('big mac®')).toBe(false);
   });
 
   test('a line missing any id is skipped rather than half-indexed', () => {
     const partial = [{ shoppingCart: { items: [
       { uuid: 'x', storeUuid: 'y', title: 'Half Item' },
     ] } }];
-    expect(uberCartItemIds(partial).size).toBe(0);
+    expect(uberCartItemIds(partial, ['Half Item']).size).toBe(0);
   });
 
   test('handles junk input without throwing', () => {
-    expect(uberCartItemIds(null).size).toBe(0);
-    expect(uberCartItemIds([{}]).size).toBe(0);
+    expect(uberCartItemIds(null, ['Big Mac®']).size).toBe(0);
+    expect(uberCartItemIds([{}], ['Big Mac®']).size).toBe(0);
   });
 });
 

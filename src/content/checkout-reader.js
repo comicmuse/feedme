@@ -52,7 +52,9 @@ async function addUberRemovals(doc, items) {
   // the correct answer either way — so the whole enrichment is best-effort.
   try {
     const drafts = await uberPost(fetchFn, UBER_DRAFTS_API, {});
-    const idsByTitle = uberCartItemIds(drafts?.data?.draftOrders);
+    // The response holds every cart the user has open, so the captured item
+    // names are what pick this store's draft out of it.
+    const idsByTitle = uberCartItemIds(drafts?.data?.draftOrders, items.map((i) => i.name));
     const detailByItem = new Map();
     for (const item of needing) {
       const ids = idsByTitle.get(normalizeTitle(item.name));

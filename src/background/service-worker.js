@@ -2,6 +2,7 @@ const { PLATFORM, CHECKOUT_PATTERNS, MSG, JUST_EAT_SMALL_ORDER_THRESHOLD, buildS
 const { matchItems, computeTotal, estimateUberFees, uberOneWaiverOffer, uberOneAccountOffers } = require('../shared/matcher');
 const { buildSnapshot } = require('../shared/snapshot');
 const { createScheduler } = require('../shared/pool');
+const { missingOrigins, originLabel } = require('../shared/permissions');
 
 // Keyed by source tabId.
 const comparisons = new Map();
@@ -146,6 +147,17 @@ browser.runtime.onMessage.addListener(async (msg) => {
   const order = stored.currentOrder;
   if (!order || order.items.length === 0) return;
 
+  // The popup gates on this too, and is where the user can actually re-grant.
+  // Repeating the check here means a comparison started any other way still
+  // fails loudly rather than half-running: without host access the sidebar
+  // injection or the enumeration tabs would fail one by one with nothing to
+  // connect them to the cause.
+  const missing = await missingOrigins(browser);
+  if (missing.length > 0) {
+    console.warn(`[FeedMe] not comparing — no host access to ${missing.map(originLabel).join(', ')}. Open the FeedMe popup to grant it.`);
+    return;
+  }
+
   const tabId = msg.tabId;
   const { branchCount, maxConcurrent } = await getConfig();
   await browser.scripting.executeScript({ target: { tabId }, files: ['dist/sidebar.js'] });
@@ -195,6 +207,30 @@ async function startEnumeration(comparison, platform) {
     },
     ENUM_TIMEOUT_MS
   ));
+}
+
+// ── Host access revoked mid-comparison ──────────────────────────────────────
+//
+// Firefox lets the user revoke site access while a comparison is in flight. The
+// enumeration tabs and menu scrapes then fail one at a time and the affected
+// platforms would sit "loading" until their timeouts elapsed — 15s of looking
+// like slow progress, ending in a bare failure with no stated cause.
+//
+// Mark those platforms failed immediately, reusing the enumeration-timeout path
+// so the sidebar shows its existing retry affordance. Chrome never fires this.
+if (browser.permissions && browser.permissions.onRemoved) {
+  browser.permissions.onRemoved.addListener((removed) => {
+    const lost = (removed && removed.origins) || [];
+    if (!lost.length) return;
+    console.warn(`[FeedMe] host access removed for ${lost.map(originLabel).join(', ')} — stopping in-flight comparisons.`);
+    for (const comparison of comparisons.values()) {
+      for (const platform of [...comparison.loading]) {
+        comparison.enumErrors.add(platform);
+        onPlatformDone(comparison, platform);
+      }
+      pushUpdate(comparison);
+    }
+  });
 }
 
 // ── SWITCH_TO_BRANCH: open the chosen branch foreground + queue basket build ──

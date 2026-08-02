@@ -109,6 +109,26 @@ describe('justEatCandidates', () => {
     const other = cands.find((c) => c.id === '132');
     expect(other.listedDeliveryFee).toBeNull();
   });
+  // StampCard participation is published per-branch as a typed enum in the area
+  // listing, with no login (live 2026-08-02: 824 of 1834 branches at one E1
+  // postcode). Checked against the authenticated stampcards/status endpoint's
+  // `optInDate != null` over a 24-branch sample: 24/24 agreement, so the listing
+  // alone decides eligibility. Do NOT read that endpoint's `offerInformation`
+  // instead — it returns the same default 5/10% for branches that are not in the
+  // scheme at all, and non-participants answer 200 rather than 404.
+  test('flags branches whose deals include a StampCard', () => {
+    const cands = justEatCandidates(jeListing);
+    expect(cands.find((c) => c.id === '132').earnsStampCard).toBe(true);
+    expect(cands.find((c) => c.id === '73853').earnsStampCard).toBe(true);
+  });
+  test('a branch with only non-StampCard deals is not flagged', () => {
+    const cands = justEatCandidates(jeListing);
+    expect(cands.find((c) => c.id === '81738').earnsStampCard).toBe(false);
+  });
+  test('a record without deals at all is not flagged', () => {
+    const cands = justEatCandidates(jeListing);
+    expect(cands.find((c) => c.id === '67207').earnsStampCard).toBe(false);
+  });
   test('matches end-to-end through selectNearestBranches', () => {
     // KFC branches sorted by distance: Whitechapel (912m) < Bishopsgate (1562m)
     // < Hackney (3162m); the Aniseed Bar entry is a different chain.

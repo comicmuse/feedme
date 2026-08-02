@@ -363,6 +363,9 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       // Just Eat only: the area listing's postcode-adjusted delivery fee, which
       // is what the basket actually charges (menu/dynamic bands are base fees).
       listedDeliveryFee: b.listedDeliveryFee ?? null,
+      // Just Eat only: this branch is in the StampCard scheme. Annotation only —
+      // it is deferred value, never money off this order (see the sidebar row).
+      earnsStampCard: b.earnsStampCard ?? false,
     });
     comparison.queued.set(key, { platform });
     keys.push(key);

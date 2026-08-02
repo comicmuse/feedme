@@ -82,6 +82,17 @@ const DELIVEROO_SERVICE_FEE_CAP = 3.49;
 // branch; we model the common £10 and label the row approximate in the sidebar.
 const JUST_EAT_SMALL_ORDER_THRESHOLD = 10;
 
+// Just Eat's StampCard scheme: each order at a participating branch accrues this
+// share of its value, and the 5th order releases the accrued total as a voucher
+// (3 months, that branch only). The authenticated stampcards/status endpoint does
+// publish these as integers, but returns the identical scheme-wide default for
+// every branch — participating or not — so an extra per-branch request buys us
+// nothing over modelling them here. Live 2026-08-02: all 10 participating
+// branches probed returned offerType "default", size 5, 10%.
+// These describe a FUTURE order's voucher; they never reduce the current total.
+const JUST_EAT_STAMP_CARD_PERCENT = 10;
+const JUST_EAT_STAMP_CARD_SIZE = 5;
+
 function platformFromUrl(url) {
   try {
     const hostname = new URL(url).hostname;
@@ -173,6 +184,8 @@ module.exports = {
   DELIVEROO_SERVICE_FEE_PCT,
   DELIVEROO_SERVICE_FEE_CAP,
   JUST_EAT_SMALL_ORDER_THRESHOLD,
+  JUST_EAT_STAMP_CARD_PERCENT,
+  JUST_EAT_STAMP_CARD_SIZE,
   platformFromUrl,
   buildSearchUrl,
   isAllowedMenuUrl,

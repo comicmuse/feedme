@@ -11,7 +11,13 @@
             "city": "London",
             "firstLine": "1 Cannon Street",
             "postalCode": "EC4N 6AA"
-          }
+          },
+          "deals": [
+            {
+              "description": "",
+              "offerType": "StampCard"
+            }
+          ]
         },
         "67207": {
           "id": "67207",
@@ -34,6 +40,16 @@
             "firstLine": "180 Bishopsgate",
             "postalCode": "EC2M 4NQ"
           },
+          "deals": [
+            {
+              "description": "",
+              "offerType": "StampCard"
+            },
+            {
+              "description": "Save 10% • Spend £25",
+              "offerType": "Percent"
+            }
+          ],
           "deliveryFees": {
             "byMinFee": {
               "minimumAmount": 1000,
@@ -64,6 +80,12 @@
             "firstLine": "84 Whitechapel High Street",
             "postalCode": "E1 7QX"
           },
+          "deals": [
+            {
+              "description": "25% off selected items",
+              "offerType": "ItemLevelDiscount"
+            }
+          ],
           "deliveryFees": {
             "byMinFee": {
               "minimumAmount": 0,

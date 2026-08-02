@@ -56,7 +56,8 @@ const { parseMenuResponse } = require('../shared/parsers');
       const data = JSON.parse(blob);
       const cands = justEatCandidates(data);
       branches = selectNearestBranches(cands, ctx.restaurantName ?? '', ctx.branchCount ?? 3)
-        .map(({ id, label, distance, menuUrl, listedDeliveryFee }) => ({ id, label, distance, menuUrl, listedDeliveryFee }));
+        .map(({ id, label, distance, menuUrl, listedDeliveryFee, earnsStampCard }) =>
+          ({ id, label, distance, menuUrl, listedDeliveryFee, earnsStampCard }));
     } catch (_) {}
 
     chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.JUST_EAT, branches });

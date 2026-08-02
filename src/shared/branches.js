@@ -75,6 +75,20 @@ function listedDeliveryFee(r) {
   };
 }
 
+// Whether this branch is in the StampCard scheme. The listing's `deals` array
+// carries a typed `offerType` per offer (live 2026-08-02 at one E1 postcode:
+// StampCard 824, Percent 566, ItemLevelDiscount 180, FreeItem 136,
+// BogofMixMatch 117, Notification 9), so participation needs no login and no
+// extra request. Cross-checked against the authenticated
+// consumers/uk/stampcards/status/{id} endpoint's `optInDate != null` over a
+// 24-branch sample (12 with, 12 without): 24/24 agreement.
+// That endpoint's `offerInformation` is deliberately NOT used — it returns the
+// same scheme-wide default (size 5, 10%) even for branches with optInDate null,
+// so reading it would flag every restaurant on Just Eat.
+function earnsStampCard(r) {
+  return Array.isArray(r.deals) && r.deals.some((d) => d && d.offerType === 'StampCard');
+}
+
 function justEatCandidates(nextData) {
   const map = findByKey(nextData, 'restaurantData') || {};
   return Object.values(map)
@@ -86,6 +100,7 @@ function justEatCandidates(nextData) {
       distance: typeof r.driveDistanceMeters === 'number' ? r.driveDistanceMeters / METRES_PER_MILE : null,
       menuUrl: `/restaurants-${r.uniqueName}/menu`,
       listedDeliveryFee: listedDeliveryFee(r),
+      earnsStampCard: earnsStampCard(r),
     }));
 }
 

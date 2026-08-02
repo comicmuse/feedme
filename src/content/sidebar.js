@@ -1,4 +1,7 @@
-const { MSG, PLATFORM, buildSearchUrl, browser } = require('../shared/constants');
+const {
+  MSG, PLATFORM, buildSearchUrl, browser,
+  JUST_EAT_STAMP_CARD_PERCENT, JUST_EAT_STAMP_CARD_SIZE,
+} = require('../shared/constants');
 
 // Prevent double-injection on re-click
 if (document.getElementById('feedme-root')) return;
@@ -272,6 +275,19 @@ function buildBranchCard(branch, isCheapest) {
     });
   }
   if (t.discountTotal > 0) appendDetRow(det, 'Discounts', `-${fmt(t.discountTotal)}`);
+  // A StampCard is deferred value, not a discount: the branch accrues a share of
+  // this order toward a voucher released on the Nth order, redeemable only there.
+  // So it is deliberately NOT in the total and cannot reorder the comparison —
+  // it renders as a note, below the money, with no amount (#72).
+  if (branch.earnsStampCard) {
+    appendNoteRow(
+      det,
+      'StampCard',
+      `earns ${JUST_EAT_STAMP_CARD_PERCENT}%`,
+      `Earns a stamp worth ${JUST_EAT_STAMP_CARD_PERCENT}% of this order toward a voucher on your `
+        + `${JUST_EAT_STAMP_CARD_SIZE}th order from this branch. It doesn't reduce this order.`,
+    );
+  }
   // Some of the cart's items may not exist on this branch's menu. We can't price
   // them, so they're excluded from the total — which makes a poor-coverage branch
   // look cheaper than the equivalent full basket. Surface the coverage and mark
@@ -345,6 +361,20 @@ function appendDetRow(parent, label, value, note) {
     l.appendChild(marker);
   }
   const v = document.createElement('span'); v.textContent = value;
+  r.appendChild(l); r.appendChild(v); parent.appendChild(r);
+}
+
+// A det row whose value is a note rather than an amount. Distinct from
+// appendDetRow's `note`, which qualifies a number we are showing: here there is
+// no number, and the hover explains why the row doesn't move the total.
+function appendNoteRow(parent, label, value, tooltip) {
+  const r = document.createElement('div');
+  r.className = 'r';
+  const l = document.createElement('span'); l.textContent = label;
+  const v = document.createElement('span');
+  v.className = 'approx';
+  v.textContent = value;
+  v.title = tooltip;
   r.appendChild(l); r.appendChild(v); parent.appendChild(r);
 }
 

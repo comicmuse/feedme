@@ -11,6 +11,15 @@
     <p class="sub" id="item-count"></p>
     <button id="compare-btn">Compare prices</button>
   </div>
+  <!-- Shown when host access has been revoked (Firefox only, in practice).
+       Takes priority over both other states: without access the checkout is
+       never read, so "go to a checkout page" would be misleading advice. -->
+  <div id="state-permission" class="hidden">
+    <p class="warn">FeedMe can't read these sites, so it can't compare prices:</p>
+    <ul id="missing-origins"></ul>
+    <button id="grant-btn">Grant access</button>
+    <p class="sub-note" id="grant-note">Site access was turned off for FeedMe. Granting it reloads this tab.</p>
+  </div>
   <div id="state-idle">
     <p>Go to the checkout page on a supported platform, then click here to compare prices.</p>
     <ul>

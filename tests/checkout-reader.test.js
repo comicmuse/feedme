@@ -711,6 +711,85 @@ describe('extractOrder - Uber One entitlements (#65)', () => {
   });
 });
 
+// A store or account promotion applied to the cart renders as its own fare row.
+// Live console capture on a Five Guys checkout (2026-08-02, #87) reported
+// `fare-breakdown-charge-badge-promotion-label` as unrecognised — and reported ONLY
+// the label, so the amount carries no testid of its own, the same shape as the
+// monthly benefit. Unlike the Uber One rows the label text is the offer's own
+// description ("Save 40% when you order £25 or more" — the live Five Guys
+// shopfront offer, 2026-08-02), which varies per promotion, so it is read from the
+// row rather than hardcoded.
+//
+// Observed live: the label testid, and that no value testid accompanied it. The
+// amount's own markup below is modelled on the monthly-benefit row rather than
+// captured — the account was at Uber's six-cart cap, so a Five Guys cart could not
+// be built to render one. Reading the row minus its label doesn't depend on that
+// markup, which is why the third test pins the value-testid shape too.
+describe('extractOrder - promotion fare row (#87)', () => {
+  const cart = `
+    <div data-testid="cart-summary-panel"></div>
+    <div data-testid="fare-breakdown-charge-badge-total">£20.00</div>
+    <div data-testid="cart-items-list">
+      <li><div data-testid="cart-item-1"><img alt="Sub" /><span>£24.95</span></div></li>
+    </div>`;
+  const docWith = (rows) =>
+    new JSDOM(`<!DOCTYPE html><html><body>${cart}${rows}</body></html>`).window.document;
+
+  // The live shape: label testid present, amount an untestidded sibling.
+  const promoRow = `<li>
+      <div><div data-testid="fare-breakdown-charge-badge-promotion-label">Save 40% when you order £25 or more</div></div>
+      <span data-baseweb="tag"><span>-£11.56</span></span>
+    </li>`;
+
+  test('reads the promotion from the row when its amount has no testid', async () => {
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(promoRow));
+    expect(order.discounts).toEqual([
+      { id: 'promotion', amount: 11.56, label: 'Save 40% when you order £25 or more' },
+    ]);
+  });
+
+  // The label is the offer's description, so it must come from the DOM — a
+  // hardcoded string would show every user the wrong promotion name.
+  test('describes the discount with the row\'s own label text', async () => {
+    const other = promoRow.replace('Save 40% when you order £25 or more', '15% off (up to £20) on large orders');
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(other));
+    expect(order.discounts[0].label).toBe('15% off (up to £20) on large orders');
+  });
+
+  // Reading the row minus its label is shape-agnostic by construction, so a value
+  // testid appearing later must change nothing.
+  test('reads the amount from a value testid if Uber ever adds one', async () => {
+    const withValue = `<li>
+      <div><div data-testid="fare-breakdown-charge-badge-promotion-label">Promotion</div></div>
+      <div data-testid="fare-breakdown-charge-badge-promotion"><span>-£4.00</span></div>
+    </li>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(withValue));
+    expect(order.discounts).toEqual([{ id: 'promotion', amount: 4.0, label: 'Promotion' }]);
+  });
+
+  test('captures nothing when no promotion is applied', async () => {
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(''));
+    expect(order.discounts).toEqual([]);
+  });
+
+  test('ignores a promotion row whose amount cannot be read rather than discounting £0', async () => {
+    const broken = `<li>
+      <div><div data-testid="fare-breakdown-charge-badge-promotion-label">Promotion</div></div>
+      <span data-baseweb="tag"><span>—</span></span>
+    </li>`;
+    const order = await extractOrder(PLATFORM.UBER_EATS, docWith(broken));
+    expect(order.discounts).toEqual([]);
+  });
+
+  test('no longer reports the promotion row as drift', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    await extractOrder(PLATFORM.UBER_EATS, docWith(promoRow));
+    const messages = warn.mock.calls.map((c) => c.join(' '));
+    warn.mockRestore();
+    expect(messages.filter((m) => /unrecognised fare row/i.test(m))).toEqual([]);
+  });
+});
+
 // Uber's checkout testids have drifted twice (#53/#55, #65) and both times the
 // failure was silent: a missing data-testid reads as "no such row", which is
 // indistinguishable from "this cart has no such row". Asserting that required rows

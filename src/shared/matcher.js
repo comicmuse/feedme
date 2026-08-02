@@ -443,6 +443,11 @@ function uberOrderSubtotal(order) {
 // Bounded like the delivery waiver: they demonstrably applied at the captured
 // cart's subtotal, and Uber publishes no minimum, so a smaller basket isn't assumed
 // to earn them (#65).
+// An allowlist, not a denylist: only discounts whose account scope is established
+// travel. The `promotion` row is deliberately absent — it renders identically
+// whether it came from the store's own shopfront offer or an account-wide promo
+// code, so the capture cannot prove a sibling branch has any claim to it, and
+// crediting one that doesn't understates its total (#87).
 const UBER_ONE_DISCOUNT_IDS = ['uber-one-monthly-benefit', 'uber-one-credits'];
 
 function uberOneAccountOffers(order) {

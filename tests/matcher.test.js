@@ -47,6 +47,20 @@ describe('uberOneAccountOffers', () => {
     expect(uberOneAccountOffers(withPromo)).toEqual([]);
   });
 
+  // A `promotion` row can be either a store's own offer ("Save 40% when you order
+  // £25 or more", scoped to that shopfront) or an account-wide promo code — the
+  // checkout row looks identical either way, so its scope is unknowable from the
+  // capture. Uber One entitlements propagate because their account scope is known;
+  // a promotion must not, or every sibling branch is credited with a discount it
+  // may have no claim to (#87).
+  test('does not propagate a promotion, whose scope the cart cannot prove', () => {
+    const withPromo = {
+      ...order,
+      discounts: [{ id: 'promotion', amount: 11.56, label: 'Save 40% when you order £25 or more' }],
+    };
+    expect(uberOneAccountOffers(withPromo)).toEqual([]);
+  });
+
   test('no entitlements captured means no offers', () => {
     expect(uberOneAccountOffers({ ...order, discounts: [] })).toEqual([]);
   });

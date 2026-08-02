@@ -203,6 +203,8 @@ const KNOWN_UBER_FARE_ROWS = new Set([
   'fare-breakdown-charge-badge-uber-one-monthly-benefit-label',
   'fare-breakdown-charge-badge-uber-one-credits',
   'fare-breakdown-charge-badge-uber-one-credits-label',
+  'fare-breakdown-charge-badge-promotion',
+  'fare-breakdown-charge-badge-promotion-label',
 ]);
 
 // Uber's checkout testids have drifted twice (#53/#55, #55's name element and #65's
@@ -390,21 +392,30 @@ async function extractUberEats(doc) {
   // `membership-benefit` testid this used to read no longer exists on the page at
   // all, so the old capture silently returned nothing. Each row keeps a stable id
   // so sibling pricing can identify it without matching localised label text (#65).
-  const uberOneDiscount = (key, label) => {
+  // `label` names the row for display. The Uber One rows pass one so the reader
+  // never has to match localised text to identify them; a promotion passes none,
+  // because its label element IS the offer's description ("Save 40% when you order
+  // £25 or more") and differs per promotion (#87).
+  const rowDiscount = (key, label) => {
     const labelEl = feeEl(`fare-breakdown-charge-badge-${key}-label`);
     if (!labelEl) return null;
+    const labelText = labelEl.textContent ?? '';
     const valueEl = feeEl(`fare-breakdown-charge-badge-${key}`);
     // Fall back to the whole row, minus the label, so the untestidded amount is
     // still found — and so a future testid appearing for it changes nothing.
     const text = valueEl
       ? valueEl.textContent ?? ''
-      : (labelEl.closest('li')?.textContent ?? '').replace(labelEl.textContent ?? '', '');
+      : (labelEl.closest('li')?.textContent ?? '').replace(labelText, '');
     if (!/\d/.test(text)) return null; // an unreadable row is skipped, not discounted by £0
-    return { id: key, amount: Math.abs(parsePrice(text)), label };
+    return { id: key, amount: Math.abs(parsePrice(text)), label: label ?? labelText.trim() };
   };
   const discounts = [
-    uberOneDiscount('uber-one-monthly-benefit', 'Uber One monthly benefit'),
-    uberOneDiscount('uber-one-credits', 'Uber One credits'),
+    rowDiscount('uber-one-monthly-benefit', 'Uber One monthly benefit'),
+    rowDiscount('uber-one-credits', 'Uber One credits'),
+    // A store or account promotion applied to this cart. Captured so the cart's own
+    // breakdown reconciles with the total Uber charges, but deliberately NOT carried
+    // to sibling branches — see uberOneAccountOffers (#87).
+    rowDiscount('promotion'),
   ].filter((d) => d && d.amount > 0);
 
   return {

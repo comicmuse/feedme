@@ -99,7 +99,7 @@ revision will be visible in the project's public history.
 
 ## Contact
 
-Questions about this policy: **<CONTACT EMAIL>**
+Questions about this policy: **feedme@comicmuse.net**
 
 Controller for the purposes of UK GDPR, to the extent it applies:
-**<YOUR NAME>**.
+**Colm Linehan**.

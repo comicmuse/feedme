@@ -10,13 +10,19 @@
 import { rm, mkdir, cp, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { buildManifest, TARGETS } = require('./manifest.js');
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = join(root, 'build');
+
+// icons/src/ holds the editable SVGs the PNGs are rendered from (#78). The
+// browser never loads them and a store reviewer should not have to wonder why
+// an extension ships vector duplicates of its own icons, so they stay out of
+// the package.
+const shipped = (src) => !src.includes(`${sep}icons${sep}src`);
 
 await rm(out, { recursive: true, force: true });
 
@@ -27,7 +33,7 @@ for (const target of TARGETS) {
   // repo layout, so the copied tree needs no rewriting — only the surrounding junk
   // is dropped.
   for (const entry of ['dist', 'popup', 'icons']) {
-    await cp(join(root, entry), join(dir, entry), { recursive: true });
+    await cp(join(root, entry), join(dir, entry), { recursive: true, filter: shipped });
   }
   await writeFile(join(dir, 'manifest.json'), `${JSON.stringify(buildManifest(target), null, 2)}\n`);
 }

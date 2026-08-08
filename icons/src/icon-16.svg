@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- 16px toolbar tier. Authored at 128 and rendered down; see icons/README.md.
+
+       No price-drop arrow here, and that is deliberate (#78). The toolbar icon
+       is the identity layer and never changes; the badge is the state layer.
+       service-worker.js paints a green (#22c55e) badge over the bottom-right of
+       this icon when an order is captured, so an arrow there would be both
+       overpainted and a second, differently-meaning green.
+
+       No lettuce either: green has to mean "cheaper" and nothing else, or the
+       badge stops being the thing the eye lands on. Three bands is the whole
+       budget at this size. -->
+  <path d="M 6 58 Q 6 8 64 8 Q 122 8 122 58 Z" fill="#f2a950"/>
+  <rect x="6" y="56" width="116" height="30" rx="10" fill="#8a4a28"/>
+  <rect x="6" y="85" width="116" height="35" rx="17" fill="#eda24a"/>
+</svg>

@@ -17,6 +17,20 @@ describe('buildManifest', () => {
     }
   });
 
+  // 32 is not optional decoration: it is Firefox's toolbar size and Chrome's at
+  // 2x. Without it both browsers downscale the 48, which is visibly soft on the
+  // one icon users see most (#78).
+  test('declares an icon at every size the browsers ask for', () => {
+    for (const t of TARGETS) {
+      expect(buildManifest(t).action.default_icon).toEqual({
+        16: 'icons/icon16.png',
+        32: 'icons/icon32.png',
+        48: 'icons/icon48.png',
+        128: 'icons/icon128.png',
+      });
+    }
+  });
+
   // Every declared permission costs a written justification in the Chrome
   // dashboard and draws reviewer attention on AMO, so the set is asserted
   // exactly rather than by absence: adding one has to be a deliberate edit here

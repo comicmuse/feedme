@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- 32px toolbar tier: Firefox's toolbar size, and Chrome's at 2x. Same mark
+       and same badge reasoning as icon-16, with the detail 32px can actually
+       resolve — sesame seeds and separating outlines, which at 16px only
+       muddied the bands. -->
+  <path d="M 6 58 Q 6 8 64 8 Q 122 8 122 58 Z" fill="#f2a950" stroke="#c67c2c" stroke-width="3"/>
+  <circle cx="42" cy="34" r="4.5" fill="#fdeac4"/>
+  <circle cx="70" cy="27" r="4.5" fill="#fdeac4"/>
+  <circle cx="94" cy="38" r="4.5" fill="#fdeac4"/>
+  <rect x="6" y="56" width="116" height="30" rx="10" fill="#8a4a28" stroke="#5f3019" stroke-width="3"/>
+  <rect x="6" y="85" width="116" height="35" rx="17" fill="#eda24a" stroke="#c67c2c" stroke-width="3"/>
+</svg>

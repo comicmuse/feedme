@@ -13,6 +13,21 @@ After editing any SVG:
 `tests/icons.test.js` checks every declared size exists at the right dimensions,
 carries real content, and still has its SVG source.
 
+## Two manifest keys, both required
+
+`manifest.base.json` declares the same four files twice, and both are load-bearing:
+
+| Key | Drives |
+|---|---|
+| `action.default_icon` | The toolbar button |
+| `icons` | `chrome://extensions`, the install dialog, the Chrome Web Store listing tile, Firefox `about:addons` |
+
+Declaring only the first produces a correct toolbar icon and a generated grey
+letter tile everywhere else — including the store listing (#97). It looks like a
+caching problem and is not one.
+
+`tests/icons.test.js` checks both keys and asserts they stay equal.
+
 ## Why the sizes differ
 
 They are not one drawing scaled four ways. Each size is drawn to what it can

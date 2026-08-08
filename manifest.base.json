@@ -1,7 +1,6 @@
 {
   "manifest_version": 3,
   "name": "FeedMe",
-  "version": "0.1.0",
   "description": "Compare delivery prices across Uber Eats, Deliveroo, and Just Eat",
   "permissions": [
     "tabs",
@@ -18,9 +17,6 @@
     "*://uk.api.just-eat.io/*",
     "*://menu-globalmenucdn.je-apis.com/*"
   ],
-  "background": {
-    "service_worker": "dist/service-worker.js"
-  },
   "content_scripts": [
     {
       "matches": [
@@ -38,12 +34,6 @@
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
-    }
-  },
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "feedme@feedme.dev",
-      "strict_min_version": "109.0"
     }
   }
 }

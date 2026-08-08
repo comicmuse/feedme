@@ -3,6 +3,7 @@ const {
   JUST_EAT_STAMP_CARD_PERCENT, JUST_EAT_STAMP_CARD_SIZE,
 } = require('../shared/constants');
 const { themeCssVars } = require('../shared/theme');
+const { branchShortfall } = require('../shared/snapshot');
 
 // Prevent double-injection on re-click
 if (document.getElementById('feedme-root')) return;
@@ -92,6 +93,11 @@ ${themeCssVars()}
 .tag { font-size:8px; font-weight:800; padding:1px 5px; border-radius:6px; margin-left:4px; align-self:flex-start; }
 .tag.ch { background:var(--fm-win); color:var(--fm-surface); }
 .tag.cu { background:var(--fm-accent-tint); color:var(--fm-accent); }
+/* An incomplete basket: warn-coloured so it reads as a caveat on the total
+   rather than as another accolade beside CHEAPEST. */
+.tag.sh { background:var(--fm-surface-muted); color:var(--fm-warn); }
+.collrow .short { color:var(--fm-warn); }
+.ftnote { margin-top:3px; font-size:11px; font-weight:400; color:var(--fm-text-muted); }
 .det { border-top:1px dashed var(--fm-border); padding:6px 9px; font-size:10px; color:var(--fm-text-muted); display:flex; flex-direction:column; gap:2px; }
 .det .r { display:flex; justify-content:space-between; }
 .det .r .approx { text-decoration:underline dotted; text-underline-offset:2px; cursor:help; }
@@ -215,6 +221,10 @@ function buildBranchCard(branch, isCheapest) {
   nameWrap.appendChild(labelLine);
   if (branch.isCurrent) appendTag(nameWrap, 'YOUR CART', 'cu');
   if (isCheapest) appendTag(nameWrap, 'CHEAPEST', 'ch');
+  // An incomplete branch is disqualified from winning (#3), so its total must
+  // never appear as a bare number that looks like it simply lost on price.
+  const short = branchShortfall(branch);
+  if (short) appendTag(nameWrap, `${short.matchedCount} OF ${short.totalCount} ITEMS`, 'sh');
   if (branch.distance != null) {
     const sub = document.createElement('span');
     sub.className = 'sub';
@@ -338,8 +348,14 @@ function buildCollapsedRow(branch) {
     ? `${branch.label || 'Branch'} · ${branch.distance} mi`
     : (branch.label || 'Branch');
   const right = document.createElement('span');
+  const collapsedShort = branchShortfall(branch);
   right.textContent = branch.status === 'error' ? 'error ▾'
-    : branch.status === 'pending' ? '… ▾' : `${fmt(branchTotal(branch))} ▾`;
+    : branch.status === 'pending' ? '… ▾'
+    // Collapsed, the total is all there is to go on, so the shortfall rides
+    // with it rather than waiting to be discovered on expand.
+    : collapsedShort ? `${fmt(branchTotal(branch))} · ${collapsedShort.matchedCount} of ${collapsedShort.totalCount} ▾`
+    : `${fmt(branchTotal(branch))} ▾`;
+  if (collapsedShort) right.className = 'short';
   row.appendChild(left);
   row.appendChild(right);
   row.addEventListener('click', () => { expanded.add(branch.key); render(lastSnapshot, lastOrder); });
@@ -496,10 +512,22 @@ function renderFooter(snapshot) {
     }
   } else if (f.kind === 'best') {
     ft.className = 'ft';
-    ft.textContent = "✅ You're already on the cheapest branch";
+    ft.textContent = f.undercut
+      ? "✅ You're on the cheapest branch with every item"
+      : "✅ You're already on the cheapest branch";
   } else {
     ft.className = 'ft';
     ft.textContent = 'Comparing branches…';
+  }
+  // The whole point of #3: a lower number is visible on screen, so say plainly
+  // why it did not win rather than leaving the verdict looking wrong.
+  if (f.undercut) {
+    const u = f.undercut;
+    const note = document.createElement('div');
+    note.className = 'ftnote';
+    note.textContent = `${PLATFORM_LABEL[u.platform].name}${u.label ? ` (${u.label})` : ''}`
+      + ` is ${fmt(u.total)}, but priced only ${u.matchedCount} of your ${u.totalCount} items`;
+    ft.appendChild(note);
   }
   bar.appendChild(ft);
 }

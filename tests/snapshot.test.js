@@ -71,4 +71,64 @@ describe('buildSnapshot', () => {
     const snap = buildSnapshot(order, branches(), new Set());
     expect(snap.platforms.every((p) => p.enumFailed === false)).toBe(true);
   });
+
+  // #3: a branch that priced only some of the cart is cheaper for the wrong
+  // reason, so it cannot win — but showing its bare total next to "you're
+  // already on the cheapest branch" reads as the comparison being broken.
+  // Live 2026-08-08: Deliveroo Whitechapel showed £54.09 against Uber's £60.31
+  // and lost, because £54.09 bought four of five items.
+  describe('undercut by an incomplete branch', () => {
+    const short = (total, matched, count) => ({
+      status: 'done',
+      result: { restaurantName: 'Burger King', matches: [], offers: [],
+        total: { total, matchedCount: matched, totalCount: count } },
+    });
+
+    const withShortfall = () => [
+      { platform: PLATFORM.UBER_EATS, key: 'uber|cur', label: 'WC', distance: 0.4, isCurrent: true, ...done(60.31, 5, 5) },
+      { platform: PLATFORM.DELIVEROO, key: 'del|wc', label: 'Whitechapel', distance: 0.4, isCurrent: false, ...short(54.09, 4, 5) },
+    ];
+
+    test('an incomplete branch never becomes the cheapest, however low its total', () => {
+      const snap = buildSnapshot(order, withShortfall(), new Set());
+      expect(snap.cheapestKey).toBe('uber|cur');
+    });
+
+    test('the footer reports what undercut the winner and why it did not count', () => {
+      const snap = buildSnapshot(order, withShortfall(), new Set());
+      expect(snap.footer.kind).toBe('best');
+      expect(snap.footer.undercut).toEqual({
+        platform: PLATFORM.DELIVEROO,
+        label: 'Whitechapel',
+        total: 54.09,
+        matchedCount: 4,
+        totalCount: 5,
+      });
+    });
+
+    test('only a cheaper incomplete branch is called out, not a dearer one', () => {
+      const b = withShortfall();
+      b[1].result.total.total = 70.00;
+      expect(buildSnapshot(order, b, new Set()).footer.undercut).toBeUndefined();
+    });
+
+    test('the nearest miss is reported when several branches fall short', () => {
+      const b = withShortfall();
+      b.push({ platform: PLATFORM.JUST_EAT, key: 'je|al', label: 'Aldgate', distance: 0.9, isCurrent: false, ...short(50.00, 3, 5) });
+      // 50.00 is lower, but 54.09 is the closest thing to a real alternative.
+      expect(buildSnapshot(order, b, new Set()).footer.undercut.total).toBe(54.09);
+    });
+
+    test('nothing is reported when every branch priced the whole cart', () => {
+      expect(buildSnapshot(order, branches(), new Set()).footer.undercut).toBeUndefined();
+    });
+
+    test('a switch recommendation can also be undercut by an incomplete branch', () => {
+      const b = withShortfall();
+      b.push({ platform: PLATFORM.JUST_EAT, key: 'je|al', label: 'Aldgate', distance: 0.9, isCurrent: false, ...done(58.00, 5, 5) });
+      const snap = buildSnapshot(order, b, new Set());
+      expect(snap.footer.kind).toBe('switch');
+      expect(snap.footer.undercut.total).toBe(54.09);
+    });
+  });
 });

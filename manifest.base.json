@@ -6,7 +6,6 @@
     "tabs",
     "scripting",
     "storage",
-    "activeTab",
     "webNavigation"
   ],
   "host_permissions": [

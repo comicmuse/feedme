@@ -82,7 +82,7 @@ and as required by the extension stores:
 |---|---|
 | Host access to the three delivery platforms | Read your basket, read branch menus, and fill a basket when you switch |
 | `tabs`, `webNavigation` | Open and follow the background tabs that read branch menus |
-| `scripting`, `activeTab` | Run the comparison sidebar and the basket builder on those pages |
+| `scripting` | Run the comparison sidebar and the basket builder on those pages |
 | `storage` | Hold the current order for the duration of the comparison, and your two settings |
 
 FeedMe requests no other permissions, and holds no access to any site outside

@@ -3,6 +3,7 @@ const { matchItems, computeTotal, estimateUberFees, uberOneWaiverOffer, uberOneA
 const { buildSnapshot } = require('../shared/snapshot');
 const { createScheduler } = require('../shared/pool');
 const { THEME } = require('../shared/theme');
+const { switchTableKey, buildSwitchTable, switchEntry } = require('../shared/switch-table');
 
 // Keyed by source tabId.
 const comparisons = new Map();
@@ -205,38 +206,48 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   // Every rejected click logs its reason: a switch that silently does nothing is
   // undiagnosable from a user report (#38).
   // The sidebar runs in the source tab, which keys the comparison.
-  const comparison = comparisons.get(sender.tab?.id);
+  const tabId = sender.tab?.id;
+  const comparison = comparisons.get(tabId);
+  // A terminated worker loses `comparisons` while the sidebar in the page lives
+  // on, so a cold map is the normal state of an idle session, not an error
+  // (#103). Fall back to the mirror rather than dropping the click.
+  let branch = comparison ? comparison.branches.get(msg.branchKey) : null;
   if (!comparison) {
-    console.info('[FeedMe switch] click ignored — no comparison for tab', sender.tab?.id);
-    return;
+    const key = switchTableKey(tabId);
+    const stored = await browser.storage.session.get(key).catch(() => ({}));
+    branch = switchEntry(stored[key], msg.branchKey);
+    console.info('[FeedMe switch] comparison was cold for tab', tabId,
+      branch ? '— restored the branch from session storage' : '— nothing stored for this branch either');
   }
-  const branch = comparison.branches.get(msg.branchKey);
   if (!branch || branch.isCurrent || !branch.switchUrl) {
     console.info('[FeedMe switch] click ignored —',
       !branch ? 'unknown branch key' : branch.isCurrent ? 'branch is the current one' : 'branch has no switch URL',
       msg.branchKey);
-    return;
+    return { ok: false, reason: branch ? 'not-switchable' : 'expired' };
   }
   // Defence in depth: the URL was validated when enqueued, re-check before opening.
   if (!isAllowedMenuUrl(branch.platform, branch.switchUrl)) {
     console.info('[FeedMe switch] click ignored — URL failed origin validation', branch.switchUrl);
-    return;
+    return { ok: false, reason: 'bad-url' };
   }
 
   const tab = await browser.tabs.create({ url: branch.switchUrl, active: true }).catch(() => null);
   if (!tab) {
     console.info('[FeedMe switch] tabs.create failed for', branch.switchUrl);
-    return;
+    return { ok: false, reason: 'tab-failed' };
   }
   // Stash the whole plan for the builder to claim once the tab has loaded. Lines
   // the matcher couldn't fully resolve (prefillable: false) are attempted too —
   // the builder fills what it can and flags them for review; dropping them here
   // made the overlay claim a complete fill over a short basket.
-  const basketPlan = branch.result?.basketPlan ?? [];
+  // A live branch carries its plan under result; one restored from the mirror
+  // carries it flat, having no result to speak of.
+  const basketPlan = branch.result?.basketPlan ?? branch.basketPlan ?? [];
   console.info('[FeedMe switch] to', branch.platform, branch.switchUrl,
     '— plan', basketPlan.filter((l) => l.prefillable).length, 'prefillable of',
     basketPlan.length, 'lines:', JSON.stringify(basketPlan));
   if (basketPlan.length) pendingBuilds.set(tab.id, { platform: branch.platform, basketPlan });
+  return { ok: true };
 });
 
 // ── RETRY_PLATFORM: re-run enumeration for a platform whose scan timed out ──
@@ -322,6 +333,13 @@ function pushUpdate(comparison, done = false) {
   const snapshot = buildSnapshot(comparison.order, [...comparison.branches.values()], comparison.loading, comparison.enumErrors);
   browser.tabs.sendMessage(comparison.sourceTabId, {
     type: MSG.COMPARISON_UPDATE, order: comparison.order, snapshot, done,
+  }).catch(() => {});
+  // Mirror what a switch needs somewhere this worker's death cannot reach (#103).
+  // Written on every update rather than once at the end: the worker can be
+  // terminated mid-comparison, and a half-finished table still switches the
+  // branches that did resolve.
+  browser.storage.session.set({
+    [switchTableKey(comparison.sourceTabId)]: buildSwitchTable(comparison.branches.values()),
   }).catch(() => {});
 }
 

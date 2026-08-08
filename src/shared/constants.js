@@ -160,17 +160,52 @@ function isMenuPageUrl(platform, url) {
   return re ? re.test(new URL(url).pathname) : false;
 }
 
+// A UK postcode is an outward code (E1, SW1A, EC1) and an inward one (1JU): the
+// inward part is always a digit followed by two letters, which is what lets a
+// complete postcode be told from a truncated one.
+const OUTWARD = '[A-Z]{1,2}\\d{1,2}[A-Z]?';
+const FULL_POSTCODE = new RegExp(`^(${OUTWARD})\\s*(\\d[A-Z]{2})$`);
+const OUTWARD_ONLY = new RegExp(`^${OUTWARD}\\b`);
+
+/**
+ * Reduce a postcode to the form these listing URLs take, keeping only as much as
+ * the source actually gave us.
+ *
+ * Uber's store JSON-LD truncates: live 2026-08-08, Whitechapel's Tayyab Sheesh
+ * Kebab published "E1 1". Stripping the space fused that into "e11" — and E11 is
+ * Leytonstone, a real district four miles away, so the branch listing came back
+ * empty and nothing anywhere errored. A partial inward code carries no usable
+ * information, so drop it and search the outward district instead of inventing a
+ * different one. The same collapse would turn N1 1 into N11 and SW1 1 into SW11.
+ *
+ * @param {string} raw
+ * @returns {?string} lowercased postcode for a URL path, or null if unusable
+ */
+function normalisePostcode(raw) {
+  const s = String(raw || '').toUpperCase().replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  const full = s.match(FULL_POSTCODE);
+  if (full) return (full[1] + full[2]).toLowerCase();
+  const outward = s.match(OUTWARD_ONLY);
+  return outward ? outward[0].toLowerCase() : null;
+}
+
 function buildSearchUrl(platform, restaurantName, postcode) {
   const template = SEARCH_URL_TEMPLATES[platform];
   if (!template) return null;
   // Search by the brand (first token) only: the verbose store name ("Subway Mile
   // End Halal") makes Uber return just that one store, hiding sibling branches.
   const brand = String(restaurantName || '').trim().split(/\s+/)[0] || '';
-  return template
-    .replace('{name}', encodeURIComponent(brand))
-    // Postcodes are case-insensitive in these URLs; lowercase matches the form the
-    // sites use in their own paths (e.g. /area/sw1e5je).
-    .replace('{postcode}', encodeURIComponent(postcode.replace(/\s+/g, '').toLowerCase()));
+  // Postcodes are case-insensitive in these URLs; lowercase matches the form the
+  // sites use in their own paths (e.g. /area/sw1e5je). Templates that need one
+  // yield no URL at all without it — /area//restaurants 404s, which the sidebar
+  // would report as a platform having genuinely no branches.
+  if (template.includes('{postcode}')) {
+    const pc = normalisePostcode(postcode);
+    if (!pc) return null;
+    return template.replace('{name}', encodeURIComponent(brand)).replace('{postcode}', encodeURIComponent(pc));
+  }
+  return template.replace('{name}', encodeURIComponent(brand));
 }
 
 module.exports = {
@@ -188,6 +223,7 @@ module.exports = {
   JUST_EAT_STAMP_CARD_SIZE,
   platformFromUrl,
   buildSearchUrl,
+  normalisePostcode,
   isAllowedMenuUrl,
   isJeApiUrl,
   isMenuPageUrl,

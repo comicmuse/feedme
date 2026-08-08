@@ -1,5 +1,5 @@
 // src/content/uber-scraper.js
-const { selectNearestBranches, nameTokens } = require('../shared/branches');
+const { selectNearestBranches, nameTokens, sameBrand } = require('../shared/branches');
 const { MSG, PLATFORM } = require('../shared/constants');
 const { parseUberStore } = require('../shared/parsers');
 
@@ -157,12 +157,16 @@ async function runUberScraper() {
   // de-dupes away. Locality-qualified queries ("KFC Whitechapel") sometimes
   // expand to several branches but inconsistently ("KFC Mile End" does not), so
   // there is no deterministic replacement surface.
+  // Stemmed here so a brand Uber trades under a different word form still counts
+  // as "the chain's results have rendered" (#89: "Tayyabs" on the source platform
+  // vs "Tayyab Sheesh Kebab" on Uber) — otherwise this waits out the full timeout
+  // and reports no branches at all. selectNearestBranches still prefers exact.
   const brand = nameTokens(ctx.restaurantName ?? '')[0] || '';
   const ready = await waitFor(() => {
     const found = extractUberStoreCards(document);
     if (!found.length) return null;
     if (!brand) return found;
-    return found.some((c) => nameTokens(c.name)[0] === brand) ? found : null;
+    return found.some((c) => sameBrand(c.name, ctx.restaurantName ?? '', { stemmed: true })) ? found : null;
   });
   if (!ready) {
     chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.UBER_EATS, branches: [] });

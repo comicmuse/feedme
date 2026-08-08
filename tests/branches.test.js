@@ -1,4 +1,4 @@
-const { findByKey, selectNearestBranches } = require('../src/shared/branches');
+const { findByKey, selectNearestBranches, sameBrand } = require('../src/shared/branches');
 
 const candidates = [
   { id: 'bk-cw',  name: 'Burger King', label: 'Canary Wharf', distance: 1.8, menuUrl: '/restaurants-bk-cw/menu' },
@@ -77,6 +77,74 @@ describe('selectNearestBranches — deterministic brand matching', () => {
   test('apostrophe/punctuation differences still match', () => {
     const solo = [{ id: 'tp', name: "Tony's Pizza", label: '', distance: 0.5, menuUrl: '/m' }];
     expect(selectNearestBranches(solo, 'Tonys Pizza', 3).map((b) => b.id)).toEqual(['tp']);
+  });
+});
+
+// #89: the same restaurant trades under a bare and an -s brand across platforms
+// ("Tayyab Sheesh Kebab" on Uber, "Tayyabs" on Deliveroo and Just Eat), so exact
+// first-token equality finds nothing at all. Falling back to the stemmed token
+// only when the exact pass is empty keeps every existing chain result untouched.
+describe('selectNearestBranches — stemmed fallback', () => {
+  const tayyab = [
+    { id: 'uber-tsk', name: 'Tayyab Sheesh Kebab', label: '', distance: 0.4, menuUrl: '/m/1' },
+  ];
+  const tayyabs = [
+    { id: 'je-t', name: 'Tayyabs', label: 'Fieldgate Street', distance: 0.4, menuUrl: '/m/2' },
+  ];
+
+  test('a bare-brand target matches an -s candidate', () => {
+    expect(selectNearestBranches(tayyabs, 'Tayyab Sheesh Kebab', 3).map((b) => b.id)).toEqual(['je-t']);
+  });
+
+  test('an -s target matches a bare-brand candidate', () => {
+    expect(selectNearestBranches(tayyab, 'Tayyabs', 3).map((b) => b.id)).toEqual(['uber-tsk']);
+  });
+
+  test('exact matches claim the nearest-n slots ahead of nearer stemmed ones', () => {
+    const mixed = [
+      { id: 'burgers', name: 'Burgers Etc', label: '', distance: 0.1, menuUrl: '/m/1' },
+      { id: 'bk-far', name: 'Burger King', label: '', distance: 0.9, menuUrl: '/m/2' },
+      { id: 'bk-near', name: 'Burger King Aldgate', label: '', distance: 0.5, menuUrl: '/m/3' },
+    ];
+    // Only two slots: both go to Burger King even though "Burgers Etc" is nearest.
+    expect(selectNearestBranches(mixed, 'Burger King', 2).map((b) => b.id)).toEqual(['bk-near', 'bk-far']);
+  });
+
+  test('stemmed matches fill the slots exact matches leave over', () => {
+    // Live 2026-08-02: Uber's search for "Tayyabs" returns "Tayyabs Express"
+    // (exact, Ilford) alongside the intended "Tayyab Sheesh Kebab" (stemmed), so
+    // a stemmed pass that ran only when exact found nothing would still miss it.
+    const uberFeed = [
+      { id: 'tsk', name: 'Tayyab Sheesh Kebab', label: '', distance: 0.4, menuUrl: '/m/1' },
+      { id: 'texp', name: 'Tayyabs Express', label: '', distance: 8.1, menuUrl: '/m/2' },
+    ];
+    expect(selectNearestBranches(uberFeed, 'Tayyabs', 3).map((b) => b.id)).toEqual(['texp', 'tsk']);
+  });
+
+  test('short tokens are not stemmed', () => {
+    // Stripping the 's' from a three-letter token would conflate unrelated brands.
+    const gus = [{ id: 'gus', name: 'Gus Kitchen', label: '', distance: 0.2, menuUrl: '/m' }];
+    expect(selectNearestBranches(gus, 'Gu Kitchen', 3)).toEqual([]);
+  });
+});
+
+describe('sameBrand', () => {
+  test('exact mode compares whole leading tokens', () => {
+    expect(sameBrand('Subway - Mile End', 'Subway Halal')).toBe(true);
+    expect(sameBrand('BurgerMania', 'Burger King')).toBe(false);
+    expect(sameBrand('Tayyabs', 'Tayyab Sheesh Kebab')).toBe(false);
+  });
+
+  test('stemmed mode ignores a trailing plural/possessive s', () => {
+    expect(sameBrand('Tayyabs', 'Tayyab Sheesh Kebab', { stemmed: true })).toBe(true);
+    expect(sameBrand('Tayyab Sheesh Kebab', 'Tayyabs', { stemmed: true })).toBe(true);
+    expect(sameBrand('Nandos', "Nando's Aldgate", { stemmed: true })).toBe(true);
+    expect(sameBrand('Chicken Cottage', 'Chick King', { stemmed: true })).toBe(false);
+  });
+
+  test('an empty name on either side never matches', () => {
+    expect(sameBrand('', 'Tayyabs', { stemmed: true })).toBe(false);
+    expect(sameBrand('Tayyabs', '', { stemmed: true })).toBe(false);
   });
 });
 

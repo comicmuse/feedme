@@ -1,4 +1,4 @@
-const { selectNearestBranches } = require('../shared/branches');
+const { selectNearestBranches, sameBrand } = require('../shared/branches');
 const { MSG, PLATFORM } = require('../shared/constants');
 const { parseMenuResponse } = require('../shared/parsers');
 
@@ -90,11 +90,13 @@ const { parseMenuResponse } = require('../shared/parsers');
     setInputValue(search, brand);
     search.focus();
 
-    // Wait for autocomplete results whose name starts with the brand to render.
-    const brandLc = brand.toLowerCase();
+    // Wait for autocomplete results for the brand to render. Matched on the
+    // leading token rather than a raw string prefix, and stemmed, so a brand
+    // written with a trailing "s" on one platform only still resolves (#89);
+    // selectNearestBranches below still prefers exact matches over stemmed ones.
     const links = await waitFor(() => {
       const found = [...document.querySelectorAll('a[href*="/menu/"]')]
-        .filter((a) => (a.getAttribute('aria-label') || '').trim().toLowerCase().startsWith(brandLc));
+        .filter((a) => sameBrand((a.getAttribute('aria-label') || '').trim(), brand, { stemmed: true }));
       return found.length ? found : null;
     });
     if (!links) {

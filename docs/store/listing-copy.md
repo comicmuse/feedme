@@ -101,7 +101,7 @@ account, no telemetry, no analytics, no advertising and no tracking of any
 kind. It reads no page outside the three delivery platforms, and it never
 sees your name, address, payment details or order history.
 
-Full policy: <PRIVACY_POLICY_URL>
+Full policy: https://comicmuse.net/feedme/privacy/
 
 OPEN SOURCE
 
@@ -109,7 +109,10 @@ MIT licensed. The complete source is public:
 https://github.com/comicmuse/feedme
 ```
 
-`<PRIVACY_POLICY_URL>` is filled in once #79 settles the hosted location.
+The privacy policy URL is `https://comicmuse.net/feedme/privacy/`, settled in
+#79. It is the same field the Chrome dashboard and the AMO listing both require.
+The page is generated from `PRIVACY.md` on every push to `main`, so the hosted
+policy and the repo's cannot drift.
 
 ---
 
@@ -269,8 +272,8 @@ Broadening coverage is scraper work, not a listing change.
 | Category | Shopping |
 | Language | English (UK) |
 | Support email | Per #85 — `feedme@comicmuse.net`, once confirmed to route somewhere read |
-| Privacy policy URL | Per #79 |
-| Homepage | https://github.com/comicmuse/feedme |
+| Privacy policy URL | https://comicmuse.net/feedme/privacy/ |
+| Homepage | https://comicmuse.net/feedme/ |
 
 ---
 

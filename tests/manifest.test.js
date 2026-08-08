@@ -59,14 +59,26 @@ describe('buildManifest', () => {
     expect(m.background.service_worker).toBeUndefined();
   });
 
-  // The floor must clear everything the add-on declares or calls, not just MV3:
-  // storage.session needs 115, and data_collection_permissions needs 140 on
-  // desktop / 142 on Android. The previous 109 was the MV3 floor, which would
-  // have installed the add-on onto browsers where it throws on first use.
-  test('firefox declares a minimum version that supports every API and key used', () => {
+  // The desktop floor is the oldest release the add-on is actually tested on,
+  // and must still clear every API it calls — storage.session lands at 115, so
+  // nothing below that can be claimed however well it is tested. It was briefly
+  // 142, which bought nothing (see scripts/manifest.js) and locked out
+  // LibreWolf 139, the browser this is developed against (#101).
+  test('firefox declares a desktop floor that is tested and supports every API used', () => {
     const gecko = buildManifest('firefox').browser_specific_settings.gecko;
     expect(gecko.id).toBe('feedme@feedme.dev');
-    expect(Number(gecko.strict_min_version.split('.')[0])).toBeGreaterThanOrEqual(142);
+    const major = Number(gecko.strict_min_version.split('.')[0]);
+    expect(major).toBeGreaterThanOrEqual(115); // storage.session
+    expect(major).toBeLessThan(140);           // else the #101 lockout is back
+  });
+
+  // Android is declared separately purely so data_collection_permissions, which
+  // only lands there at 142, cannot drag the desktop floor up with it. Collapse
+  // these two back into one key and the lockout returns silently.
+  test('android is floored separately from desktop, at the version its keys need', () => {
+    const bss = buildManifest('firefox').browser_specific_settings;
+    expect(Number(bss.gecko_android.strict_min_version.split('.')[0])).toBeGreaterThanOrEqual(142);
+    expect(bss.gecko_android.strict_min_version).not.toBe(bss.gecko.strict_min_version);
   });
 
   // Required for all new Firefox extensions since 3 November 2025; web-ext lint

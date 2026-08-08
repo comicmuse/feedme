@@ -2,6 +2,7 @@ const {
   MSG, PLATFORM, buildSearchUrl, browser,
   JUST_EAT_STAMP_CARD_PERCENT, JUST_EAT_STAMP_CARD_SIZE,
 } = require('../shared/constants');
+const { themeCssVars } = require('../shared/theme');
 
 // Prevent double-injection on re-click
 if (document.getElementById('feedme-root')) return;
@@ -15,90 +16,95 @@ const shadow = host.attachShadow({ mode: 'open' });
 
 const styleEl = document.createElement('style');
 styleEl.textContent = `
+${themeCssVars()}
 * { box-sizing: border-box; margin: 0; padding: 0; }
-#bar { width:100%; max-height:80vh; background:#fff; border-top:1px solid #e5e7eb;
+#bar { width:100%; max-height:80vh; background:var(--fm-surface); border-top:1px solid var(--fm-border);
   display:flex; flex-direction:column;
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   box-shadow:0 -4px 24px rgba(0,0,0,.12); }
-.hd { padding:12px 14px; border-bottom:1px solid #e5e7eb; display:flex; align-items:center; gap:10px; flex-shrink:0; }
-.logo { font-size:15px; font-weight:800; color:#111; }
-.logo .accent { color:#f97316; }
-.meta { flex:1; font-size:11px; color:#6b7280; }
-.meta .mname { display:block; font-size:12px; font-weight:600; color:#374151; }
-.cls { color:#9ca3af; font-size:16px; cursor:pointer; background:none; border:none; padding:2px 6px; }
+.hd { padding:12px 14px; border-bottom:1px solid var(--fm-border); display:flex; align-items:center; gap:10px; flex-shrink:0; }
+.logo { font-size:15px; font-weight:800; color:var(--fm-text); }
+.logo .accent { color:var(--fm-accent); }
+.meta { flex:1; font-size:11px; color:var(--fm-text-muted); }
+.meta .mname { display:block; font-size:12px; font-weight:600; color:var(--fm-text-strong); }
+.cls { color:var(--fm-text-faint); font-size:16px; cursor:pointer; background:none; border:none; padding:2px 6px; }
 /* Cards sit side by side, sharing the width; the row scrolls (x if too many to
    fit, y if a single card is taller than the bar) rather than squashing cards. */
 .bd { min-height:0; overflow:auto; padding:14px; display:flex; flex-direction:row;
   align-items:flex-start; gap:14px; }
 .loading { display:flex; align-items:center; justify-content:center; width:100%; gap:8px;
-  color:#9ca3af; font-size:13px; padding:30px; }
-.spin { width:24px; height:24px; border:2px solid #e5e7eb; border-top-color:#f97316;
+  color:var(--fm-text-faint); font-size:13px; padding:30px; }
+.spin { width:24px; height:24px; border:2px solid var(--fm-border); border-top-color:var(--fm-accent);
   border-radius:50%; animation:sp .8s linear infinite; }
 @keyframes sp { to { transform:rotate(360deg); } }
 /* Each card is an equal-width column in the row, with a sensible minimum so they
    stay readable (the row scrolls horizontally if they can't all fit). */
-.card { border:1px solid #e5e7eb; border-radius:10px; overflow:hidden;
+.card { border:1px solid var(--fm-border); border-radius:10px; overflow:hidden;
   flex:1 1 0; min-width:280px; }
-.card.win { border:2px solid #22c55e; }
-.card.cur { background:#fafafa; }
-.ch { padding:10px 12px; display:flex; align-items:center; gap:8px; background:#fafafa;
-  border-bottom:1px solid #e5e7eb; }
-.card.win .ch { background:#f0fdf4; }
+.card.win { border:2px solid var(--fm-win); }
+.card.cur { background:var(--fm-surface-sunken); }
+.ch { padding:10px 12px; display:flex; align-items:center; gap:8px; background:var(--fm-surface-sunken);
+  border-bottom:1px solid var(--fm-border); }
+.card.win .ch { background:var(--fm-win-tint); }
 .pname { font-size:14px; font-weight:700; flex:1; display:flex; align-items:center; gap:6px; }
-.wb { background:#22c55e; color:#fff; font-size:9px; font-weight:800; padding:2px 6px; border-radius:8px; }
-.cb { background:#f3f4f6; color:#6b7280; font-size:9px; font-weight:700; padding:2px 6px; border-radius:8px; }
-.ptotal { font-size:22px; font-weight:800; color:#111; }
-.card.win .ptotal { color:#16a34a; }
+.wb { background:var(--fm-win); color:var(--fm-surface); font-size:9px; font-weight:800; padding:2px 6px; border-radius:8px; }
+.cb { background:var(--fm-surface-muted); color:var(--fm-text-muted); font-size:9px; font-weight:700; padding:2px 6px; border-radius:8px; }
+.ptotal { font-size:22px; font-weight:800; color:var(--fm-text); }
+.card.win .ptotal { color:var(--fm-win-text); }
 .cbody { padding:10px 14px; display:flex; flex-direction:column; gap:4px; }
-.row { display:flex; justify-content:space-between; font-size:13px; color:#6b7280; padding:3px 0; gap:10px; }
-.row.b { color:#374151; font-weight:600; border-top:1px solid #e5e7eb; padding-top:4px; margin-top:2px; }
-.row.g { color:#16a34a; }
-.row.r { color:#ef4444; }
-.off { margin:0 14px 10px; background:#f0fdf4; border:1px solid #bbf7d0;
-  border-radius:6px; padding:6px 9px; font-size:11px; color:#15803d; }
-.off.n { background:#fafafa; border-color:#e5e7eb; color:#9ca3af; }
-.obtn { margin:0 12px 12px; background:#f3f4f6; color:#374151; border:none;
+.row { display:flex; justify-content:space-between; font-size:13px; color:var(--fm-text-muted); padding:3px 0; gap:10px; }
+.row.b { color:var(--fm-text-strong); font-weight:600; border-top:1px solid var(--fm-border); padding-top:4px; margin-top:2px; }
+.row.g { color:var(--fm-win-text); }
+.row.r { color:var(--fm-error); }
+.off { margin:0 14px 10px; background:var(--fm-win-tint); border:1px solid var(--fm-win-border);
+  border-radius:6px; padding:6px 9px; font-size:11px; color:var(--fm-win); }
+.off.n { background:var(--fm-surface-sunken); border-color:var(--fm-border); color:var(--fm-text-faint); }
+.obtn { margin:0 12px 12px; background:var(--fm-surface-muted); color:var(--fm-text-strong); border:none;
   border-radius:7px; padding:9px; font-size:11px; font-weight:700; cursor:pointer;
   width:calc(100% - 24px); }
-.obtn:hover { background:#e5e7eb; }
-.ft { border-top:2px solid #dcfce7; background:#f0fdf4; padding:10px 14px; font-size:12px; color:#15803d; flex-shrink:0; }
-.ft .save { font-weight:700; color:#166534; }
-.ft.sw { background:#fff7ed; border-top-color:#fed7aa; color:#c2410c; }
-.ft.sw .save { color:#7c2d12; }
-.cv { font-size:10px; color:#6b7280; margin-top:3px; }
-.errc { border:1px solid #fecaca; border-radius:10px; padding:12px; font-size:12px; color:#ef4444;
+.obtn:hover { background:var(--fm-border); }
+.ft { border-top:2px solid var(--fm-win-rule); background:var(--fm-win-tint); padding:10px 14px; font-size:12px; color:var(--fm-win); flex-shrink:0; }
+.ft .save { font-weight:700; color:var(--fm-win-text); }
+.ft.sw { background:var(--fm-accent-tint); border-top-color:var(--fm-accent-border); color:var(--fm-accent-hover); }
+.ft.sw .save { color:var(--fm-accent-hover); }
+.cv { font-size:10px; color:var(--fm-text-muted); margin-top:3px; }
+.errc { border:1px solid var(--fm-error-border); border-radius:10px; padding:12px; font-size:12px; color:var(--fm-error);
   display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
-.retrybtn { background:#f3f4f6; color:#374151; border:none; border-radius:6px;
+.retrybtn { background:var(--fm-surface-muted); color:var(--fm-text-strong); border:none; border-radius:6px;
   padding:6px 10px; font-size:10px; font-weight:700; cursor:pointer; }
-.retrybtn:hover { background:#e5e7eb; }
+.retrybtn:hover { background:var(--fm-border); }
 .cols { display:flex; flex-direction:row; gap:10px; padding:12px; align-items:flex-start; width:100%; }
 .col { flex:1 1 0; min-width:0; }
-.colhd { font-size:12px; font-weight:700; color:#374151; padding:0 2px 6px; display:flex; align-items:center; gap:5px; }
-.bc { border:1px solid #e5e7eb; border-radius:8px; margin-bottom:7px; overflow:hidden; background:#fff; }
-.bc.win { border:2px solid #22c55e; }
-.bc.cur { background:#fafafa; }
+.colhd { font-size:12px; font-weight:700; color:var(--fm-text-strong); padding:0 2px 6px; display:flex; align-items:center; gap:5px; }
+/* Brand-coloured legend dot. The inset rim keeps Deliveroo's teal and Uber's
+   green from dissolving into the white surface at 9px. */
+.dot { width:9px; height:9px; border-radius:50%; flex-shrink:0;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.18); }
+.bc { border:1px solid var(--fm-border); border-radius:8px; margin-bottom:7px; overflow:hidden; background:var(--fm-surface); }
+.bc.win { border:2px solid var(--fm-win); }
+.bc.cur { background:var(--fm-surface-sunken); }
 .bch { padding:7px 9px; display:flex; align-items:center; justify-content:space-between; gap:6px; }
-.bc.win .bch { background:#f0fdf4; }
-.bn { font-size:11px; font-weight:600; color:#374151; display:flex; flex-direction:column; gap:1px; }
-.bn .sub { font-size:9px; color:#9ca3af; font-weight:500; }
-.bt { font-size:15px; font-weight:800; color:#111; white-space:nowrap; }
-.bc.win .bt { color:#16a34a; }
+.bc.win .bch { background:var(--fm-win-tint); }
+.bn { font-size:11px; font-weight:600; color:var(--fm-text-strong); display:flex; flex-direction:column; gap:1px; }
+.bn .sub { font-size:9px; color:var(--fm-text-faint); font-weight:500; }
+.bt { font-size:15px; font-weight:800; color:var(--fm-text); white-space:nowrap; }
+.bc.win .bt { color:var(--fm-win-text); }
 .tag { font-size:8px; font-weight:800; padding:1px 5px; border-radius:6px; margin-left:4px; align-self:flex-start; }
-.tag.ch { background:#22c55e; color:#fff; }
-.tag.cu { background:#eef2ff; color:#4f46e5; }
-.det { border-top:1px dashed #e5e7eb; padding:6px 9px; font-size:10px; color:#6b7280; display:flex; flex-direction:column; gap:2px; }
+.tag.ch { background:var(--fm-win); color:var(--fm-surface); }
+.tag.cu { background:var(--fm-accent-tint); color:var(--fm-accent); }
+.det { border-top:1px dashed var(--fm-border); padding:6px 9px; font-size:10px; color:var(--fm-text-muted); display:flex; flex-direction:column; gap:2px; }
 .det .r { display:flex; justify-content:space-between; }
 .det .r .approx { text-decoration:underline dotted; text-underline-offset:2px; cursor:help; }
-.collrow { padding:6px 9px; display:flex; align-items:center; justify-content:space-between; font-size:10px; color:#6b7280; cursor:pointer; }
-.collrow:hover { background:#fafafa; }
+.collrow { padding:6px 9px; display:flex; align-items:center; justify-content:space-between; font-size:10px; color:var(--fm-text-muted); cursor:pointer; }
+.collrow:hover { background:var(--fm-surface-sunken); }
 /* Switch CTA on a branch card: opens that branch and fills its basket. */
-.swbtn { margin:6px 9px 9px; background:#f97316; color:#fff; border:none; border-radius:7px;
+.swbtn { margin:6px 9px 9px; background:var(--fm-accent-strong); color:var(--fm-surface); border:none; border-radius:7px;
   padding:8px; font-size:11px; font-weight:700; cursor:pointer; width:calc(100% - 18px); }
-.swbtn:hover { background:#ea580c; }
-.swbtn.plain { background:#f3f4f6; color:#374151; }
-.swbtn.plain:hover { background:#e5e7eb; }
+.swbtn:hover { background:var(--fm-accent-hover); }
+.swbtn.plain { background:var(--fm-surface-muted); color:var(--fm-text-strong); }
+.swbtn.plain:hover { background:var(--fm-border); }
 .ft.sw.clk { cursor:pointer; }
-.ft.sw.clk:hover { background:#ffedd5; }
+.ft.sw.clk:hover { background:var(--fm-accent-tint-hover); }
 .ft .arr { margin-left:4px; }
 `;
 
@@ -186,9 +192,9 @@ function switchButtonLabel(branch) {
 }
 
 const PLATFORM_LABEL = {
-  [PLATFORM.UBER_EATS]: { emoji: '🟠', name: 'Uber Eats' },
-  [PLATFORM.DELIVEROO]: { emoji: '🔵', name: 'Deliveroo' },
-  [PLATFORM.JUST_EAT]: { emoji: '🟣', name: 'Just Eat' },
+  [PLATFORM.UBER_EATS]: { name: 'Uber Eats' },
+  [PLATFORM.DELIVEROO]: { name: 'Deliveroo' },
+  [PLATFORM.JUST_EAT]: { name: 'Just Eat' },
 };
 
 function branchTotal(branch) {
@@ -404,8 +410,14 @@ function render(snapshot, order) {
     colEl.className = 'col';
     const hd = document.createElement('div');
     hd.className = 'colhd';
-    const { emoji, name } = PLATFORM_LABEL[col.platform];
-    hd.textContent = `${emoji} ${name}`;
+    const { name } = PLATFORM_LABEL[col.platform];
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = `var(--fm-dot-${col.platform})`;
+    // The name carries the identity; the dot only reinforces it, so it is
+    // hidden from assistive tech rather than announced as an unnamed bullet.
+    dot.setAttribute('aria-hidden', 'true');
+    hd.append(dot, name);
     colEl.appendChild(hd);
 
     // Order branches: cheapest first (expanded), current pinned, then by distance.

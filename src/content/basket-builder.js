@@ -11,6 +11,8 @@
 //    per-platform CSS selectors here are best-effort and must be hardened against
 //    live pages (#2 Phase B4); the name-text path is the resilient fallback.
 
+const { themeCssVars } = require('../shared/theme');
+
 const ADD_BUTTON_RE = /\badd\b.*\b(basket|order|bag|cart)\b|add for|add\s*·|add\s*£/i;
 const DIALOG_SELECTOR = '[role="dialog"], [aria-modal="true"]';
 // Uber meal wizard sub-screens (#47) carry this control; it is how a screen
@@ -1044,18 +1046,24 @@ function createOverlay(doc, total) {
   host.id = 'feedme-builder';
   host.style.cssText = 'position:fixed;top:12px;right:12px;z-index:2147483647;';
   const shadow = host.attachShadow({ mode: 'open' });
+  // The custom properties have to be declared inside this shadow root: nothing
+  // is inherited from the platform's page, which is what keeps the overlay's
+  // colours ours rather than theirs.
+  const styleEl = doc.createElement('style');
+  styleEl.textContent = themeCssVars();
+  shadow.appendChild(styleEl);
   const box = doc.createElement('div');
-  box.style.cssText = 'background:#fff;border:1px solid #e5e7eb;border-radius:10px;'
+  box.style.cssText = 'background:var(--fm-surface);border:1px solid var(--fm-border);border-radius:10px;'
     + 'box-shadow:0 4px 24px rgba(0,0,0,.15);padding:12px 14px;min-width:220px;'
-    + "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;color:#374151;";
+    + "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;color:var(--fm-text-strong);";
   const title = doc.createElement('div');
-  title.style.cssText = 'font-weight:800;margin-bottom:6px;color:#111;';
+  title.style.cssText = 'font-weight:800;margin-bottom:6px;color:var(--fm-text);';
   title.textContent = 'FeedMe — filling basket…';
   const status = doc.createElement('div');
   const clearLine = doc.createElement('div');
-  clearLine.style.cssText = 'margin-top:4px;font-size:11px;color:#6b7280;display:none;';
+  clearLine.style.cssText = 'margin-top:4px;font-size:11px;color:var(--fm-text-muted);display:none;';
   const list = doc.createElement('div');
-  list.style.cssText = 'margin-top:6px;color:#ef4444;font-size:11px;';
+  list.style.cssText = 'margin-top:6px;color:var(--fm-error);font-size:11px;';
   box.appendChild(title); box.appendChild(status); box.appendChild(clearLine); box.appendChild(list);
   let uncleared = false;
   shadow.appendChild(box);
@@ -1069,7 +1077,7 @@ function createOverlay(doc, total) {
         clearLine.textContent = `Removed ${clear.removed} item(s) already in the basket`;
       } else {
         uncleared = true;
-        clearLine.style.color = '#d97706';
+        clearLine.style.color = 'var(--fm-warn)';
         clearLine.textContent = "Couldn't clear pre-existing items — check your basket.";
       }
     },
@@ -1095,8 +1103,8 @@ function createOverlay(doc, total) {
         });
         list.appendChild(wrap);
       };
-      if (failed.length) section('Add these manually:', failed, '#ef4444');
-      if (review.length) section('Check the options on:', review, '#d97706');
+      if (failed.length) section('Add these manually:', failed, 'var(--fm-error)');
+      if (review.length) section('Check the options on:', review, 'var(--fm-warn)');
       setTimeout(() => host.remove(), failed.length || review.length || uncleared ? 12000 : 4000);
     },
   };

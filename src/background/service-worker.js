@@ -2,6 +2,7 @@ const { PLATFORM, CHECKOUT_PATTERNS, MSG, JUST_EAT_SMALL_ORDER_THRESHOLD, buildS
 const { matchItems, computeTotal, estimateUberFees, uberOneWaiverOffer, uberOneAccountOffers } = require('../shared/matcher');
 const { buildSnapshot } = require('../shared/snapshot');
 const { createScheduler } = require('../shared/pool');
+const { THEME } = require('../shared/theme');
 
 // Keyed by source tabId.
 const comparisons = new Map();
@@ -134,7 +135,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   if (msg.type !== MSG.ORDER_DETECTED) return;
   browser.storage.session.set({ currentOrder: msg.order });
   browser.action.setBadgeText({ text: '✓', tabId: sender.tab?.id });
-  browser.action.setBadgeBackgroundColor({ color: '#22c55e', tabId: sender.tab?.id });
+  browser.action.setBadgeBackgroundColor({ color: THEME['--fm-win'], tabId: sender.tab?.id });
 });
 
 // ── START_COMPARISON: inject sidebar, seed current branch, open enum tabs ────

@@ -23,32 +23,60 @@ function findByKey(obj, key, depth = 0) {
   return null;
 }
 
+// Drop a trailing plural/possessive "s" so a brand written both ways reads the
+// same ("Tayyabs" == "Tayyab"). Tokens of three characters or fewer are left
+// alone: there the "s" carries too much of the word to strip safely.
+function brandStem(token) {
+  return token.length > 3 && token.endsWith('s') ? token.slice(0, -1) : token;
+}
+
 /**
- * From a platform's branch candidates, keep those that fuzzy-match the chain
- * name, de-dupe by id, sort by ascending distance, and take the nearest n.
+ * Whether two restaurant names denote the same brand, comparing leading tokens.
+ * Branch names diverge after the brand ("Subway", "Subway - Mile End", "Subway
+ * Chronos Building …"), so only the first token is compared; "BurgerMania" is a
+ * single token != "burger" and so never matches "Burger King".
+ * @param {string} candidateName
+ * @param {string} targetName
+ * @param {{stemmed?: boolean}} [opts] stemmed: also ignore a trailing "s" (#89).
+ */
+function sameBrand(candidateName, targetName, { stemmed = false } = {}) {
+  const a = nameTokens(candidateName)[0];
+  const b = nameTokens(targetName)[0];
+  if (!a || !b) return false;
+  return stemmed ? brandStem(a) === brandStem(b) : a === b;
+}
+
+/**
+ * From a platform's branch candidates, keep those that match the chain name,
+ * de-dupe by id, sort by ascending distance, and take the nearest n.
  * A single independent restaurant is the degenerate case: one match in, one out.
  * @param {Array<{id:string,name:string,label:string,distance:?number,menuUrl:string}>} candidates
  * @param {string} targetName
  * @param {number} n
  */
 function selectNearestBranches(candidates, targetName, n) {
-  const brand = nameTokens(targetName)[0];
-  if (!brand) return [];
+  if (!nameTokens(targetName)[0]) return [];
   const seen = new Set();
-  const matched = [];
+  const exact = [];
+  const stemmed = [];
   for (const c of candidates) {
-    // Brand match on the first token (whole word). Branch names diverge after the
-    // brand ("Subway", "Subway - Mile End", "Subway Chronos Building …"), so we
-    // anchor on the leading token only. "BurgerMania" is one token != "burger" so
-    // it's excluded; a true sibling brand sharing the first word ("Burger Eats"
-    // vs "Burger King") survives here and is dropped later by the cart item match.
-    if (nameTokens(c.name)[0] !== brand) continue;
+    // A true sibling brand sharing the first word ("Burger Eats" vs "Burger
+    // King") survives here and is dropped later by the cart item match.
+    if (!sameBrand(c.name, targetName, { stemmed: true })) continue;
     if (seen.has(c.id)) continue;
     seen.add(c.id);
-    matched.push(c);
+    (sameBrand(c.name, targetName) ? exact : stemmed).push(c);
   }
-  matched.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
-  return matched.slice(0, n);
+  const byDistance = (a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity);
+  exact.sort(byDistance);
+  stemmed.sort(byDistance);
+  // Exact matches claim the nearest-n slots first; stemmed ones (#89) only fill
+  // what is left over. Ranking rather than falling back matters because an exact
+  // match can be the WRONG restaurant: live 2026-08-02, Uber's search for
+  // "Tayyabs" returns both "Tayyabs Express" (Ilford, exact, ~8mi) and the
+  // intended "Tayyab Sheesh Kebab" (stemmed, 0.4mi), so a fallback that ran only
+  // when exact found nothing would still never reach the right store.
+  return exact.concat(stemmed).slice(0, n);
 }
 
 // Metres-per-mile, for converting Just Eat's driveDistanceMeters to miles so
@@ -104,4 +132,4 @@ function justEatCandidates(nextData) {
     }));
 }
 
-module.exports = { findByKey, selectNearestBranches, justEatCandidates, nameTokens };
+module.exports = { findByKey, selectNearestBranches, justEatCandidates, nameTokens, sameBrand };

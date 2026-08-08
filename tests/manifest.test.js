@@ -12,7 +12,7 @@ describe('buildManifest', () => {
 
   test('shared keys are identical across targets', () => {
     const [chrome, firefox] = TARGETS.map(buildManifest);
-    for (const key of ['name', 'description', 'permissions', 'host_permissions', 'content_scripts', 'action', 'manifest_version']) {
+    for (const key of ['name', 'description', 'icons', 'permissions', 'host_permissions', 'content_scripts', 'action', 'manifest_version']) {
       expect(firefox[key]).toEqual(chrome[key]);
     }
   });

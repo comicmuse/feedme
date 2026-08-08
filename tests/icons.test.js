@@ -31,16 +31,35 @@ describe('extension icons', () => {
     expect(bytes).toBeGreaterThan(200);
   });
 
-  // The manifest is generated, so this is what stops a new size being added to
-  // one and not the other.
-  test('every icon the manifest declares is present, and vice versa', () => {
+  // Two keys, two surfaces, and they are not interchangeable (#97):
+  //   action.default_icon → the toolbar button
+  //   icons               → chrome://extensions, the install dialog, the Chrome
+  //                         Web Store listing tile, Firefox about:addons
+  //
+  // The first version of this test checked action.default_icon alone, so it
+  // passed while `icons` was absent entirely and every surface but the toolbar
+  // fell back to Chrome's generated grey letter tile — including the store
+  // listing. Checking both keys is the whole point.
+  test.each(['icons', 'action.default_icon'])('%s declares every size, and the files exist', (key) => {
     for (const target of TARGETS) {
-      const declared = buildManifest(target).action.default_icon;
+      const manifest = buildManifest(target);
+      const declared = key === 'icons' ? manifest.icons : manifest.action.default_icon;
+      expect(declared).toBeDefined();
       expect(Object.keys(declared).map(Number).sort((a, b) => a - b)).toEqual([16, 32, 48, 128]);
       for (const [size, rel] of Object.entries(declared)) {
         expect(rel).toBe(`icons/icon${size}.png`);
         expect(fs.existsSync(path.join(__dirname, '..', rel))).toBe(true);
       }
+    }
+  });
+
+  // Nothing breaks if they diverge, which is exactly why they would: a size
+  // added to one and forgotten in the other produces a correct toolbar and a
+  // fallback tile in the store, the failure this issue was filed for.
+  test('both icon keys stay in step', () => {
+    for (const target of TARGETS) {
+      const m = buildManifest(target);
+      expect(m.icons).toEqual(m.action.default_icon);
     }
   });
 

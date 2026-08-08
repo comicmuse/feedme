@@ -82,6 +82,52 @@ describe('buildSearchUrl', () => {
   test('Deliveroo has no addressable search URL (homepage entry point)', () => {
     expect(buildSearchUrl(PLATFORM.DELIVEROO, 'Subway', 'E14 7LG')).toBe('https://deliveroo.co.uk/');
   });
+
+  // Uber's store JSON-LD publishes a TRUNCATED postcode — live 2026-08-08, Tayyab
+  // Sheesh Kebab (83-89 Fieldgate St, Whitechapel) reports "E1 1", the outward code
+  // plus the first digit of the inward one. Stripping the space collapsed that to
+  // "e11", which is not E1 at all: /area/e11 is Leytonstone, four miles away, so
+  // the listing came back with no Tayyabs and the sidebar said "No branches found"
+  // however many times it was retried. Nothing errored, because E11 is a perfectly
+  // real district — that is what made it invisible.
+  describe('truncated postcodes (#89 follow-up)', () => {
+    test('an incomplete inward code is dropped rather than fused into the outward one', () => {
+      expect(buildSearchUrl(PLATFORM.JUST_EAT, 'Tayyabs', 'E1 1'))
+        .toBe('https://www.just-eat.co.uk/area/e1/restaurants');
+    });
+
+    // The same collapse turns every one of these into a different real district,
+    // which is why this cannot be treated as a one-restaurant curiosity.
+    test.each([
+      ['N1 1', 'n1'],
+      ['W1 1', 'w1'],
+      ['SW1 1', 'sw1'],
+      ['EC1 2', 'ec1'],
+    ])('%s searches its own district, not %s-as-fused', (postcode, expected) => {
+      expect(buildSearchUrl(PLATFORM.JUST_EAT, 'Subway', postcode))
+        .toBe(`https://www.just-eat.co.uk/area/${expected}/restaurants`);
+    });
+
+    test('a complete postcode is still used in full', () => {
+      expect(buildSearchUrl(PLATFORM.JUST_EAT, 'Subway', 'E1 1JU'))
+        .toBe('https://www.just-eat.co.uk/area/e11ju/restaurants');
+      expect(buildSearchUrl(PLATFORM.JUST_EAT, 'Subway', 'E14 7LG'))
+        .toBe('https://www.just-eat.co.uk/area/e147lg/restaurants');
+    });
+
+    // An outward code on its own is already what we would reduce to.
+    test('a bare outward code passes through', () => {
+      expect(buildSearchUrl(PLATFORM.JUST_EAT, 'Subway', 'E1'))
+        .toBe('https://www.just-eat.co.uk/area/e1/restaurants');
+    });
+
+    // Better a null the caller can skip than /area//restaurants, which 404s and
+    // reads to the user as a platform with genuinely no branches.
+    test('an unusable postcode yields no URL at all', () => {
+      expect(buildSearchUrl(PLATFORM.JUST_EAT, 'Subway', '')).toBeNull();
+      expect(buildSearchUrl(PLATFORM.JUST_EAT, 'Subway', '   ')).toBeNull();
+    });
+  });
 });
 
 describe('constants', () => {

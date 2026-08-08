@@ -20,23 +20,33 @@ const pkg = require('../package.json');
 
 const BACKGROUND_BUNDLE = 'dist/service-worker.js';
 
-// Firefox floor — the highest of everything the add-on declares or calls, not
-// the MV3 floor:
+// Firefox floor. Two numbers, because they answer different questions: what the
+// add-on needs to RUN, and what a manifest key needs to be UNDERSTOOD.
 //
-//   109  MV3 itself (the value this replaced)
+//   109  MV3 itself
 //   115  storage.session, used by the background and popup to hold the order
-//   140  browser_specific_settings.gecko.data_collection_permissions, below
-//        which web-ext lint raises KEY_FIREFOX_UNSUPPORTED_BY_MIN_VERSION
+//   140  gecko.data_collection_permissions, below which web-ext lint raises
+//        KEY_FIREFOX_UNSUPPORTED_BY_MIN_VERSION
 //   142  the same key on Firefox for Android
 //
-// So 142. That costs nothing real — Firefox auto-updates and current stable is
-// well past it — and it is the minimum on which the add-on both installs and
-// works. Raise it whenever a newer API or manifest key is adopted.
+// The functional floor is 115. The 140/142 pair buys nothing here: that key
+// exists to carry a data-collection disclosure, and ours declares `none`, so a
+// Firefox old enough to ignore it withholds nothing from the user. Setting the
+// floor there only locked people out — 142 excluded LibreWolf 139, the browser
+// this add-on is developed against (#101).
 //
-// Note this makes no claim that the add-on is *usable* on Android: it drives
-// several background tabs and injects a sidebar, which is a desktop-shaped
-// workflow, and it has never been run there.
-const FIREFOX_MIN_VERSION = '142.0';
+// So the floor is the oldest release the add-on is actually TESTED on, not the
+// oldest it is believed to work on: 139. Older is plausible (the APIs date to
+// 115) but unverified, and an add-on that installs and then breaks is worse
+// than one that declines to install. Mozilla archives every release, so this
+// can be lowered on evidence; raise it when a newer API is adopted.
+const FIREFOX_MIN_VERSION = '139.0';
+
+// Declared separately so the desktop floor is not dragged up by a key that only
+// lands on Android at 142. This is not a claim that the add-on is usable there:
+// it drives several background tabs and injects a sidebar, which is a
+// desktop-shaped workflow, and it has never been run on Android.
+const FIREFOX_ANDROID_MIN_VERSION = '142.0';
 
 // Required for all new Firefox extensions since 3 November 2025. Mozilla's test
 // is transmission: "any data collected, used, transferred, shared, or handled
@@ -68,6 +78,9 @@ const overrides = {
         id: 'feedme@feedme.dev',
         strict_min_version: FIREFOX_MIN_VERSION,
         data_collection_permissions: DATA_COLLECTION,
+      },
+      gecko_android: {
+        strict_min_version: FIREFOX_ANDROID_MIN_VERSION,
       },
     },
   }),

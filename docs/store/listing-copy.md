@@ -169,14 +169,6 @@ opened and its basket can be read.
 Used at `src/background/service-worker.js` — two
 `webNavigation.onHistoryStateUpdated` listeners.
 
-### `activeTab` — **declared but not used; remove before submitting**
-
-Nothing in `src/` or `popup/` references `activeTab`, and the popup's
-`tabs.query({ active: true, currentWindow: true })` is served by `tabs`. It
-should be deleted from the manifest rather than justified — an unused
-permission is a review delay for no benefit. Tracked separately; the manifest
-is mid-flight in #76.
-
 ### Host permissions
 
 ```

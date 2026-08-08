@@ -17,6 +17,17 @@ describe('buildManifest', () => {
     }
   });
 
+  // Every declared permission costs a written justification in the Chrome
+  // dashboard and draws reviewer attention on AMO, so the set is asserted
+  // exactly rather than by absence: adding one has to be a deliberate edit here
+  // too. activeTab was declared and never used (#92) — the popup's
+  // tabs.query({ active: true, currentWindow: true }) is served by `tabs`.
+  test('declares exactly the permissions the code uses', () => {
+    for (const t of TARGETS) {
+      expect(buildManifest(t).permissions).toEqual(['tabs', 'scripting', 'storage', 'webNavigation']);
+    }
+  });
+
   // Chromium is the only engine that runs an MV3 background as a service worker.
   test('chrome gets background.service_worker and no gecko block', () => {
     const m = buildManifest('chrome');

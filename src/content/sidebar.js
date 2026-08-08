@@ -98,6 +98,9 @@ ${themeCssVars()}
 .tag.sh { background:var(--fm-surface-muted); color:var(--fm-warn); }
 .collrow .short { color:var(--fm-warn); }
 .ftnote { margin-top:3px; font-size:11px; font-weight:400; color:var(--fm-text-muted); }
+/* A click the worker could not service (#103) — the one footer state that is
+   not reporting on prices, so it drops the win colouring entirely. */
+.ft.err { border-top-color:var(--fm-error-border); background:var(--fm-surface-muted); color:var(--fm-warn); }
 .det { border-top:1px dashed var(--fm-border); padding:6px 9px; font-size:10px; color:var(--fm-text-muted); display:flex; flex-direction:column; gap:2px; }
 .det .r { display:flex; justify-content:space-between; }
 .det .r .approx { text-decoration:underline dotted; text-underline-offset:2px; cursor:help; }
@@ -166,8 +169,38 @@ const expanded = new Set();
 const fmt = (n) => `£${(+n || 0).toFixed(2)}`;
 
 // Ask the worker to open this branch in a foreground tab and build its basket.
-function switchToBranch(branchKey) {
-  browser.runtime.sendMessage({ type: MSG.SWITCH_TO_BRANCH, branchKey });
+// The worker replies with {ok} so a click that cannot be serviced can say so.
+// Before #103 these handlers just returned: the sidebar could not tell a switch
+// that opened a tab from one that was dropped, so a dead button looked identical
+// to a working one and the only trace was a line in the worker's own console.
+async function switchToBranch(branchKey) {
+  let res = null;
+  try {
+    res = await browser.runtime.sendMessage({ type: MSG.SWITCH_TO_BRANCH, branchKey });
+  } catch (_) {
+    // The extension was reloaded under this page, so the content script is
+    // orphaned and no message will ever land. Same remedy as an expired one.
+    res = { ok: false, reason: 'expired' };
+  }
+  if (res && res.ok === false) showClickFailure(res.reason);
+}
+
+// Reasons a user can act on, in their own terms. Anything else stays generic
+// rather than inventing a remedy we do not have.
+const CLICK_FAILURE_TEXT = {
+  expired: 'This comparison has expired — reload the page to compare again',
+  'not-switchable': 'That branch can no longer be opened — reload the page to compare again',
+  'bad-url': "That branch's menu link failed validation, so it was not opened",
+  'tab-failed': 'The browser refused to open a new tab for that branch',
+};
+
+function showClickFailure(reason) {
+  const existing = bar.querySelector('.ft');
+  if (existing) existing.remove();
+  const ft = document.createElement('div');
+  ft.className = 'ft err';
+  ft.textContent = `⚠️ ${CLICK_FAILURE_TEXT[reason] || 'That click could not be completed'}`;
+  bar.appendChild(ft);
 }
 
 // Ask the worker to retry a single branch's menu scrape after a failure.

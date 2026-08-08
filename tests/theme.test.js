@@ -94,9 +94,18 @@ function collidingPlatform(hex) {
 // Hex literals anywhere in a UI source, including inside template strings and
 // inline cssText — the sidebar builds its CSS as a string, so a regex over the
 // raw text is what actually sees every colour that reaches a user.
+// An all-decimal short token is an issue reference, not a colour: this codebase
+// cites them constantly ("(#103)") and, past issue #100, every one of them is
+// three digits — the exact shape of shorthand hex. They are indistinguishable by
+// syntax, so the tie is broken by which reading is real here: the palette is
+// entirely six-digit, and the theme module is checked by value rather than by
+// this regex, so nothing is lost. Shorthand carrying any letter (#f80) is still
+// caught, which is the form a stray brand colour would actually take.
+const isIssueRef = (hex) => /^#\d{1,3}$/.test(hex);
+
 function hexesIn(rel) {
   const found = read(rel).match(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/g) || [];
-  return [...new Set(found.map((h) => h.toLowerCase()))];
+  return [...new Set(found.filter((h) => !isIssueRef(h)).map((h) => h.toLowerCase()))];
 }
 
 // The one sanctioned use of a platform's own colour, per #98: the legend dot
@@ -125,6 +134,18 @@ describe('platform collision', () => {
       .map((hex) => ({ hex, platform: collidingPlatform(hex) }))
       .filter((x) => x.platform);
     expect(offenders).toEqual([]);
+  });
+
+  // Regression guard for the guard: citing issue #103 in a comment turned two
+  // UI sources red, because "#103" is also valid shorthand hex.
+  test('an issue reference is not mistaken for a colour', () => {
+    expect(isIssueRef('#103')).toBe(true);
+    expect(isIssueRef('#98')).toBe(true);
+    expect(isIssueRef('#3')).toBe(true);
+    // Still a colour: any letter, or the full six digits.
+    expect(isIssueRef('#f80')).toBe(false);
+    expect(isIssueRef('#ff8000')).toBe(false);
+    expect(isIssueRef('#111111')).toBe(false);
   });
 
   test('the guard rejects the colours that caused #98', () => {

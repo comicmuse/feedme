@@ -1,6 +1,7 @@
 node_modules/
 dist/
 build/
+_site/
 .superpowers/
 .playwright-mcp/
 .claude/worktrees/

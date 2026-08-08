@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- 48px tier: chrome://extensions, the install prompt, and the toolbar at 3x
+       display scaling. That last case is why this carries no arrow either —
+       a toolbar-capable size has to stay badge-safe. Same mark as 16/32 with
+       the seeds set a little finer. -->
+  <path d="M 6 58 Q 6 8 64 8 Q 122 8 122 58 Z" fill="#f2a950" stroke="#c67c2c" stroke-width="2.5"/>
+  <circle cx="38" cy="35" r="4" fill="#fdeac4"/>
+  <circle cx="62" cy="26" r="4" fill="#fdeac4"/>
+  <circle cx="86" cy="33" r="4" fill="#fdeac4"/>
+  <circle cx="104" cy="45" r="4" fill="#fdeac4"/>
+  <rect x="6" y="56" width="116" height="30" rx="10" fill="#8a4a28" stroke="#5f3019" stroke-width="2.5"/>
+  <rect x="6" y="85" width="116" height="35" rx="17" fill="#eda24a" stroke="#c67c2c" stroke-width="2.5"/>
+</svg>

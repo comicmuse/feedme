@@ -1,0 +1,60 @@
+name: Deploy site
+
+# Publishes the privacy policy required by the extension stores (#79) to
+# https://comicmuse.net/feedme/.
+#
+# This deploys the output of `npm run build:site` — a curated directory — and
+# NOT the repository, and not `docs/`. `docs/` holds design specs, live-probe
+# findings and store copy with reviewer notes; the convenient "Pages from
+# main:/docs" setting would publish all of it. Do not switch this to a branch
+# source without reading scripts/site.js first.
+
+on:
+  push:
+    branches: [main]
+    # PRIVACY.md is the page's source, so a change to it must redeploy.
+    paths:
+      - 'PRIVACY.md'
+      - 'scripts/site.js'
+      - 'scripts/build-site.mjs'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it: a half-published
+# privacy policy is worse than a slightly stale one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # The site tests assert the policy renders and that nothing from docs/
+      # leaks into it. Failing here stops the deploy.
+      - run: npx jest tests/site.test.js
+      - run: npm run build:site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

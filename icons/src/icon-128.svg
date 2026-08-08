@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- 128px tier: the store listing tile and the install prompt. Never drawn in
+       the toolbar, so this is the one size that can carry the full idea — a
+       price list with the cheaper branch ringed, and the £ price-drop arrow.
+       The smaller tiers strip back to the burger alone; see icons/README.md. -->
+
+  <!-- clipboard -->
+  <rect x="30" y="10" width="88" height="106" rx="11" fill="#a8571f" stroke="#7d3f14" stroke-width="2.5"/>
+  <rect x="38" y="24" width="72" height="84" rx="5" fill="#fdf7ec"/>
+
+  <!-- clip -->
+  <rect x="58" y="3" width="32" height="19" rx="5.5" fill="#d6dade" stroke="#7f878e" stroke-width="2.5"/>
+  <circle cx="74" cy="12" r="4" fill="#2f363d"/>
+
+  <!-- row 1 -->
+  <rect x="46" y="37" width="24" height="4.5" rx="2.2" fill="#c2c7cd"/>
+  <rect x="46" y="45" width="16" height="4.5" rx="2.2" fill="#c2c7cd"/>
+  <rect x="80" y="36" width="20" height="11" rx="2.5" fill="#47505a"/>
+
+  <!-- row 2, the cheaper one: dark price, green ring around it -->
+  <rect x="46" y="61" width="24" height="4.5" rx="2.2" fill="#c2c7cd"/>
+  <rect x="46" y="69" width="16" height="4.5" rx="2.2" fill="#c2c7cd"/>
+  <rect x="80" y="60" width="20" height="11" rx="2.5" fill="#47505a"/>
+  <ellipse cx="90" cy="65.5" rx="16" ry="11.5" fill="none" stroke="#2f9e44" stroke-width="3.2"/>
+
+  <!-- row 3 -->
+  <rect x="46" y="85" width="24" height="4.5" rx="2.2" fill="#c2c7cd"/>
+  <rect x="46" y="93" width="16" height="4.5" rx="2.2" fill="#c2c7cd"/>
+  <rect x="80" y="84" width="20" height="11" rx="2.5" fill="#47505a"/>
+
+  <!-- price-drop arrow -->
+  <path d="M 94 42 L 114 42 L 114 70 L 124 70 L 104 98 L 84 70 L 94 70 Z"
+        fill="#2f9e44" stroke="#9ae65f" stroke-width="2.5" stroke-linejoin="round"/>
+  <text x="104" y="64" font-family="DejaVu Sans" font-size="19" font-weight="bold"
+        fill="#ffffff" text-anchor="middle">£</text>
+
+  <!-- burger -->
+  <path d="M 5 88 Q 5 68 29 68 Q 53 68 53 88 Z" fill="#f2a950" stroke="#c67c2c" stroke-width="2"/>
+  <circle cx="18" cy="78" r="1.8" fill="#fbdca8"/>
+  <circle cx="30" cy="75" r="1.8" fill="#fbdca8"/>
+  <circle cx="41" cy="80" r="1.8" fill="#fbdca8"/>
+  <rect x="3" y="87" width="52" height="7" rx="3.5" fill="#7cc45a" stroke="#4f9235" stroke-width="1.5"/>
+  <rect x="5" y="93" width="48" height="10" rx="3" fill="#8a4a28"/>
+  <rect x="5" y="102" width="48" height="12" rx="6" fill="#eda24a" stroke="#c67c2c" stroke-width="2"/>
+</svg>

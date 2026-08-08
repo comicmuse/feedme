@@ -5,13 +5,30 @@
 // it belongs to the page it is sitting on. tests/theme.test.js enforces that
 // mechanically against PLATFORM_BRAND below.
 
+const { PLATFORM } = require('./constants');
+
 // The three brands, as they appear on the pages the sidebar opens over.
-// Sourced by eye from the live sites; only used to keep our own palette away
-// from them, never to draw anything.
+// Sourced by eye from the live sites. Their job is to keep our own palette
+// away from them; the one place they are drawn is PLATFORM_DOT below.
 const PLATFORM_BRAND = {
   JUST_EAT: ['#ff8000', '#f36d00'],
   DELIVEROO: ['#00ccbc'],
   UBER_EATS: ['#06c167', '#142328'],
+};
+
+// The legend dot beside each platform's name in a column header — the single
+// sanctioned use of a platform's own colour. A legend is labelling rather than
+// chrome: the dot sits against the name it identifies, so the colour is
+// carrying information instead of dressing our UI up as someone else's. The
+// dots these replaced were arbitrary emoji that gave Uber Eats Just Eat's
+// orange, which is the opposite of informative.
+//
+// Derived from the brand primaries rather than copied, so the thing drawn and
+// the yardstick the collision guard measures against cannot drift apart.
+const PLATFORM_DOT = {
+  [PLATFORM.UBER_EATS]: PLATFORM_BRAND.UBER_EATS[0],
+  [PLATFORM.DELIVEROO]: PLATFORM_BRAND.DELIVEROO[0],
+  [PLATFORM.JUST_EAT]: PLATFORM_BRAND.JUST_EAT[0],
 };
 
 const THEME = {
@@ -56,8 +73,11 @@ const THEME = {
 // custom properties have to be declared inside each one — nothing inherits
 // from the host page, which is the point.
 function themeCssVars(selector = ':host') {
-  const body = Object.entries(THEME).map(([k, v]) => `${k}:${v};`).join('');
+  const dots = Object.entries(PLATFORM_DOT).map(([p, v]) => [`--fm-dot-${p}`, v]);
+  const body = [...Object.entries(THEME), ...dots].map(([k, v]) => `${k}:${v};`).join('');
   return `${selector}{${body}}`;
 }
 
-module.exports = { THEME, PLATFORM_BRAND, themeCssVars };
+module.exports = {
+  THEME, PLATFORM_BRAND, PLATFORM_DOT, themeCssVars,
+};

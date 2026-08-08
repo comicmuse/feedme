@@ -76,6 +76,10 @@ ${themeCssVars()}
 .cols { display:flex; flex-direction:row; gap:10px; padding:12px; align-items:flex-start; width:100%; }
 .col { flex:1 1 0; min-width:0; }
 .colhd { font-size:12px; font-weight:700; color:var(--fm-text-strong); padding:0 2px 6px; display:flex; align-items:center; gap:5px; }
+/* Brand-coloured legend dot. The inset rim keeps Deliveroo's teal and Uber's
+   green from dissolving into the white surface at 9px. */
+.dot { width:9px; height:9px; border-radius:50%; flex-shrink:0;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.18); }
 .bc { border:1px solid var(--fm-border); border-radius:8px; margin-bottom:7px; overflow:hidden; background:var(--fm-surface); }
 .bc.win { border:2px solid var(--fm-win); }
 .bc.cur { background:var(--fm-surface-sunken); }
@@ -188,9 +192,9 @@ function switchButtonLabel(branch) {
 }
 
 const PLATFORM_LABEL = {
-  [PLATFORM.UBER_EATS]: { emoji: '🟠', name: 'Uber Eats' },
-  [PLATFORM.DELIVEROO]: { emoji: '🔵', name: 'Deliveroo' },
-  [PLATFORM.JUST_EAT]: { emoji: '🟣', name: 'Just Eat' },
+  [PLATFORM.UBER_EATS]: { name: 'Uber Eats' },
+  [PLATFORM.DELIVEROO]: { name: 'Deliveroo' },
+  [PLATFORM.JUST_EAT]: { name: 'Just Eat' },
 };
 
 function branchTotal(branch) {
@@ -406,8 +410,14 @@ function render(snapshot, order) {
     colEl.className = 'col';
     const hd = document.createElement('div');
     hd.className = 'colhd';
-    const { emoji, name } = PLATFORM_LABEL[col.platform];
-    hd.textContent = `${emoji} ${name}`;
+    const { name } = PLATFORM_LABEL[col.platform];
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = `var(--fm-dot-${col.platform})`;
+    // The name carries the identity; the dot only reinforces it, so it is
+    // hidden from assistive tech rather than announced as an unnamed bullet.
+    dot.setAttribute('aria-hidden', 'true');
+    hd.append(dot, name);
     colEl.appendChild(hd);
 
     // Order branches: cheapest first (expanded), current pinned, then by distance.

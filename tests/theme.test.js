@@ -1,6 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const { THEME, PLATFORM_BRAND, themeCssVars } = require('../src/shared/theme');
+const {
+  THEME, PLATFORM_BRAND, PLATFORM_DOT, themeCssVars,
+} = require('../src/shared/theme');
+const { PLATFORM } = require('../src/shared/constants');
 
 const root = path.join(__dirname, '..');
 
@@ -96,10 +99,18 @@ function hexesIn(rel) {
   return [...new Set(found.map((h) => h.toLowerCase()))];
 }
 
-// The colours a file could actually paint. Identical to hexesIn everywhere
-// except the theme module, which also names the three brands as the reference
-// data this whole check is measured against — those are never drawn, and
-// scanning them would flag the yardstick as the offence.
+// The one sanctioned use of a platform's own colour, per #98: the legend dot
+// beside that platform's name. Everything else the extension paints is chrome
+// and must stay clear of all three brands.
+const dotTokens = () => Object.fromEntries(
+  Object.entries(PLATFORM_DOT).map(([platform, hex]) => [`--fm-dot-${platform}`, hex]),
+);
+
+// The colours a file could actually paint as chrome. Identical to hexesIn
+// everywhere except the theme module, which also names the three brands twice
+// over: as the reference data this whole check is measured against, and as the
+// legend dots. Neither is chrome, and scanning them would flag the yardstick
+// as the offence.
 function paintedBy(rel) {
   if (rel === 'src/shared/theme.js') return Object.values(THEME).map((h) => h.toLowerCase());
   return hexesIn(rel);
@@ -127,6 +138,60 @@ describe('platform collision', () => {
     expect(collidingPlatform(THEME['--fm-win'])).toBeNull();
     expect(collidingPlatform(THEME['--fm-warn'])).toBeNull();
     expect(collidingPlatform(THEME['--fm-error'])).toBeNull();
+  });
+});
+
+describe('platform dots', () => {
+  // These were three arbitrary emoji (🟠 Uber Eats, 🔵 Deliveroo, 🟣 Just Eat),
+  // which put Just Eat's orange next to Uber Eats' name and got all three
+  // wrong. A legend is the one place a brand colour carries information, so
+  // here — and only here — the dots are the brands themselves.
+  test.each([
+    [PLATFORM.UBER_EATS, '#06c167'],
+    [PLATFORM.DELIVEROO, '#00ccbc'],
+    [PLATFORM.JUST_EAT, '#ff8000'],
+  ])('%s is dotted in its own brand colour', (platform, hex) => {
+    expect(PLATFORM_DOT[platform]).toBe(hex);
+  });
+
+  // Copying the hexes rather than deriving them is how the dots would drift
+  // away from the yardstick the collision guard measures against.
+  test('every dot is the brand primary the guard measures against', () => {
+    for (const [key, brands] of Object.entries(PLATFORM_BRAND)) {
+      expect(PLATFORM_DOT[PLATFORM[key]]).toBe(brands[0]);
+    }
+  });
+
+  test('every platform has a dot', () => {
+    expect(Object.keys(PLATFORM_DOT).sort()).toEqual(Object.values(PLATFORM).sort());
+  });
+
+  // The carve-out is the dot role, not a softening of the rule. These same
+  // colours must still be rejected anywhere chrome could pick them up.
+  // Attribution is deliberately not asserted: Uber Eats' green (H152) and
+  // Deliveroo's teal (H175) are 23 degrees apart, inside MIN_HUE_GAP, so each
+  // matches whichever brand the guard reaches first. What has to hold is that
+  // all three are still refused as chrome.
+  test.each(Object.values(PLATFORM))('the guard still rejects %s\'s dot as chrome', (platform) => {
+    expect(collidingPlatform(PLATFORM_DOT[platform])).not.toBeNull();
+  });
+
+  test('no dot colour leaked into the chrome palette', () => {
+    const dots = Object.values(PLATFORM_DOT).map((h) => h.toLowerCase());
+    const leaked = Object.entries(THEME).filter(([, v]) => dots.includes(v.toLowerCase()));
+    expect(leaked).toEqual([]);
+  });
+
+  // Emoji were at the mercy of the host page's font stack; a painted dot is
+  // not, but teal and green on white need a rim or they read as smudges.
+  test('the dot is drawn as a bordered element, not a glyph', () => {
+    const css = read('src/content/sidebar.js');
+    expect(css).toMatch(/\.dot\s*{[^}]*border-radius:\s*50%/);
+    expect(css).toMatch(/\.dot\s*{[^}]*box-shadow/);
+  });
+
+  test('the sidebar no longer renders platform emoji', () => {
+    expect(read('src/content/sidebar.js')).not.toMatch(/[\u{1F7E0}-\u{1F7EB}\u{1F535}\u{1F534}]/u);
   });
 });
 
@@ -185,12 +250,13 @@ describe('single source of truth', () => {
   // silently falls back to whatever it inherited. Nothing at runtime says so.
   test.each(UI_SOURCES)('%s references no token that does not exist', (rel) => {
     const referenced = [...read(rel).matchAll(/var\((--fm-[a-z-]+)\)/g)].map((m) => m[1]);
-    expect(referenced.filter((t) => !(t in THEME))).toEqual([]);
+    const known = { ...THEME, ...dotTokens() };
+    expect(referenced.filter((t) => !(t in known))).toEqual([]);
   });
 
   test('themeCssVars emits every token as a custom property', () => {
     const css = themeCssVars();
-    for (const [token, value] of Object.entries(THEME)) {
+    for (const [token, value] of Object.entries({ ...THEME, ...dotTokens() })) {
       expect(css).toContain(`${token}:${value}`);
     }
   });

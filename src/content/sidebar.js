@@ -5,6 +5,7 @@ const {
 const { themeCssVars } = require('../shared/theme');
 const { branchShortfall } = require('../shared/snapshot');
 const { originLabel } = require('../shared/permissions');
+const { formatDistance } = require('../shared/format');
 
 // Prevent double-injection on re-click
 if (document.getElementById('feedme-root')) return;
@@ -265,7 +266,7 @@ function buildBranchCard(branch, isCheapest) {
   if (branch.distance != null) {
     const sub = document.createElement('span');
     sub.className = 'sub';
-    sub.textContent = `${branch.distance} mi`;
+    sub.textContent = formatDistance(branch.distance);
     nameWrap.appendChild(sub);
   }
   const totalEl = document.createElement('span');
@@ -382,7 +383,7 @@ function buildCollapsedRow(branch) {
   row.className = 'collrow';
   const left = document.createElement('span');
   left.textContent = branch.distance != null
-    ? `${branch.label || 'Branch'} · ${branch.distance} mi`
+    ? `${branch.label || 'Branch'} · ${formatDistance(branch.distance)}`
     : (branch.label || 'Branch');
   const right = document.createElement('span');
   const collapsedShort = branchShortfall(branch);

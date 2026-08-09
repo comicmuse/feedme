@@ -334,6 +334,42 @@ async function selectModifier(dialog, mod, wait = defaultWait) {
   }, { timeout: 2000 }));
 }
 
+// Just Eat sells sizes as a required VARIATION radio group, not a modifier: a
+// multi-variation item ("from £X") opens with a <pie-radio> per size and a
+// disabled Add button until one is picked (#102). parseJustEat priced the line
+// from ONE specific variation (the cheapest orderable) and stamped its catalogue
+// id on `line.variationId`; the live pie-radio host carries that exact id — and
+// so does its shadow <input value> (Tayyabs Aldgate, 2026-08-09):
+//   <pie-radio data-qa="item-choices-variants-element-0" role="radio"
+//              id="78099bca-…-0" name="Selects the size of the product">
+//     …shadow: <input type="radio" data-test-id="pie-radio-input" value="78099bca-…-0">
+// Match on that id so the SAME size the sidebar priced is chosen — never merely a
+// selectable one, or the filled basket's total would silently diverge from the
+// quote (#37/#50). The pie-radio carries no `value` attribute of its own (the
+// live "<pie-radio> Missing required attribute value" warning), so key off `id`.
+function findVariationTarget(dialog, variationId) {
+  const id = cssEscape(variationId);
+  return safeQuery(dialog, `pie-radio[id="${id}"], [role="radio"][id="${id}"], input[value="${id}"]`);
+}
+
+// Tick the variation whose id === variationId and wait for it to settle. Reuses
+// the modifier click/readback path (it already drives pie-radio shadow inputs).
+// Returns false when that exact variation isn't present — the caller then leaves
+// the Add button to stay disabled, so the line fails honestly rather than filling
+// a size the sidebar never priced.
+async function selectVariation(dialog, variationId, wait = defaultWait) {
+  if (!dialog) return false;
+  let target = findVariationTarget(dialog, variationId)
+    || await wait(() => findVariationTarget(dialog, variationId), { timeout: 2000 });
+  if (!target) return false;
+  if (modifierSelected(target)) return true;
+  clickEl(modifierClickTarget(target));
+  return !!(await wait(() => {
+    const fresh = findVariationTarget(dialog, variationId) || target;
+    return modifierSelected(fresh);
+  }, { timeout: 2000 }));
+}
+
 function findAddButton(dialog) {
   return [...dialog.querySelectorAll('button, [role="button"], pie-button')]
     .filter((b) => !b.disabled && b.getAttribute('aria-disabled') !== 'true'
@@ -925,6 +961,18 @@ async function addLine(line, ctx) {
       }
       return dialog;
     };
+    // Pick the priced variation (Just Eat "size") before anything else: it gates
+    // the whole dialog — the Add button stays disabled until it's chosen, and
+    // some modifier groups only render after a size is selected. Only when the
+    // plan carries a variation distinct from the item id (multi-variation items;
+    // single-variation lines have variationId === id and no radio group). A miss
+    // flags the line for review so a wrong/absent size never reads as a clean
+    // fill (#102).
+    if (line.variationId && line.variationId !== line.id) {
+      const picked = await selectVariation(liveDialog(), line.variationId, wait);
+      dlog(`"${line.name}": variation ${line.variationId} ${picked ? 'selected' : 'NOT selected'}`);
+      if (!picked) missedSelection = true;
+    }
     for (const mod of line.modifiers || []) {
       let picked = false;
       const attempted = liveDialog();

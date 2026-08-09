@@ -27,13 +27,12 @@ const SEARCH_URL_TEMPLATES = {
   // The /area/{postcode} listing works directly (no geocode step); just-eat-scraper
   // matches the restaurant there and opens its menu.
   [PLATFORM.JUST_EAT]: 'https://www.just-eat.co.uk/area/{postcode}/restaurants',
-  // Brand search: /gb/search with searchType=GLOBAL_SEARCH USED to return the
-  // focused "N locations" view listing every nearby branch of the chain. Live
-  // 2026-07-12 (#38) it returns a generic feed with a SINGLE brand store (the
-  // nearest) — confirmed for KFC/McDonald's/Subway, in the getSearchFeedV1 API
-  // payload as well as the DOM — so Uber sibling enumeration currently yields at
-  // most one branch. No pl=: a shorthand postcode is rejected and Uber resolves the session
-  // location via a 307 redirect, so we let the logged-in session supply it.
+  // Brand search: /gb/search with searchType=GLOBAL_SEARCH returns a generic feed
+  // whose brand-branch coverage varies: 2026-07-12 (#38) KFC/McDonald's/Subway
+  // each returned a single (nearest) store, but 2026-08-09 Popeyes returned 3 once
+  // the location resolved — so it is not reliably one-per-brand. No pl= in the
+  // template: a shorthand postcode is rejected and Uber resolves the session
+  // location via a 307 redirect (which adds pl=), so we let the session supply it.
   [PLATFORM.UBER_EATS]: 'https://www.ubereats.com/gb/search?q={name}&vertical=ALL&searchType=GLOBAL_SEARCH&sc=SEARCH_BAR',
 };
 

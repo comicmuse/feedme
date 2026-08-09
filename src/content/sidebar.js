@@ -524,10 +524,10 @@ function render(snapshot, order) {
       none.textContent = 'No branches found';
       colEl.appendChild(none);
     } else if (col.branches.every((b) => b.isCurrent)) {
-      // Enumeration found nothing beyond the user's own branch (live 2026-07-12:
-      // Uber's brand search returns only the nearest store, which is the source
-      // store itself) — say so rather than showing a column that silently does
-      // nothing (#38).
+      // Enumeration found nothing beyond the user's own branch. On Uber this can
+      // happen for sparse brands or an unresolved location (2026-07-12), though
+      // the feed can also return several (Popeyes, 3, 2026-08-09) — either way,
+      // say so rather than showing a column that silently does nothing (#38).
       const none = document.createElement('div');
       none.className = 'errc';
       none.textContent = 'No other branches found';

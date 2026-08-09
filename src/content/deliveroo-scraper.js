@@ -166,5 +166,11 @@ const { enumLog } = require('../shared/enum-log');
       parsed,
       sourceUrl: window.location.href,
     });
+    return;
   }
+
+  // None of the three phases matched this path — the multi-step flow landed
+  // somewhere unexpected (a redirect off the homepage/listing, a consent wall),
+  // so the scraper would otherwise exit with no trace but the 15s enum timeout.
+  enumLog(PLATFORM.DELIVEROO, `ran but matched no phase for path "${path}" — the flow was redirected before it could be read`, { path });
 })();

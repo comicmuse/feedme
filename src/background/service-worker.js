@@ -204,7 +204,15 @@ browser.runtime.onMessage.addListener(async (msg) => {
 
 async function startEnumeration(comparison, platform) {
   const url = buildSearchUrl(platform, comparison.order.restaurantName, comparison.order.postcode);
-  if (!url) { onPlatformDone(comparison, platform); return; }
+  if (!url) {
+    // No search URL — a missing postcode, or a platform with no name+postcode
+    // addressable listing. Log it: otherwise a platform that never enumerates is
+    // indistinguishable from one whose tab opened and then went silent.
+    console.info('[FeedMe enum]', platform, '— not enumerated: no search URL built (missing postcode?) for', JSON.stringify(comparison.order.restaurantName));
+    onPlatformDone(comparison, platform);
+    return;
+  }
+  console.info('[FeedMe enum]', platform, '— opening enumeration tab:', url);
   const bgTab = await browser.tabs.create({ url, active: false });
   comparison.enumTabs.set(bgTab.id, platform);
   comparison.timeouts.set(`enum|${platform}`, setTimeout(

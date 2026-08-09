@@ -172,5 +172,13 @@ const { enumLog } = require('../shared/enum-log');
       parsed,
       sourceUrl: window.location.href,
     });
+    return;
   }
+
+  // Neither phase matched. The enum tab opened on /area/{postcode}/restaurants
+  // but is now somewhere else, so Just Eat redirected it before the scraper could
+  // read anything — a logged-out location gate, a consent wall, or an off-listing
+  // bounce. Without this the scraper exits silently and the only trace is the
+  // service worker's 15s enum timeout (#80/#112).
+  enumLog(PLATFORM.JUST_EAT, `ran but matched no phase for path "${path}" — the area listing was redirected before it could be read`, { path });
 })();

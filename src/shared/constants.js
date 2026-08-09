@@ -42,6 +42,7 @@ const MSG = {
   PLATFORM_DATA: 'PLATFORM_DATA',         // platform-scraper -> service-worker
   COMPARISON_RESULT: 'COMPARISON_RESULT', // service-worker -> sidebar
   BRANCHES_FOUND: 'BRANCHES_FOUND',       // enumerator -> service-worker
+  BRANCHES_ERROR: 'BRANCHES_ERROR',       // enumerator -> service-worker (could not read the listing; retryable, #105)
   COMPARISON_UPDATE: 'COMPARISON_UPDATE', // service-worker -> sidebar (progressive)
   SWITCH_TO_BRANCH: 'SWITCH_TO_BRANCH',   // sidebar -> service-worker (open + build basket)
   RETRY_BRANCH: 'RETRY_BRANCH',           // sidebar -> service-worker (retry a failed branch)

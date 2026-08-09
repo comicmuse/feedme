@@ -456,6 +456,27 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   pump(comparison);
 });
 
+// ── BRANCHES_ERROR: enumerator could not read the listing — mark retryable ──
+// Distinct from BRANCHES_FOUND with an empty array: that means "read it, nothing
+// matched" and is an honest empty. This means "could not read it" (the listing
+// failed to load or parse) and must surface with a Retry ↻, the same state the
+// enum timeout produces (#105). It short-circuits the timeout so the platform
+// ends promptly rather than sitting for the full ENUM_TIMEOUT_MS.
+browser.runtime.onMessage.addListener((msg, sender) => {
+  if (msg.type !== MSG.BRANCHES_ERROR) return;
+  const owner = findTab(sender.tab?.id);
+  if (!owner || owner.kind !== 'enum') return;
+  const { comparison, platform } = owner;
+
+  clearTimeout(comparison.timeouts.get(`enum|${platform}`));
+  browser.tabs.remove(sender.tab.id).catch(() => {});
+  comparison.enumTabs.delete(sender.tab.id);
+
+  console.info('[FeedMe enum]', platform, '— enumerator could not read the listing; marking retryable (#105)');
+  comparison.enumErrors.add(platform);
+  onPlatformDone(comparison, platform);
+});
+
 function normaliseLabel(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }

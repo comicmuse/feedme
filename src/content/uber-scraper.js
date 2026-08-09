@@ -2,6 +2,7 @@
 const { selectNearestBranches, nameTokens, sameBrand } = require('../shared/branches');
 const { MSG, PLATFORM } = require('../shared/constants');
 const { parseUberStore } = require('../shared/parsers');
+const { enumLog } = require('../shared/enum-log');
 
 // Uber feed lists store cards as links to /gb/store/<slug>/<uuid>. This scraper
 // runs in two modes, keyed by URL:
@@ -126,6 +127,7 @@ async function runUberScraper() {
       return null;
     });
     if (!ld) {
+      enumLog(PLATFORM.UBER_EATS, 'menu: no Restaurant JSON-LD on the store page after 8s — page did not render its menu (login wall or bot challenge redirects the store URL when logged out)');
       chrome.runtime.sendMessage({ type: MSG.PLATFORM_DATA, platform: PLATFORM.UBER_EATS, error: 'no-ld-menu', sourceUrl: window.location.href });
       return;
     }
@@ -169,6 +171,15 @@ async function runUberScraper() {
     return found.some((c) => sameBrand(c.name, ctx.restaurantName ?? '', { stemmed: true })) ? found : null;
   });
   if (!ready) {
+    // The single most useful split for the logged-out case: zero cards means the
+    // feed never rendered (an empty result, a sign-in wall, or a redirect to the
+    // bot challenge — the href in the log says which); cards but no brand match
+    // means the feed rendered and this chain simply isn't in it.
+    const seen = extractUberStoreCards(document);
+    enumLog(PLATFORM.UBER_EATS, seen.length
+      ? `enumerate: feed rendered ${seen.length} store card(s) but none matched brand "${brand}" before timeout`
+      : `enumerate: no store cards rendered at all for "${ctx.restaurantName ?? ''}" before timeout`,
+    { storeCardsSeen: seen.length, brand });
     chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.UBER_EATS, branches: [] });
     return;
   }
@@ -180,6 +191,7 @@ async function runUberScraper() {
   const branches = selectNearestBranches(cards, ctx.restaurantName ?? '', ctx.branchCount ?? 3)
     .map(({ id, name, distance, menuUrl }) => ({ id, label: name, distance, menuUrl }));
 
+  enumLog(PLATFORM.UBER_EATS, `enumerate: reporting ${branches.length} branch(es) from ${cards.length} rendered card(s)`, { branchCount: branches.length, cardCount: cards.length });
   chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.UBER_EATS, branches });
 }
 

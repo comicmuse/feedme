@@ -6,19 +6,46 @@ const { themeCssVars } = require('../shared/theme');
 const { branchShortfall } = require('../shared/snapshot');
 const { originLabel } = require('../shared/permissions');
 const { formatDistance } = require('../shared/format');
+// The pure view decisions (footer wording, click-failure message, switch CTA
+// label) live in a plain CommonJS module so they run under Jest with no DOM;
+// this file only assembles the elements around them (#107).
+const {
+  PLATFORM_LABEL, formatMoney, clickFailureText, footerView, switchButtonLabel,
+} = require('../shared/sidebar-view');
 
-// Prevent double-injection on re-click
-if (document.getElementById('feedme-root')) return;
+const fmt = formatMoney;
 
-const host = document.createElement('div');
-host.id = 'feedme-root';
-host.style.cssText = 'position:fixed;left:0;right:0;bottom:0;width:100%;z-index:2147483647;pointer-events:auto;';
-document.body.appendChild(host);
+// UI handles, assigned by install() when the sidebar is injected into a real
+// page. The renderers below close over these; in a test they stay null until
+// install() runs (the builder functions that take a branch/snapshot as input
+// don't need them and can be exercised directly).
+let host = null;
+let shadow = null;
+let bar = null;
+let bd = null;
+let metaEl = null;
+let mname = null;
 
-const shadow = host.attachShadow({ mode: 'open' });
+const expanded = new Set();
+let lastSnapshot = null;
+let lastOrder = null;
 
-const styleEl = document.createElement('style');
-styleEl.textContent = `
+// Build the sidebar host and install it into the page. Runs once on injection
+// (guarded at the foot of this file) and is exported so jsdom tests can install
+// it too; the double-injection guard keeps a re-click / second call inert.
+function install() {
+  // Prevent double-injection on re-click.
+  if (document.getElementById('feedme-root')) return;
+
+  host = document.createElement('div');
+  host.id = 'feedme-root';
+  host.style.cssText = 'position:fixed;left:0;right:0;bottom:0;width:100%;z-index:2147483647;pointer-events:auto;';
+  document.body.appendChild(host);
+
+  shadow = host.attachShadow({ mode: 'open' });
+
+  const styleEl = document.createElement('style');
+  styleEl.textContent = `
 ${themeCssVars()}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 #bar { width:100%; max-height:80vh; background:var(--fm-surface); border-top:1px solid var(--fm-border);
@@ -82,10 +109,11 @@ ${themeCssVars()}
 .cols { display:flex; flex-direction:row; gap:10px; padding:12px; align-items:flex-start; width:100%; }
 .col { flex:1 1 0; min-width:0; }
 .colhd { font-size:12px; font-weight:700; color:var(--fm-text-strong); padding:0 2px 6px; display:flex; align-items:center; gap:5px; }
-/* Brand-coloured legend dot. The inset rim keeps Deliveroo's teal and Uber's
-   green from dissolving into the white surface at 9px. */
+/* Brand-coloured legend dot. The colour comes from a per-platform custom
+   property the column sets as --dot-bg (see render); the inset rim keeps
+   Deliveroo's teal and Uber's green from dissolving into the white surface at 9px. */
 .dot { width:9px; height:9px; border-radius:50%; flex-shrink:0;
-  box-shadow:inset 0 0 0 1px rgba(0,0,0,.18); }
+  background:var(--dot-bg); box-shadow:inset 0 0 0 1px rgba(0,0,0,.18); }
 .bc { border:1px solid var(--fm-border); border-radius:8px; margin-bottom:7px; overflow:hidden; background:var(--fm-surface); }
 .bc.win { border:2px solid var(--fm-win); }
 .bc.cur { background:var(--fm-surface-sunken); }
@@ -122,56 +150,63 @@ ${themeCssVars()}
 .ft .arr { margin-left:4px; }
 `;
 
-const bar = document.createElement('div');
-bar.id = 'bar';
+  bar = document.createElement('div');
+  bar.id = 'bar';
 
-const hd = document.createElement('div');
-hd.className = 'hd';
+  const hd = document.createElement('div');
+  hd.className = 'hd';
 
-const logoEl = document.createElement('div');
-logoEl.className = 'logo';
-logoEl.textContent = 'feed';
-const accentSpan = document.createElement('span');
-accentSpan.className = 'accent';
-accentSpan.textContent = 'me';
-logoEl.appendChild(accentSpan);
+  const logoEl = document.createElement('div');
+  logoEl.className = 'logo';
+  logoEl.textContent = 'feed';
+  const accentSpan = document.createElement('span');
+  accentSpan.className = 'accent';
+  accentSpan.textContent = 'me';
+  logoEl.appendChild(accentSpan);
 
-const metaEl = document.createElement('div');
-metaEl.className = 'meta';
-const mname = document.createElement('span');
-mname.className = 'mname';
-mname.textContent = 'Finding prices...';
-metaEl.appendChild(mname);
+  metaEl = document.createElement('div');
+  metaEl.className = 'meta';
+  mname = document.createElement('span');
+  mname.className = 'mname';
+  mname.textContent = 'Finding prices...';
+  metaEl.appendChild(mname);
 
-const clsBtn = document.createElement('button');
-clsBtn.className = 'cls';
-clsBtn.textContent = '✕';
-clsBtn.addEventListener('click', () => host.remove());
+  const clsBtn = document.createElement('button');
+  clsBtn.className = 'cls';
+  clsBtn.textContent = '✕';
+  clsBtn.addEventListener('click', () => host.remove());
 
-hd.appendChild(logoEl);
-hd.appendChild(metaEl);
-hd.appendChild(clsBtn);
+  hd.appendChild(logoEl);
+  hd.appendChild(metaEl);
+  hd.appendChild(clsBtn);
 
-const bd = document.createElement('div');
-bd.className = 'bd';
-bd.id = 'bd';
+  bd = document.createElement('div');
+  bd.className = 'bd';
+  bd.id = 'bd';
 
-const loadingDiv = document.createElement('div');
-loadingDiv.className = 'loading';
-const spinDiv = document.createElement('div');
-spinDiv.className = 'spin';
-const loadingText = document.createTextNode('Fetching prices from other platforms...');
-loadingDiv.appendChild(spinDiv);
-loadingDiv.appendChild(loadingText);
-bd.appendChild(loadingDiv);
+  const loadingDiv = document.createElement('div');
+  loadingDiv.className = 'loading';
+  const spinDiv = document.createElement('div');
+  spinDiv.className = 'spin';
+  const loadingText = document.createTextNode('Fetching prices from other platforms...');
+  loadingDiv.appendChild(spinDiv);
+  loadingDiv.appendChild(loadingText);
+  bd.appendChild(loadingDiv);
 
-bar.appendChild(hd);
-bar.appendChild(bd);
-shadow.appendChild(styleEl);
-shadow.appendChild(bar);
+  bar.appendChild(hd);
+  bar.appendChild(bd);
+  shadow.appendChild(styleEl);
+  shadow.appendChild(bar);
 
-const expanded = new Set();
-const fmt = (n) => `£${(+n || 0).toFixed(2)}`;
+  // The worker pushes a fresh snapshot whenever a branch resolves. Guarded so a
+  // test that installs the sidebar without a browser stub still builds the DOM.
+  if (browser && browser.runtime && browser.runtime.onMessage) {
+    browser.runtime.onMessage.addListener((msg) => {
+      if (msg.type !== MSG.COMPARISON_UPDATE) return;
+      render(msg.snapshot, msg.order);
+    });
+  }
+}
 
 // Ask the worker to open this branch in a foreground tab and build its basket.
 // The worker replies with {ok} so a click that cannot be serviced can say so.
@@ -190,21 +225,12 @@ async function switchToBranch(branchKey) {
   if (res && res.ok === false) showClickFailure(res.reason);
 }
 
-// Reasons a user can act on, in their own terms. Anything else stays generic
-// rather than inventing a remedy we do not have.
-const CLICK_FAILURE_TEXT = {
-  expired: 'This comparison has expired — reload the page to compare again',
-  'not-switchable': 'That branch can no longer be opened — reload the page to compare again',
-  'bad-url': "That branch's menu link failed validation, so it was not opened",
-  'tab-failed': 'The browser refused to open a new tab for that branch',
-};
-
 function showClickFailure(reason) {
   const existing = bar.querySelector('.ft');
   if (existing) existing.remove();
   const ft = document.createElement('div');
   ft.className = 'ft err';
-  ft.textContent = `⚠️ ${CLICK_FAILURE_TEXT[reason] || 'That click could not be completed'}`;
+  ft.textContent = `⚠️ ${clickFailureText(reason)}`;
   bar.appendChild(ft);
 }
 
@@ -217,29 +243,6 @@ function retryBranch(branchKey) {
 function retryPlatform(platform) {
   browser.runtime.sendMessage({ type: MSG.RETRY_PLATFORM, platform });
 }
-
-// Label for a branch's switch button, reflecting how much of the basket can be
-// pre-filled (vs. opened for manual add). Returns null when there's no usable URL.
-function switchButtonLabel(branch) {
-  if (!branch.switchUrl) return null;
-  const plan = branch.result?.basketPlan ?? [];
-  const fillable = plan.filter((l) => l.prefillable).length;
-  // A line with a matched item id is worth attempting even when its options
-  // only carry names (#51 — Uber targets expose no option data, so nothing
-  // there is ever fully "prefillable"): the builder selects options by name
-  // text and review-flags what it can't complete. Only a plan with no matched
-  // items at all falls back to the plain menu link.
-  const attemptable = plan.filter((l) => l.id != null).length;
-  if (!plan.length || attemptable === 0) return { text: 'Open menu ↗', plain: true };
-  if (fillable === plan.length) return { text: 'Switch & fill basket ↗', plain: false };
-  return { text: `Switch & fill ${attemptable} of ${plan.length} ↗`, plain: false };
-}
-
-const PLATFORM_LABEL = {
-  [PLATFORM.UBER_EATS]: { name: 'Uber Eats' },
-  [PLATFORM.DELIVEROO]: { name: 'Deliveroo' },
-  [PLATFORM.JUST_EAT]: { name: 'Just Eat' },
-};
 
 function branchTotal(branch) {
   return branch.status === 'done' ? branch.result.total.total : null;
@@ -438,9 +441,6 @@ function appendNoteRow(parent, label, value, tooltip) {
   r.appendChild(l); r.appendChild(v); parent.appendChild(r);
 }
 
-let lastSnapshot = null;
-let lastOrder = null;
-
 function render(snapshot, order) {
   lastSnapshot = snapshot;
   lastOrder = order;
@@ -467,7 +467,12 @@ function render(snapshot, order) {
     const { name } = PLATFORM_LABEL[col.platform];
     const dot = document.createElement('span');
     dot.className = 'dot';
-    dot.style.background = `var(--fm-dot-${col.platform})`;
+    // Route the brand colour through a plumbing custom property (the .dot rule
+    // reads it as its background) so the platform identity is observable, not
+    // swallowed by a shorthand var() the way an inline `background:var(...)` would
+    // be. --dot-bg deliberately sits outside the --fm-* theme namespace: it's a
+    // passthrough to the platform's real --fm-dot-<platform> token, not a token.
+    dot.style.setProperty('--dot-bg', `var(--fm-dot-${col.platform})`);
     // The name carries the identity; the dot only reinforces it, so it is
     // hidden from assistive tech rather than announced as an unnamed bullet.
     dot.setAttribute('aria-hidden', 'true');
@@ -545,45 +550,52 @@ function renderFooter(snapshot) {
   if (existing) existing.remove();
   const ft = document.createElement('div');
   const f = snapshot.footer;
-  if (f.kind === 'switch') {
+  const view = footerView(f);
+  if (view.kind === 'switch') {
     // Clickable only when the cheapest branch has a validated URL to open.
-    ft.className = `ft sw${f.switchUrl ? ' clk' : ''}`;
+    ft.className = `ft sw${view.clickable ? ' clk' : ''}`;
     ft.textContent = 'Switch to ';
     const who = document.createElement('span'); who.className = 'save';
-    who.textContent = `${PLATFORM_LABEL[f.platform].name}${f.label ? ` (${f.label})` : ''}`;
+    who.textContent = view.who;
     ft.appendChild(who);
     ft.appendChild(document.createTextNode(' to save '));
     const amt = document.createElement('span'); amt.className = 'save';
-    amt.textContent = fmt(f.saving);
+    amt.textContent = view.saving;
     ft.appendChild(amt);
-    if (f.switchUrl) {
+    if (view.clickable) {
       const arr = document.createElement('span'); arr.className = 'arr'; arr.textContent = '↗';
       ft.appendChild(arr);
       ft.addEventListener('click', () => switchToBranch(f.key));
     }
-  } else if (f.kind === 'best') {
-    ft.className = 'ft';
-    ft.textContent = f.undercut
-      ? "✅ You're on the cheapest branch with every item"
-      : "✅ You're already on the cheapest branch";
   } else {
     ft.className = 'ft';
-    ft.textContent = 'Comparing branches…';
+    ft.textContent = view.message;
   }
   // The whole point of #3: a lower number is visible on screen, so say plainly
   // why it did not win rather than leaving the verdict looking wrong.
-  if (f.undercut) {
-    const u = f.undercut;
+  if (view.undercut) {
     const note = document.createElement('div');
     note.className = 'ftnote';
-    note.textContent = `${PLATFORM_LABEL[u.platform].name}${u.label ? ` (${u.label})` : ''}`
-      + ` is ${fmt(u.total)}, but priced only ${u.matchedCount} of your ${u.totalCount} items`;
+    note.textContent = view.undercut;
     ft.appendChild(note);
   }
   bar.appendChild(ft);
 }
 
-browser.runtime.onMessage.addListener((msg) => {
-  if (msg.type !== MSG.COMPARISON_UPDATE) return;
-  render(msg.snapshot, msg.order);
-});
+// Bootstrap when injected into a real page. Guarded so require() in tests is
+// inert (no chrome global) — the same reconciliation basket-builder.js and
+// checkout-reader.js use — while the renderers below are exported so jsdom
+// tests can drive them directly without triggering the injection.
+if (typeof window !== 'undefined' && typeof chrome !== 'undefined') {
+  install();
+}
+
+module.exports = {
+  install,
+  render,
+  renderFooter,
+  showClickFailure,
+  buildBranchCard,
+  buildCollapsedRow,
+  switchButtonLabel,
+};

@@ -72,6 +72,42 @@ describe('buildSnapshot', () => {
     expect(snap.platforms.every((p) => p.enumFailed === false)).toBe(true);
   });
 
+  // #77: Firefox lets host access be revoked at any time, and the comparison
+  // still runs for the platforms that kept theirs — so this is per-platform
+  // state carrying the origins to name, not a whole-comparison abort.
+  describe('revoked host access', () => {
+    test('carries the missing origins for the platform they belong to', () => {
+      const blocked = new Map([[PLATFORM.JUST_EAT, ['*://uk.api.just-eat.io/*']]]);
+      const snap = buildSnapshot(order, [], new Set(), new Set(), blocked);
+      const je = snap.platforms.find((p) => p.platform === PLATFORM.JUST_EAT);
+      expect(je.blockedOrigins).toEqual(['*://uk.api.just-eat.io/*']);
+      const uber = snap.platforms.find((p) => p.platform === PLATFORM.UBER_EATS);
+      expect(uber.blockedOrigins).toEqual([]);
+    });
+
+    test('a blocked platform never shows a spinner — it is not coming', () => {
+      // Otherwise the column spins for the full enumeration timeout before
+      // saying nothing, which is the silent failure this exists to remove.
+      const blocked = new Map([[PLATFORM.JUST_EAT, ['*://www.just-eat.co.uk/*']]]);
+      const snap = buildSnapshot(order, [], new Set([PLATFORM.JUST_EAT]), new Set(), blocked);
+      const je = snap.platforms.find((p) => p.platform === PLATFORM.JUST_EAT);
+      expect(je.spinner).toBe(false);
+      expect(je.blockedOrigins).toHaveLength(1);
+    });
+
+    test('the other platforms still compare and can still win', () => {
+      const blocked = new Map([[PLATFORM.JUST_EAT, ['*://www.just-eat.co.uk/*']]]);
+      const snap = buildSnapshot(order, branches(), new Set(), new Set(), blocked);
+      expect(snap.cheapestKey).not.toBeNull();
+      expect(snap.footer.kind).not.toBe('unknown');
+    });
+
+    test('defaults to empty when the 5th argument is omitted', () => {
+      const snap = buildSnapshot(order, branches(), new Set());
+      expect(snap.platforms.every((p) => p.blockedOrigins.length === 0)).toBe(true);
+    });
+  });
+
   // #3: a branch that priced only some of the cart is cheaper for the wrong
   // reason, so it cannot win — but showing its bare total next to "you're
   // already on the cheapest branch" reads as the comparison being broken.

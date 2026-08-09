@@ -4,6 +4,7 @@ const {
 } = require('../shared/constants');
 const { themeCssVars } = require('../shared/theme');
 const { branchShortfall } = require('../shared/snapshot');
+const { originLabel } = require('../shared/permissions');
 
 // Prevent double-injection on re-click
 if (document.getElementById('feedme-root')) return;
@@ -74,6 +75,9 @@ ${themeCssVars()}
 .retrybtn { background:var(--fm-surface-muted); color:var(--fm-text-strong); border:none; border-radius:6px;
   padding:6px 10px; font-size:10px; font-weight:700; cursor:pointer; }
 .retrybtn:hover { background:var(--fm-border); }
+.warnc { border:1px solid var(--fm-warn-border); background:var(--fm-warn-tint); border-radius:10px;
+  padding:12px; font-size:12px; color:var(--fm-warn); display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
+.warnsub { font-size:10px; color:var(--fm-text-muted); font-weight:400; line-height:1.4; }
 .cols { display:flex; flex-direction:row; gap:10px; padding:12px; align-items:flex-start; width:100%; }
 .col { flex:1 1 0; min-width:0; }
 .colhd { font-size:12px; font-weight:700; color:var(--fm-text-strong); padding:0 2px 6px; display:flex; align-items:center; gap:5px; }
@@ -484,7 +488,20 @@ function render(snapshot, order) {
         : buildCollapsedRow(branch));
     });
 
-    if (col.spinner) {
+    if (col.blockedOrigins && col.blockedOrigins.length) {
+      // Host access revoked (#77). No Retry button here: re-granting needs
+      // permissions.request(), which requires a user gesture and is not exposed
+      // to content scripts, so the popup is the only place that can ask. A
+      // button that cannot work would be worse than none.
+      const none = document.createElement('div');
+      none.className = 'warnc';
+      none.textContent = 'Access revoked — cannot compare';
+      const how = document.createElement('div');
+      how.className = 'warnsub';
+      how.textContent = `Grant access to ${col.blockedOrigins.map(originLabel).join(', ')} from the FeedMe toolbar button.`;
+      none.appendChild(how);
+      colEl.appendChild(none);
+    } else if (col.spinner) {
       const sp = document.createElement('div');
       sp.className = 'loading';
       const s = document.createElement('div'); s.className = 'spin';

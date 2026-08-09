@@ -13,17 +13,25 @@ function isComplete(b) {
  * @param {Array} branches  branch records (see Task 5 interface)
  * @param {Set<string>} loadingPlatforms
  * @param {Set<string>} enumErrors platforms whose enumeration timed out
+ * @param {Map<string,string[]>} blockedPlatforms platform -> revoked origins (#77)
  */
-function buildSnapshot(order, branches, loadingPlatforms, enumErrors = new Set()) {
+function buildSnapshot(order, branches, loadingPlatforms, enumErrors = new Set(), blockedPlatforms = new Map()) {
   const current = branches.find((b) => b.isCurrent);
   const currentTotal = current && current.status === 'done' ? current.result.total.total : Infinity;
 
-  const platforms = ORDER.map((platform) => ({
-    platform,
-    spinner: loadingPlatforms.has(platform),
-    enumFailed: enumErrors.has(platform),
-    branches: branches.filter((b) => b.platform === platform),
-  }));
+  const platforms = ORDER.map((platform) => {
+    const blockedOrigins = blockedPlatforms.get(platform) ?? [];
+    return {
+      platform,
+      // A blocked platform is never merely slow, so it must not spin: a spinner
+      // that runs the full enumeration timeout and then says nothing is the
+      // silent failure #77 exists to remove.
+      spinner: !blockedOrigins.length && loadingPlatforms.has(platform),
+      enumFailed: enumErrors.has(platform),
+      blockedOrigins,
+      branches: branches.filter((b) => b.platform === platform),
+    };
+  });
 
   // Overall cheapest complete branch across everything, including the current one.
   // This is the only branch the sidebar highlights (no per-column highlight).

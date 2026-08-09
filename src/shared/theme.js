@@ -65,6 +65,12 @@ const THEME = {
 
   // Deep enough to read as burnt umber rather than as Just Eat's orange.
   '--fm-warn': '#92400e',
+  // Border and fill for a recoverable warning — revoked host access, which still
+  // lets the other platforms compare (#77), so it is not the red of a failure.
+  // Both sit above the brand-like lightness band (L>70), so however close their
+  // hue runs to Just Eat's orange they cannot read as its furniture.
+  '--fm-warn-border': '#fcd9a5',
+  '--fm-warn-tint': '#fffbeb',
   '--fm-error': '#ef4444',
   '--fm-error-border': '#fecaca',
 };

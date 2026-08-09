@@ -152,13 +152,14 @@ async function runUberScraper() {
   // matches the brand; a timeout with no brand card sends [] (a fallback to the
   // rendered strays would be brand-filtered to [] anyway).
   //
-  // NOTE (live 2026-07-12, #38): Uber's brand search no longer has the "N
-  // locations" multi-branch view — the feed AND its getSearchFeedV1 payload carry
-  // exactly ONE store per brand (the nearest), for every brand probed. Sibling
-  // enumeration therefore finds at most the source store, which the worker then
-  // de-dupes away. Locality-qualified queries ("KFC Whitechapel") sometimes
-  // expand to several branches but inconsistently ("KFC Mile End" does not), so
-  // there is no deterministic replacement surface.
+  // NOTE: brand-branch coverage in the feed varies, so do not assume one-per-brand.
+  //   2026-07-12 (#38): KFC/McDonald's/Subway each returned a SINGLE (nearest)
+  //     store, in the getSearchFeedV1 payload as well as the DOM.
+  //   2026-08-09: with the location resolved (the pl= address blob present after
+  //     Uber's 307 redirect), Popeyes returned 3 branches from a 78-card feed.
+  // So "at most the source store" was a floor, not a rule; selectNearestBranches
+  // already takes the nearest N, so several branches need no special handling.
+  // Locality-qualified queries ("KFC Whitechapel") also expand inconsistently.
   // Stemmed here so a brand Uber trades under a different word form still counts
   // as "the chain's results have rendered" (#89: "Tayyabs" on the source platform
   // vs "Tayyab Sheesh Kebab" on Uber) — otherwise this waits out the full timeout

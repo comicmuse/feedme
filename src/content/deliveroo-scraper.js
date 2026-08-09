@@ -1,6 +1,7 @@
 const { selectNearestBranches, sameBrand } = require('../shared/branches');
 const { MSG, PLATFORM } = require('../shared/constants');
 const { parseMenuResponse } = require('../shared/parsers');
+const { enumLog } = require('../shared/enum-log');
 
 // Deliveroo can't be reached with a single URL: there is no menu page derivable
 // from a restaurant name + postcode. Instead this scraper drives the site like a
@@ -56,6 +57,7 @@ const { parseMenuResponse } = require('../shared/parsers');
   if (path === '/' || path === '') {
     const input = await waitFor(() => document.querySelector('#location-search'));
     if (!input) {
+      enumLog(PLATFORM.DELIVEROO, 'phase 1: no #location-search input on the homepage after 8s — homepage did not load as expected');
       chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.DELIVEROO, branches: [] });
       return;
     }
@@ -65,6 +67,7 @@ const { parseMenuResponse } = require('../shared/parsers');
       [...document.querySelectorAll('li')].find((li) => /,\s*UK\s*$/i.test(li.textContent.trim()))
     );
     if (!suggestion) {
+      enumLog(PLATFORM.DELIVEROO, `phase 1: postcode "${target.postcode ?? ''}" produced no ", UK" address suggestion — the Places lookup did not resolve`, { postcode: target.postcode ?? '' });
       chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.DELIVEROO, branches: [] });
       return;
     }
@@ -84,6 +87,7 @@ const { parseMenuResponse } = require('../shared/parsers');
       document.querySelector('input[type="search"], input[placeholder*="estaurant" i], input[placeholder*="earch" i]')
     );
     if (!search) {
+      enumLog(PLATFORM.DELIVEROO, 'phase 2: no restaurant search box on the listing page after 8s', { brand });
       chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.DELIVEROO, branches: [] });
       return;
     }
@@ -100,6 +104,16 @@ const { parseMenuResponse } = require('../shared/parsers');
       return found.length ? found : null;
     });
     if (!links) {
+      // Split the "loaded but brand absent" case from "nothing rendered": count
+      // every /menu/ link on the page regardless of brand. Many links but no
+      // match means this chain isn't in reach; zero means the listing itself
+      // never rendered its cards (a background-tab render stall is the suspect,
+      // #112).
+      const anyMenuLinks = document.querySelectorAll('a[href*="/menu/"]').length;
+      enumLog(PLATFORM.DELIVEROO, anyMenuLinks
+        ? `phase 2: ${anyMenuLinks} restaurant link(s) on the page but none matched brand "${brand}"`
+        : `phase 2: no restaurant links rendered on the listing for "${brand}" before timeout`,
+      { brand, menuLinksOnPage: anyMenuLinks });
       chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.DELIVEROO, branches: [] });
       return;
     }
@@ -124,6 +138,7 @@ const { parseMenuResponse } = require('../shared/parsers');
     const branches = selectNearestBranches(candidates, ctx.restaurantName ?? '', ctx.branchCount ?? 3)
       .map(({ id, label, distance, menuUrl }) => ({ id, label, distance, menuUrl }));
 
+    enumLog(PLATFORM.DELIVEROO, `phase 2: reporting ${branches.length} branch(es) from ${candidates.length} brand candidate(s)`, { branchCount: branches.length, candidateCount: candidates.length });
     chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.DELIVEROO, branches });
     return;
   }
@@ -131,12 +146,16 @@ const { parseMenuResponse } = require('../shared/parsers');
   // PHASE 3 — menu: parse the embedded data and report back.
   if (path.startsWith('/menu/')) {
     const blob = await waitFor(() => document.querySelector('#__NEXT_DATA__')?.textContent);
-    if (!blob) return;
+    if (!blob) {
+      enumLog(PLATFORM.DELIVEROO, 'menu: #__NEXT_DATA__ never appeared on the branch menu page — branch cannot be priced');
+      return;
+    }
 
     let parsed;
     try {
       parsed = parseMenuResponse(PLATFORM.DELIVEROO, JSON.parse(blob));
-    } catch (_) {
+    } catch (err) {
+      enumLog(PLATFORM.DELIVEROO, 'menu: __NEXT_DATA__ present but failed to parse', { error: String(err && err.message || err) });
       return;
     }
 

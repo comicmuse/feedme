@@ -224,6 +224,14 @@ async function startEnumeration(comparison, platform) {
         console.info('[FeedMe permissions]', platform, 'went quiet — host access revoked mid-comparison for', missing.join(', '));
         comparison.blockedPlatforms.set(platform, missing);
       } else {
+        // The enum tab never reported in ENUM_TIMEOUT_MS. Its CURRENT url is the
+        // key clue: if it differs from the search url we opened, the platform
+        // redirected it — to a sign-in wall or bot challenge when logged out, on
+        // a host outside our content-script matches, so the scraper never ran and
+        // could not log for itself. Capture it before the tab is closed.
+        const landed = await browser.tabs.get(bgTab.id).then((t) => t && t.url).catch(() => null);
+        console.info('[FeedMe enum]', platform, '— enumeration timed out with no result after', ENUM_TIMEOUT_MS, 'ms;',
+          landed && landed !== url ? `tab was redirected to ${landed} (sent to ${url}) — a login wall or challenge is likely` : `tab stayed on ${landed || url}`);
         comparison.enumErrors.add(platform);
       }
       onPlatformDone(comparison, platform);

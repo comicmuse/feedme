@@ -1,6 +1,7 @@
 const { selectNearestBranches, justEatCandidates } = require('../shared/branches');
 const { MSG, PLATFORM, isJeApiUrl } = require('../shared/constants');
 const { parseMenuResponse } = require('../shared/parsers');
+const { enumLog } = require('../shared/enum-log');
 
 // Just Eat, like Deliveroo, server-renders its menu into __NEXT_DATA__ and destroys
 // the JS context on each navigation, so the service worker re-injects this script
@@ -47,19 +48,27 @@ const { parseMenuResponse } = require('../shared/parsers');
     if (!blob) {
       // Report rather than return silently — otherwise the platform only ends via
       // the enum timeout.
+      enumLog(PLATFORM.JUST_EAT, 'enumerate: #__NEXT_DATA__ with restaurantData never appeared on the area listing after 8s — listing did not load (#105)');
       chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.JUST_EAT, branches: [] });
       return;
     }
 
     let branches = [];
+    let candidateCount = 0;
     try {
       const data = JSON.parse(blob);
       const cands = justEatCandidates(data);
+      candidateCount = cands.length;
       branches = selectNearestBranches(cands, ctx.restaurantName ?? '', ctx.branchCount ?? 3)
         .map(({ id, label, distance, menuUrl, listedDeliveryFee, earnsStampCard }) =>
           ({ id, label, distance, menuUrl, listedDeliveryFee, earnsStampCard }));
-    } catch (_) {}
+    } catch (err) {
+      // Previously swallowed: a listing that arrived but would not parse looked
+      // identical to one with no branches (#105). Say so.
+      enumLog(PLATFORM.JUST_EAT, 'enumerate: area listing arrived but parsing it threw — reporting as empty', { error: String(err && err.message || err) });
+    }
 
+    enumLog(PLATFORM.JUST_EAT, `enumerate: reporting ${branches.length} branch(es) from ${candidateCount} listed restaurant(s)`, { branchCount: branches.length, candidateCount });
     chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.JUST_EAT, branches });
     return;
   }
@@ -71,12 +80,16 @@ const { parseMenuResponse } = require('../shared/parsers');
       // Wait for the fully server-rendered version that includes the catalogue.
       return text && text.includes('preloadedState') && /"cdn"/.test(text) ? text : null;
     });
-    if (!blob) return;
+    if (!blob) {
+      enumLog(PLATFORM.JUST_EAT, 'menu: server-rendered __NEXT_DATA__ (preloadedState + cdn) never appeared — branch cannot be priced');
+      return;
+    }
 
     let data;
     try {
       data = JSON.parse(blob);
-    } catch (_) {
+    } catch (err) {
+      enumLog(PLATFORM.JUST_EAT, 'menu: __NEXT_DATA__ present but failed to parse', { error: String(err && err.message || err) });
       return;
     }
 
@@ -147,7 +160,8 @@ const { parseMenuResponse } = require('../shared/parsers');
     let parsed;
     try {
       parsed = parseMenuResponse(PLATFORM.JUST_EAT, data);
-    } catch (_) {
+    } catch (err) {
+      enumLog(PLATFORM.JUST_EAT, 'menu: catalogue parse threw after data loaded', { error: String(err && err.message || err) });
       return;
     }
 

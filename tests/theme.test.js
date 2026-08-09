@@ -158,6 +158,10 @@ describe('platform collision', () => {
     expect(collidingPlatform(THEME['--fm-accent'])).toBeNull();
     expect(collidingPlatform(THEME['--fm-win'])).toBeNull();
     expect(collidingPlatform(THEME['--fm-warn'])).toBeNull();
+    // The warn fill/border run closest to Just Eat's orange in hue, so they earn
+    // their own assertion: they clear the guard on lightness (L>70), not hue.
+    expect(collidingPlatform(THEME['--fm-warn-border'])).toBeNull();
+    expect(collidingPlatform(THEME['--fm-warn-tint'])).toBeNull();
     expect(collidingPlatform(THEME['--fm-error'])).toBeNull();
   });
 });

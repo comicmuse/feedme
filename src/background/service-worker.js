@@ -1,6 +1,7 @@
 const { PLATFORM, CHECKOUT_PATTERNS, MSG, JUST_EAT_SMALL_ORDER_THRESHOLD, buildSearchUrl, isAllowedMenuUrl, isMenuPageUrl, getConfig, browser } = require('../shared/constants');
 const { matchItems, computeTotal, estimateUberFees, uberOneWaiverOffer, uberOneAccountOffers } = require('../shared/matcher');
 const { buildSnapshot } = require('../shared/snapshot');
+const { missingOrigins } = require('../shared/permissions');
 const { createScheduler } = require('../shared/pool');
 const { THEME } = require('../shared/theme');
 const { switchTableKey, buildSwitchTable, switchEntry } = require('../shared/switch-table');
@@ -165,14 +166,36 @@ browser.runtime.onMessage.addListener(async (msg) => {
     injectedUrls: new Set(),
     timeouts: new Map(),
     enumErrors: new Set(),             // platforms whose enumeration timed out (retryable)
+    blockedPlatforms: new Map(),       // platform -> revoked origins (#77)
   };
   comparisons.set(tabId, comparison);
 
+  // Pre-flight the host access each platform needs. Firefox revokes these at
+  // will, and without this every stage fails silently — the injections below are
+  // all swallowed .catch()es, so a revoked platform is indistinguishable from
+  // one with no nearby siblings. Blocked platforms are dropped from the run
+  // rather than aborting it: the comparison across the platforms that DO have
+  // access is still worth having, and is still honest as long as the missing one
+  // says why it is missing.
+  await Promise.all(ALL_PLATFORMS.map(async (platform) => {
+    const missing = await missingOrigins(platform);
+    if (missing.length) {
+      console.info('[FeedMe permissions]', platform, 'blocked — host access revoked for', missing.join(', '));
+      comparison.blockedPlatforms.set(platform, missing);
+      comparison.loading.delete(platform);
+    }
+  }));
+
   // Seed the current branch from the live order (authoritative, not scraped).
   seedCurrentBranch(comparison);
-  pushUpdate(comparison);
+  // Settle rather than merely push when something is blocked: a blocked platform
+  // never enumerates, so nothing else would ever evaluate completion, and with
+  // ALL of them blocked the sidebar would sit unfinished forever.
+  if (comparison.blockedPlatforms.size) afterBranchSettled(comparison);
+  else pushUpdate(comparison);
 
   for (const platform of ALL_PLATFORMS) {
+    if (comparison.blockedPlatforms.has(platform)) continue;
     await startEnumeration(comparison, platform);
   }
 });
@@ -185,13 +208,24 @@ async function startEnumeration(comparison, platform) {
   const bgTab = await browser.tabs.create({ url, active: false });
   comparison.enumTabs.set(bgTab.id, platform);
   comparison.timeouts.set(`enum|${platform}`, setTimeout(
-    () => {
+    async () => {
       // Unmap the stale tab before anything else — otherwise a late BRANCHES_FOUND
       // from it could still route via findTab() (keyed by tabId, not by any status
       // gate) after RETRY_PLATFORM has moved on, mirroring the analogous menuTabs
       // leak fixed in pump()'s timeout path.
       comparison.enumTabs.delete(bgTab.id);
-      comparison.enumErrors.add(platform);
+      // A revocation DURING the run lands here: access was there at pre-flight,
+      // the enumerator then failed to inject, and the platform simply went quiet
+      // until the timeout. Re-check before blaming the timeout, or a revocation
+      // mid-comparison reads as "could not load branches" and offers a Retry that
+      // cannot possibly succeed (#77).
+      const missing = await missingOrigins(platform);
+      if (missing.length) {
+        console.info('[FeedMe permissions]', platform, 'went quiet — host access revoked mid-comparison for', missing.join(', '));
+        comparison.blockedPlatforms.set(platform, missing);
+      } else {
+        comparison.enumErrors.add(platform);
+      }
       onPlatformDone(comparison, platform);
       browser.tabs.remove(bgTab.id).catch(() => {});
     },
@@ -264,6 +298,18 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     console.info('[FeedMe retry] platform retry ignored — already enumerating', msg.platform);
     return;
   }
+  // Retry is also how a re-granted platform rejoins the run, so re-check before
+  // spending an enumeration on it: a retry with the access still revoked would
+  // open a background tab, inject nothing, and time out 15 seconds later with
+  // the same unexplained result the check exists to prevent.
+  const missing = await missingOrigins(msg.platform);
+  if (missing.length) {
+    console.info('[FeedMe retry] platform retry ignored — host access still revoked for', missing.join(', '));
+    comparison.blockedPlatforms.set(msg.platform, missing);
+    pushUpdate(comparison);
+    return;
+  }
+  comparison.blockedPlatforms.delete(msg.platform);
   comparison.enumErrors.delete(msg.platform);
   comparison.loading.add(msg.platform);
   pushUpdate(comparison);
@@ -330,7 +376,7 @@ function seedCurrentBranch(comparison) {
 }
 
 function pushUpdate(comparison, done = false) {
-  const snapshot = buildSnapshot(comparison.order, [...comparison.branches.values()], comparison.loading, comparison.enumErrors);
+  const snapshot = buildSnapshot(comparison.order, [...comparison.branches.values()], comparison.loading, comparison.enumErrors, comparison.blockedPlatforms);
   browser.tabs.sendMessage(comparison.sourceTabId, {
     type: MSG.COMPARISON_UPDATE, order: comparison.order, snapshot, done,
   }).catch(() => {});

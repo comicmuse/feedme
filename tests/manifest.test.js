@@ -1,4 +1,5 @@
 const { buildManifest, TARGETS } = require('../scripts/manifest');
+const { PLATFORM_ORIGINS } = require('../src/shared/permissions');
 const pkg = require('../package.json');
 
 describe('buildManifest', () => {
@@ -94,6 +95,18 @@ describe('buildManifest', () => {
   // dashboard, not the manifest, and an unknown key here would be a review flag.
   test('chrome carries no gecko data collection key', () => {
     expect(JSON.stringify(buildManifest('chrome'))).not.toMatch(/data_collection_permissions/);
+  });
+
+  // Firefox lets the user revoke any of these at will (#77), so the extension
+  // checks them before relying on them — against PLATFORM_ORIGINS, which has to
+  // be the same set the manifest asks for. Declare an origin here and forget to
+  // attribute it to a platform and it simply never gets checked: the revocation
+  // stays as silent as it was before the check existed.
+  test('every declared host permission belongs to exactly one platform', () => {
+    const declared = buildManifest('firefox').host_permissions;
+    const attributed = Object.values(PLATFORM_ORIGINS).flat();
+    expect([...attributed].sort()).toEqual([...declared].sort());
+    expect(new Set(attributed).size).toBe(attributed.length);
   });
 
   test('rejects an unknown target rather than emitting a silently wrong manifest', () => {

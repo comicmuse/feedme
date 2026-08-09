@@ -24,3 +24,16 @@ ul { font-size: 12px; color: var(--fm-text-strong); padding-left: 16px; margin-t
   border-radius: 8px; padding: 10px; font-size: 13px; font-weight: 700; cursor: pointer;
 }
 #compare-btn:hover { background: var(--fm-accent-hover); }
+/* Revoked host access (#77). Styled as a warning rather than an error: the
+   comparison still runs for the platforms that kept their access. */
+#state-blocked {
+  border: 1px solid var(--fm-error-border); border-radius: 8px;
+  padding: 10px; margin-bottom: 12px;
+}
+.blocked { font-size: 12px; color: var(--fm-error); margin-bottom: 8px; }
+.blocked span { font-weight: 600; }
+#grant-btn {
+  width: 100%; background: var(--fm-surface-muted); color: var(--fm-text-strong); border: none;
+  border-radius: 6px; padding: 8px; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+#grant-btn:hover { background: var(--fm-border); }

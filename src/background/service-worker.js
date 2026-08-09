@@ -306,13 +306,17 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   if (msg.type !== MSG.RETRY_PLATFORM) return;
   // The sidebar runs in the source tab, which keys the comparison.
   const comparison = comparisons.get(sender.tab?.id);
+  // A terminated worker loses `comparisons` while the sidebar in the page lives
+  // on, so a cold map is the normal state of an idle session (#103/#106). Reply
+  // like the switch path does so the sidebar can say the comparison expired,
+  // rather than leaving the click to do nothing but log to the worker's console.
   if (!comparison) {
     console.info('[FeedMe retry] platform retry ignored — no comparison for tab', sender.tab?.id);
-    return;
+    return { ok: false, reason: 'expired' };
   }
   if (comparison.loading.has(msg.platform)) {
     console.info('[FeedMe retry] platform retry ignored — already enumerating', msg.platform);
-    return;
+    return { ok: true };
   }
   // Retry is also how a re-granted platform rejoins the run, so re-check before
   // spending an enumeration on it: a retry with the access still revoked would
@@ -323,31 +327,40 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     console.info('[FeedMe retry] platform retry ignored — host access still revoked for', missing.join(', '));
     comparison.blockedPlatforms.set(msg.platform, missing);
     pushUpdate(comparison);
-    return;
+    return { ok: true };
   }
   comparison.blockedPlatforms.delete(msg.platform);
   comparison.enumErrors.delete(msg.platform);
   comparison.loading.add(msg.platform);
   pushUpdate(comparison);
   await startEnumeration(comparison, msg.platform);
+  return { ok: true };
 });
 
 // ── RETRY_BRANCH: re-run a single branch's menu scrape after a failure ──────
 
-browser.runtime.onMessage.addListener((msg, sender) => {
+// async so the returned reply is a Promise the polyfill sends over the channel:
+// a sync listener returning a plain object leaves sendResponse uncalled and the
+// wrapper answers nothing, so the sidebar's await would resolve to undefined and
+// the expired message never shows. Matches SWITCH_TO_BRANCH / RETRY_PLATFORM.
+browser.runtime.onMessage.addListener(async (msg, sender) => {
   if (msg.type !== MSG.RETRY_BRANCH) return;
   // The sidebar runs in the source tab, which keys the comparison.
   const comparison = comparisons.get(sender.tab?.id);
+  // A terminated worker loses `comparisons` while the sidebar in the page lives
+  // on, so a cold map is the normal state of an idle session (#103/#106). Reply
+  // like the switch path does so the sidebar can say the comparison expired,
+  // rather than leaving the click to do nothing but log to the worker's console.
   if (!comparison) {
     console.info('[FeedMe retry] branch retry ignored — no comparison for tab', sender.tab?.id);
-    return;
+    return { ok: false, reason: 'expired' };
   }
   const branch = comparison.branches.get(msg.branchKey);
   if (!branch || branch.status !== 'error' || branch.result?.error === 'bad-url') {
     console.info('[FeedMe retry] branch retry ignored —',
       !branch ? 'unknown branch key' : branch.status !== 'error' ? 'branch is not in an error state' : 'bad-url is permanent, not retryable',
       msg.branchKey);
-    return;
+    return { ok: true };
   }
   branch.status = 'pending';
   branch.result = null;
@@ -355,6 +368,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   comparison.scheduler.add([msg.branchKey]);
   pushUpdate(comparison);
   pump(comparison);
+  return { ok: true };
 });
 
 // ── Seed + snapshot helpers ──────────────────────────────────────────────────

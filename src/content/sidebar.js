@@ -208,14 +208,28 @@ function showClickFailure(reason) {
   bar.appendChild(ft);
 }
 
+// Ask the worker to retry a click, surfacing the same expired-message the switch
+// path shows when the worker has idled out and can no longer service it (#106).
+async function retry(msg) {
+  let res = null;
+  try {
+    res = await browser.runtime.sendMessage(msg);
+  } catch (_) {
+    // The extension was reloaded under this page, so the content script is
+    // orphaned and no message will ever land. Same remedy as an expired one.
+    res = { ok: false, reason: 'expired' };
+  }
+  if (res && res.ok === false) showClickFailure(res.reason);
+}
+
 // Ask the worker to retry a single branch's menu scrape after a failure.
 function retryBranch(branchKey) {
-  browser.runtime.sendMessage({ type: MSG.RETRY_BRANCH, branchKey });
+  retry({ type: MSG.RETRY_BRANCH, branchKey });
 }
 
 // Ask the worker to retry a platform's enumeration after a timeout.
 function retryPlatform(platform) {
-  browser.runtime.sendMessage({ type: MSG.RETRY_PLATFORM, platform });
+  retry({ type: MSG.RETRY_PLATFORM, platform });
 }
 
 // Label for a branch's switch button, reflecting how much of the basket can be

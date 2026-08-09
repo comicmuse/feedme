@@ -1,4 +1,4 @@
-const { selectNearestBranches, justEatCandidates } = require('../shared/branches');
+const { readCompleteAreaListing, classifyAreaEnumeration } = require('../shared/branches');
 const { MSG, PLATFORM, isJeApiUrl } = require('../shared/constants');
 const { parseMenuResponse } = require('../shared/parsers');
 const { enumLog } = require('../shared/enum-log');
@@ -41,34 +41,34 @@ const { enumLog } = require('../shared/enum-log');
 
   // ENUMERATE — area listing: report the nearest-N branches, do not navigate.
   if (path.startsWith('/area/')) {
-    const blob = await waitFor(() => {
+    // Poll until a COMPLETE, location-resolved __NEXT_DATA__ arrives. Just Eat
+    // keeps rewriting the blob after readyState:"complete", so the old gate
+    // (text.includes('restaurantData'), a substring near the start) fired on a
+    // partial read: JSON.parse then threw on the torn ~5 MB blob and the failure
+    // was swallowed as an empty area, carrying no Retry (#105). The predicate
+    // returns the parsed data only once it parses AND has real candidates, so a
+    // truncated or pre-location read simply keeps the poll waiting.
+    const data = await waitFor(() =>
+      readCompleteAreaListing(document.querySelector('#__NEXT_DATA__')?.textContent));
+
+    const outcome = classifyAreaEnumeration(data, ctx.restaurantName ?? '', ctx.branchCount ?? 3);
+    if (outcome.status === 'unreadable') {
+      // No complete, candidate-bearing listing ever arrived — the listing failed
+      // to load or would not parse (a slow hydrate in a background tab is an
+      // ordinary event for a 5 MB blob). This is NOT "no branches found": surface
+      // it as retryable, the same state the enum timeout produces, so the sidebar
+      // shows a Retry ↻ instead of a confident false negative (#105). One final
+      // read names WHY for the log, rather than the parse failure staying silent.
       const text = document.querySelector('#__NEXT_DATA__')?.textContent;
-      return text && text.includes('restaurantData') ? text : null;
-    });
-    if (!blob) {
-      // Report rather than return silently — otherwise the platform only ends via
-      // the enum timeout.
-      enumLog(PLATFORM.JUST_EAT, 'enumerate: #__NEXT_DATA__ with restaurantData never appeared on the area listing after 8s — listing did not load (#105)');
-      chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.JUST_EAT, branches: [] });
+      let reason = text ? 'present but incomplete/unparseable' : 'never appeared';
+      if (text) { try { JSON.parse(text); reason = 'parsed but location unresolved (0 candidates)'; } catch (err) { reason = `parse failed — ${String(err && err.message || err)}`; } }
+      enumLog(PLATFORM.JUST_EAT, `enumerate: no complete area listing after 8s (${reason}) — reporting as retryable, not empty (#105)`, { length: text ? text.length : 0 });
+      chrome.runtime.sendMessage({ type: MSG.BRANCHES_ERROR, platform: PLATFORM.JUST_EAT });
       return;
     }
 
-    let branches = [];
-    let candidateCount = 0;
-    try {
-      const data = JSON.parse(blob);
-      const cands = justEatCandidates(data);
-      candidateCount = cands.length;
-      branches = selectNearestBranches(cands, ctx.restaurantName ?? '', ctx.branchCount ?? 3)
-        .map(({ id, label, distance, menuUrl, listedDeliveryFee, earnsStampCard }) =>
-          ({ id, label, distance, menuUrl, listedDeliveryFee, earnsStampCard }));
-    } catch (err) {
-      // Previously swallowed: a listing that arrived but would not parse looked
-      // identical to one with no branches (#105). Say so.
-      enumLog(PLATFORM.JUST_EAT, 'enumerate: area listing arrived but parsing it threw — reporting as empty', { error: String(err && err.message || err) });
-    }
-
-    enumLog(PLATFORM.JUST_EAT, `enumerate: reporting ${branches.length} branch(es) from ${candidateCount} listed restaurant(s)`, { branchCount: branches.length, candidateCount });
+    const branches = outcome.branches ?? [];
+    enumLog(PLATFORM.JUST_EAT, `enumerate: reporting ${branches.length} branch(es) from ${outcome.candidateCount} listed restaurant(s)`, { branchCount: branches.length, candidateCount: outcome.candidateCount });
     chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.JUST_EAT, branches });
     return;
   }

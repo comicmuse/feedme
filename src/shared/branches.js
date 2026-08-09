@@ -132,4 +132,74 @@ function justEatCandidates(nextData) {
     }));
 }
 
-module.exports = { findByKey, selectNearestBranches, justEatCandidates, nameTokens, sameBrand };
+// Only these fields cross the wire to the service worker's BRANCHES_FOUND handler.
+function projectBranch({ id, label, distance, menuUrl, listedDeliveryFee, earnsStampCard }) {
+  return { id, label, distance, menuUrl, listedDeliveryFee, earnsStampCard };
+}
+
+/**
+ * The Just Eat enumerate-phase poll predicate (#105).
+ *
+ * `readyState:"complete"` does NOT mean #__NEXT_DATA__ is done: Just Eat keeps
+ * rewriting it after load — first with an empty listing (location unresolved),
+ * then streaming ~5 MB of restaurantData in. Gating on the substring
+ * "restaurantData" (which appears near the START of the blob) fired on a partial,
+ * still-streaming value, so JSON.parse threw on a torn read and the failure was
+ * swallowed as an empty area.
+ *
+ * Poll on THIS instead: it returns the parsed data ONLY when the text is a
+ * complete, parseable blob that already carries real candidates. A truncated
+ * mid-stream read fails to parse and a pre-location-resolution read yields 0
+ * candidates — both return null, so the poll simply keeps waiting.
+ *
+ * @param {?string} text  #__NEXT_DATA__.textContent
+ * @returns {?object} the parsed __NEXT_DATA__ object, or null to keep waiting
+ */
+function readCompleteAreaListing(text) {
+  if (!text) return null;
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (_) {
+    // Torn read: the blob is still streaming. Not an error — keep polling.
+    return null;
+  }
+  // Parsed clean, but a listing read before the location resolves has an empty
+  // restaurantData map. Wait for candidates rather than report a false empty.
+  return justEatCandidates(data).length ? data : null;
+}
+
+/**
+ * Decide what a Just Eat area-listing read means, given the parsed data the poll
+ * resolved with (or null if it timed out). Pure so the three enumerate outcomes
+ * can be unit-tested without the scraper IIFE (#105):
+ *
+ *  - `unreadable` — no complete, candidate-bearing blob ever arrived. The caller
+ *    must surface this as RETRYABLE (like the enum timeout), never as an empty.
+ *  - `empty`      — the listing was read, but nothing matched the target brand.
+ *    This is the only honest "No branches found".
+ *  - `matched`    — the listing was read and yielded branches.
+ *
+ * @param {?object} data  parsed __NEXT_DATA__ from readCompleteAreaListing, or null
+ * @param {string} targetName  the chain being compared
+ * @param {number} branchCount  nearest-N to keep
+ * @returns {{status:'unreadable'} | {status:'empty',candidateCount:number} | {status:'matched',branches:object[],candidateCount:number}}
+ */
+function classifyAreaEnumeration(data, targetName, branchCount) {
+  if (!data) return { status: 'unreadable' };
+  const candidates = justEatCandidates(data);
+  const branches = selectNearestBranches(candidates, targetName ?? '', branchCount).map(projectBranch);
+  return branches.length
+    ? { status: 'matched', branches, candidateCount: candidates.length }
+    : { status: 'empty', candidateCount: candidates.length };
+}
+
+module.exports = {
+  findByKey,
+  selectNearestBranches,
+  justEatCandidates,
+  nameTokens,
+  sameBrand,
+  readCompleteAreaListing,
+  classifyAreaEnumeration,
+};

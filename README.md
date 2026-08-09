@@ -30,7 +30,9 @@ npm run package   # → build/chrome/ and build/firefox/, each loadable
 
 **Chrome / Edge:** `chrome://extensions` → enable Developer mode → *Load unpacked* → select **`build/chrome/`**. Not the repo root: that makes Chrome hash `node_modules` and `.git` too, which takes about 40 seconds per load.
 
-**Firefox:** `about:debugging#/runtime/this-firefox` → *Load Temporary Add-on* → select **`build/firefox/manifest.json`**. Firefox 142+ is required, and it treats host permissions as optional in MV3, so grant site access from the extensions button before expecting a comparison to run.
+**Firefox:** `about:debugging#/runtime/this-firefox` → *Load Temporary Add-on* → select **`build/firefox/manifest.json`**. Firefox 139+ is required — 142+ on Firefox for Android, where the `data_collection_permissions` key we declare only lands at 142 — and it treats host permissions as optional in MV3, so grant site access from the extensions button before expecting a comparison to run.
+
+**Not the Flatpak Firefox.** Its sandbox has no home access, and the file picker grants only the single file you selected, so Firefox parses `manifest.json` and cannot reach one thing beside it: the add-on appears in `about:addons` with its name, its description, and a blank square where the icon should be, while every `dist/` bundle silently fails to load. It looks like an icon bug and is not one. Use the snap or a distro build. Snap's `home` interface covers non-hidden files only, so package from the repo itself, not from a worktree under `.claude/worktrees/`.
 
 Re-run `npm run package` and hit reload after changes (`node esbuild.config.mjs --watch` auto-rebuilds `dist/`, but not `build/`).
 

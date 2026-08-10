@@ -195,6 +195,23 @@ async function beginComparison(tabId, order) {
   }
 }
 
+// A cold retry (worker idled out, comparison Map empty) rebuilds the comparison
+// from the order still in session storage and re-drives the whole scrape — the
+// persisted switch mirror carries nothing to re-render succeeded platforms, so a
+// fresh full comparison is both simpler and correct (#122). The distinct reason
+// lets the sidebar acknowledge the resume; with no order to rebuild from, the
+// #106 expired fallback stands.
+async function restartOrExpire(tabId) {
+  const { currentOrder } = await browser.storage.session.get('currentOrder').catch(() => ({}));
+  if (!currentOrder || currentOrder.items.length === 0) {
+    console.info('[FeedMe retry] cold retry could not rebuild — no order in session storage for tab', tabId);
+    return { ok: false, reason: 'expired' };
+  }
+  console.info('[FeedMe retry] cold retry — rebuilding a fresh comparison for tab', tabId);
+  await beginComparison(tabId, currentOrder);
+  return { ok: true, reason: 'restarted' };
+}
+
 // ── START_COMPARISON: inject sidebar, seed current branch, open enum tabs ────
 
 browser.runtime.onMessage.addListener(async (msg) => {
@@ -319,10 +336,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   // on, so a cold map is the normal state of an idle session (#103/#106). Reply
   // like the switch path does so the sidebar can say the comparison expired,
   // rather than leaving the click to do nothing but log to the worker's console.
-  if (!comparison) {
-    console.info('[FeedMe retry] platform retry ignored — no comparison for tab', sender.tab?.id);
-    return { ok: false, reason: 'expired' };
-  }
+  if (!comparison) return restartOrExpire(sender.tab?.id);
   if (comparison.loading.has(msg.platform)) {
     console.info('[FeedMe retry] platform retry ignored — already enumerating', msg.platform);
     return { ok: true };
@@ -360,10 +374,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   // on, so a cold map is the normal state of an idle session (#103/#106). Reply
   // like the switch path does so the sidebar can say the comparison expired,
   // rather than leaving the click to do nothing but log to the worker's console.
-  if (!comparison) {
-    console.info('[FeedMe retry] branch retry ignored — no comparison for tab', sender.tab?.id);
-    return { ok: false, reason: 'expired' };
-  }
+  if (!comparison) return restartOrExpire(sender.tab?.id);
   const branch = comparison.branches.get(msg.branchKey);
   if (!branch || branch.status !== 'error' || branch.result?.error === 'bad-url') {
     console.info('[FeedMe retry] branch retry ignored —',

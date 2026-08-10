@@ -10,7 +10,7 @@ const { formatDistance } = require('../shared/format');
 // label) live in a plain CommonJS module so they run under Jest with no DOM;
 // this file only assembles the elements around them (#107).
 const {
-  PLATFORM_LABEL, formatMoney, clickFailureText, footerView, switchButtonLabel,
+  PLATFORM_LABEL, formatMoney, clickFailureText, resumeNoticeText, footerView, switchButtonLabel,
 } = require('../shared/sidebar-view');
 
 const fmt = formatMoney;
@@ -234,6 +234,18 @@ function showClickFailure(reason) {
   bar.appendChild(ft);
 }
 
+// A cold retry rebuilt the comparison (#122): acknowledge it with a plain (not
+// error) line. The fresh COMPARISON_UPDATE that follows re-renders the bar to
+// loading spinners, which is what the user actually watches refill.
+function showResumeNotice() {
+  const existing = bar.querySelector('.ft');
+  if (existing) existing.remove();
+  const ft = document.createElement('div');
+  ft.className = 'ft';
+  ft.textContent = `↻ ${resumeNoticeText()}`;
+  bar.appendChild(ft);
+}
+
 // Ask the worker to retry a click, surfacing the same expired-message the switch
 // path shows when the worker has idled out and can no longer service it (#106).
 async function retry(msg) {
@@ -246,6 +258,7 @@ async function retry(msg) {
     res = { ok: false, reason: 'expired' };
   }
   if (res && res.ok === false) showClickFailure(res.reason);
+  else if (res && res.reason === 'restarted') showResumeNotice();
 }
 
 // Ask the worker to retry a single branch's menu scrape after a failure.

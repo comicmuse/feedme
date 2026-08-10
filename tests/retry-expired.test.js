@@ -101,3 +101,75 @@ describe('retry that can still be serviced', () => {
     expect(reply).toEqual({ ok: true });
   });
 });
+
+describe('cold retry rebuilds a fresh comparison (#122)', () => {
+  // A postcode is required or buildSearchUrl yields no URL and nothing opens a
+  // tab; with one, every platform enumerates, so a rebuild is observable as a
+  // tabs.create call.
+  const order = {
+    platform: PLATFORM.UBER_EATS,
+    restaurantName: 'Tayyabs',
+    postcode: 'E1 1EW',
+    items: [{ name: 'Seekh Kebab', unitPrice: 500, quantity: 1 }],
+    discounts: [],
+    checkoutTotal: 500,
+    deliveryFee: 0,
+    serviceFee: 0,
+  };
+
+  test('a cold platform retry with an order in session storage rebuilds and replies restarted', async () => {
+    browser.storage.session.get.mockImplementation(async (key) =>
+      key === 'currentOrder' ? { currentOrder: order } : {});
+    browser.tabs.create.mockClear();
+
+    const reply = await dispatch(
+      { type: MSG.RETRY_PLATFORM, platform: PLATFORM.DELIVEROO },
+      { tab: { id: 9001 } },
+    );
+
+    expect(reply).toEqual({ ok: true, reason: 'restarted' });
+    expect(browser.tabs.create).toHaveBeenCalled();  // enumeration was driven
+  });
+
+  test('a cold branch retry with an order in session storage rebuilds and replies restarted', async () => {
+    browser.storage.session.get.mockImplementation(async (key) =>
+      key === 'currentOrder' ? { currentOrder: order } : {});
+    browser.tabs.create.mockClear();
+
+    const reply = await dispatch(
+      { type: MSG.RETRY_BRANCH, branchKey: 'del|wc' },
+      { tab: { id: 9002 } },
+    );
+
+    expect(reply).toEqual({ ok: true, reason: 'restarted' });
+    expect(browser.tabs.create).toHaveBeenCalled();  // the rebuild actually drove enumeration
+  });
+
+  test('two concurrent cold platform retries rebuild once, not twice', async () => {
+    browser.storage.session.get.mockImplementation(async (key) =>
+      key === 'currentOrder' ? { currentOrder: order } : {});
+    browser.tabs.create.mockClear();
+
+    const [r1, r2] = await Promise.all([
+      dispatch({ type: MSG.RETRY_PLATFORM, platform: PLATFORM.DELIVEROO }, { tab: { id: 9004 } }),
+      dispatch({ type: MSG.RETRY_PLATFORM, platform: PLATFORM.DELIVEROO }, { tab: { id: 9004 } }),
+    ]);
+
+    expect(r1).toEqual({ ok: true, reason: 'restarted' });
+    expect(r2).toEqual({ ok: true, reason: 'restarted' });
+    // One rebuild drives one enumeration pass: three platforms → three enum tabs,
+    // not six. Without the in-flight guard the second click doubles this.
+    expect(browser.tabs.create).toHaveBeenCalledTimes(3);
+  });
+
+  test('a cold retry with no order in session storage still replies expired', async () => {
+    browser.storage.session.get.mockResolvedValue({});  // nothing stored
+
+    const reply = await dispatch(
+      { type: MSG.RETRY_PLATFORM, platform: PLATFORM.DELIVEROO },
+      { tab: { id: 9003 } },
+    );
+
+    expect(reply).toEqual({ ok: false, reason: 'expired' });
+  });
+});

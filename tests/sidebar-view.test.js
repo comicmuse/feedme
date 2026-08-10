@@ -3,7 +3,7 @@
 // These are the exact failure mode #107 targets — right logic, wrong words —
 // so they are tested directly, with no DOM.
 const {
-  footerView, clickFailureText, switchButtonLabel,
+  footerView, clickFailureText, resumeNoticeText, switchButtonLabel,
 } = require('../src/shared/sidebar-view');
 const { PLATFORM } = require('../src/shared/constants');
 
@@ -80,6 +80,12 @@ describe('clickFailureText', () => {
   });
   test('an unknown reason falls back to a generic message rather than inventing a remedy', () => {
     expect(clickFailureText('who-knows')).toBe('That click could not be completed');
+  });
+});
+
+describe('resumeNoticeText', () => {
+  test('names the resumed refresh', () => {
+    expect(resumeNoticeText()).toBe('Session resumed — refreshing comparison…');
   });
 });
 

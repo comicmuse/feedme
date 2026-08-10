@@ -34,6 +34,14 @@ function clickFailureText(reason) {
   return CLICK_FAILURE_TEXT[reason] || CLICK_FAILURE_FALLBACK;
 }
 
+// The positive counterpart to clickFailureText: a cold retry that rebuilt the
+// comparison (#122). Shown as an informational line, then superseded by the
+// fresh loading snapshot's spinners.
+const RESUME_NOTICE_TEXT = 'Session resumed — refreshing comparison…';
+function resumeNoticeText() {
+  return RESUME_NOTICE_TEXT;
+}
+
 // The line that explains why a cheaper-looking branch did not win (#3): it
 // priced only part of the cart, so its lower total is not a real saving.
 function undercutNote(undercut) {
@@ -90,6 +98,7 @@ module.exports = {
   platformName,
   CLICK_FAILURE_TEXT,
   clickFailureText,
+  resumeNoticeText,
   undercutNote,
   footerView,
   switchButtonLabel,

@@ -140,18 +140,13 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   browser.action.setBadgeBackgroundColor({ color: THEME['--fm-win'], tabId: sender.tab?.id });
 });
 
-// ── START_COMPARISON: inject sidebar, seed current branch, open enum tabs ────
-
-browser.runtime.onMessage.addListener(async (msg) => {
-  if (msg.type !== MSG.START_COMPARISON) return;
-
-  const stored = await browser.storage.session.get('currentOrder');
-  const order = stored.currentOrder;
-  if (!order || order.items.length === 0) return;
-
-  const tabId = msg.tabId;
+// ── Comparison bootstrap — shared by START_COMPARISON and a cold retry (#122) ─
+// Builds the in-memory comparison for a tab and drives the full scrape. Does NOT
+// inject the sidebar: START_COMPARISON injects it for a fresh page load, and a
+// cold retry's sidebar already lives in the page — that it survived is the very
+// reason the retry button was clickable.
+async function beginComparison(tabId, order) {
   const { branchCount, maxConcurrent } = await getConfig();
-  await browser.scripting.executeScript({ target: { tabId }, files: ['dist/sidebar.js'] });
 
   const comparison = {
     sourceTabId: tabId,
@@ -198,6 +193,20 @@ browser.runtime.onMessage.addListener(async (msg) => {
     if (comparison.blockedPlatforms.has(platform)) continue;
     await startEnumeration(comparison, platform);
   }
+}
+
+// ── START_COMPARISON: inject sidebar, seed current branch, open enum tabs ────
+
+browser.runtime.onMessage.addListener(async (msg) => {
+  if (msg.type !== MSG.START_COMPARISON) return;
+
+  const stored = await browser.storage.session.get('currentOrder');
+  const order = stored.currentOrder;
+  if (!order || order.items.length === 0) return;
+
+  const tabId = msg.tabId;
+  await browser.scripting.executeScript({ target: { tabId }, files: ['dist/sidebar.js'] });
+  await beginComparison(tabId, order);
 });
 
 // ── Enumeration bootstrap — used at initial START_COMPARISON and on retry ───

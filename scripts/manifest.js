@@ -75,7 +75,7 @@ const overrides = {
     background: { scripts: [BACKGROUND_BUNDLE] },
     browser_specific_settings: {
       gecko: {
-        id: 'feedme@feedme.dev',
+        id: 'feedme@comicmuse.net',
         strict_min_version: FIREFOX_MIN_VERSION,
         data_collection_permissions: DATA_COLLECTION,
       },

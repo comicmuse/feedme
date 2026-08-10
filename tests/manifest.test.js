@@ -67,7 +67,7 @@ describe('buildManifest', () => {
   // LibreWolf 139, the browser this is developed against (#101).
   test('firefox declares a desktop floor that is tested and supports every API used', () => {
     const gecko = buildManifest('firefox').browser_specific_settings.gecko;
-    expect(gecko.id).toBe('feedme@feedme.dev');
+    expect(gecko.id).toBe('feedme@comicmuse.net');
     const major = Number(gecko.strict_min_version.split('.')[0]);
     expect(major).toBeGreaterThanOrEqual(115); // storage.session
     expect(major).toBeLessThan(140);           // else the #101 lockout is back

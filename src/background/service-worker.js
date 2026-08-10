@@ -8,6 +8,7 @@ const { switchTableKey, buildSwitchTable, switchEntry } = require('../shared/swi
 
 // Keyed by source tabId.
 const comparisons = new Map();
+const rebuilding = new Set();      // tabIds with a cold rebuild in flight (#122)
 
 // Foreground tabs opened by a "switch" click, awaiting basket-building once loaded.
 // Keyed by the new tab's id -> { platform, basketPlan }.
@@ -202,14 +203,31 @@ async function beginComparison(tabId, order) {
 // lets the sidebar acknowledge the resume; with no order to rebuild from, the
 // #106 expired fallback stands.
 async function restartOrExpire(tabId) {
-  const { currentOrder } = await browser.storage.session.get('currentOrder').catch(() => ({}));
-  if (!currentOrder || currentOrder.items.length === 0) {
-    console.info('[FeedMe retry] cold retry could not rebuild — no order in session storage for tab', tabId);
-    return { ok: false, reason: 'expired' };
+  // One cold rebuild per tab at a time. On an idle worker EVERY retry button
+  // routes here, and beginComparison does not resolve until it has awaited
+  // enumeration for all platforms — a multi-second window in which a second cold
+  // click would build a second comparison, overwrite the first in the map, and
+  // orphan the first's background enum tabs (findTab only sees the current map).
+  // The sentinel is set synchronously before the first await, so the check
+  // cannot race across it. A concurrent click gets the same honest answer: a
+  // rebuild is under way (#122).
+  if (rebuilding.has(tabId)) {
+    console.info('[FeedMe retry] cold retry — a rebuild is already in flight for tab', tabId);
+    return { ok: true, reason: 'restarted' };
   }
-  console.info('[FeedMe retry] cold retry — rebuilding a fresh comparison for tab', tabId);
-  await beginComparison(tabId, currentOrder);
-  return { ok: true, reason: 'restarted' };
+  rebuilding.add(tabId);
+  try {
+    const { currentOrder } = await browser.storage.session.get('currentOrder').catch(() => ({}));
+    if (!currentOrder || currentOrder.items.length === 0) {
+      console.info('[FeedMe retry] cold retry could not rebuild — no order in session storage for tab', tabId);
+      return { ok: false, reason: 'expired' };
+    }
+    console.info('[FeedMe retry] cold retry — rebuilding a fresh comparison for tab', tabId);
+    await beginComparison(tabId, currentOrder);
+    return { ok: true, reason: 'restarted' };
+  } finally {
+    rebuilding.delete(tabId);
+  }
 }
 
 // ── START_COMPARISON: inject sidebar, seed current branch, open enum tabs ────
@@ -333,9 +351,10 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   // The sidebar runs in the source tab, which keys the comparison.
   const comparison = comparisons.get(sender.tab?.id);
   // A terminated worker loses `comparisons` while the sidebar in the page lives
-  // on, so a cold map is the normal state of an idle session (#103/#106). Reply
-  // like the switch path does so the sidebar can say the comparison expired,
-  // rather than leaving the click to do nothing but log to the worker's console.
+  // on, so a cold map is the normal state of an idle session (#103/#106). Rather
+  // than leave the click doing nothing but logging to the worker's console,
+  // restartOrExpire rebuilds a fresh comparison from the order in session storage
+  // and re-drives the scrape (#122), or replies expired when there is no order.
   if (!comparison) return restartOrExpire(sender.tab?.id);
   if (comparison.loading.has(msg.platform)) {
     console.info('[FeedMe retry] platform retry ignored — already enumerating', msg.platform);
@@ -371,9 +390,10 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   // The sidebar runs in the source tab, which keys the comparison.
   const comparison = comparisons.get(sender.tab?.id);
   // A terminated worker loses `comparisons` while the sidebar in the page lives
-  // on, so a cold map is the normal state of an idle session (#103/#106). Reply
-  // like the switch path does so the sidebar can say the comparison expired,
-  // rather than leaving the click to do nothing but log to the worker's console.
+  // on, so a cold map is the normal state of an idle session (#103/#106). Rather
+  // than leave the click doing nothing but logging to the worker's console,
+  // restartOrExpire rebuilds a fresh comparison from the order in session storage
+  // and re-drives the scrape (#122), or replies expired when there is no order.
   if (!comparison) return restartOrExpire(sender.tab?.id);
   const branch = comparison.branches.get(msg.branchKey);
   if (!branch || branch.status !== 'error' || branch.result?.error === 'bad-url') {

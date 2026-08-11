@@ -74,14 +74,25 @@ single entry point:
 function detectPageGate(doc, platform) { … }
 ```
 
-- `jeLocationPanel(doc)` — the Just Eat address/location dialog is open. This is
-  the exact panel `findOpenDialog` already excludes; it is extracted into this
-  shared predicate and `findOpenDialog`'s exclusion is rewritten to call it, so
-  the knowledge lives in one place.
-- `jeUnresolvedFees(doc)` — the basket panel shows a fee **range** (e.g.
-  `£0.99 - £2.99`) rather than a single value, which Just Eat renders only when
-  no address is resolved. Corroborates a gated state where the panel was
-  dismissed but no address was set.
+- `jeLocationPanel(doc)` — the Just Eat address/location dialog is open, matched
+  by its literal live text ("enter your street and house number" / "finding your
+  location" / "where should we deliver"). It scans `DIALOG_SELECTOR` and, like
+  `findOpenDialog`, skips `[data-qa="cart-modal"]` so the basket modal is never
+  mistaken for it. `findOpenDialog` today excludes the location panel only
+  *implicitly* — it matches the customise dialog by item name, which the panel
+  lacks. This change makes it explicit: `findOpenDialog` also skips anything
+  `jeLocationPanel` matches, so the "this is the location panel" knowledge lives
+  in one predicate rather than drifting between two.
+- `jeUnresolvedFees(doc)` — the basket/cart panel (`[data-qa="cart-modal"]`, the
+  same container `clearBasket` and `findOpenDialog` already target, live-verified
+  2026-07-11) shows a fee **range** (e.g. `Service £0.99 - £2.99`) rather than a
+  single value, which Just Eat renders only when no address is resolved. The scan
+  is scoped to the cart container — **never** the whole document — so a menu or
+  marketing price range elsewhere on the page ("Free delivery over £20 – £30", a
+  bundle's "from £X – £Y") can never false-positive. The exact fee-row markup is
+  pinned from a live capture during the audit (see §3) before this predicate
+  ships; the location panel is the primary, already-live-verified signal, and the
+  fee range corroborates a dismissed-panel / no-address state.
 
 `detectPageGate` for `just-eat` returns a gate when **either** signal holds. The
 panel is the primary/direct signal; the fee-range check is the fallback.
@@ -104,19 +115,35 @@ Gate descriptor shape:
 ### 2. Run flow & reporting
 
 `buildBasket` probes **once, up front**, before `clearBasket` and before the
-line loop:
+line loop — but **after the page settles**, not at the injection instant:
 
 ```js
+// The builder is injected at page-`complete`, BEFORE the basket UI hydrates —
+// a single instant sample would race the modal's render and miss the gate,
+// falling back into the very #110 bug this fixes. clearBasket already waits for
+// this hydration (uiPresent); the probe waits the same way: until the page has
+// settled OR a gate is already visible, then samples once.
+await wait(() => pageSettled(doc, platform) || detectPageGate(doc, platform),
+  { timeout: 4000 });
 const gate = detectPageGate(doc, platform);
 if (gate) {
-  dlog('page is gated:', gate.reason, '— skipping run');
-  if (overlay) overlay.setGate(gate);
+  dlog('page is gated:', gate.reason, '—', gate.action);
+  try { if (overlay) overlay.setGate(gate); } catch (_) {}
   const results = [];
   results.gate = gate;      // property on the array; array contract unchanged
   return results;
 }
 ```
 
+- **Wait for settle, then sample.** `pageSettled(doc, platform)` is true once the
+  platform's basket UI has hydrated (Just Eat: the `[data-qa="cart-modal…"]`
+  toggle/panel is present; other platforms reuse their existing hydration
+  signals). A non-gated page satisfies `pageSettled` as soon as it hydrates, so a
+  good run does **not** pay the full timeout — the wait resolves the instant
+  either condition holds. The 4 s ceiling is a fail-safe: if neither fires we
+  proceed into the normal flow rather than hanging.
+- **`overlay.setGate` is guarded** in `try/catch` like every DOM call in this
+  file — the builder must never throw (the real bootstrap has no `.catch`).
 - **No clear, no adds** when gated. The user's basket is left untouched, since we
   act on nothing.
 - **`results.gate`** is a property on the returned array. The existing tests read
@@ -126,7 +153,9 @@ if (gate) {
 - **Overlay** gets a new `setGate(gate)` method that renders one prominent line
   with `gate.action`, styled as a blocking notice (warn colour), distinct from
   the per-item "Add these manually" / "Check the options on" sections. This is
-  the once-per-run surface.
+  the once-per-run surface. Unlike `finish()`, it schedules **no** auto-dismiss
+  timeout: the notice names an action the user must take, so it persists until
+  they set the address and switch again. This is deliberate, not an oversight.
 
 Probing up front (rather than per line, after a failure) is correct here because
 the Just Eat address gate is present from page load and blocks every line
@@ -162,7 +191,9 @@ record of what was checked survives.
     gate descriptor `je-address`.
   - a clean Just Eat / Uber / Deliveroo menu → `null`.
 - `buildBasket` over a gated doc → `results` empty, `results.gate` set,
-  **no clear attempted, no adds**.
+  **no clear attempted, no adds**. The fixture carries an observable clear
+  affordance (a decrement control with a click spy) so the test proves the clear
+  was *skipped*, not merely that it found nothing to remove.
 - `buildBasket` over a clean doc where an item is genuinely absent → still
   reports that line as failed (the "item not found" path), proving the two
   outcomes stay distinct.

@@ -24,15 +24,16 @@
 The two deterministic Just Eat signals, as standalone testable predicates. Folded into one task because they are the two halves of the same "JE deliverability unresolved" signal and share a test fixture.
 
 **Files:**
-- Modify: `src/content/basket-builder.js` (add predicates near `findOpenDialog`, ~`:884`)
+- Modify: `src/content/basket-builder.js` (add predicates above `findOpenDialog` ~`:884`; add one skip-filter line inside `findOpenDialog`; extend exports)
 - Test: `tests/basket-builder-gate.test.js` (new)
 
 **Interfaces:**
-- Consumes: `DIALOG_SELECTOR`, `norm` from the module.
+- Consumes: `DIALOG_SELECTOR`, `norm`, `safeQuery` from the module.
 - Produces:
-  - `jeLocationPanel(doc) → boolean` — true when the Just Eat address/location dialog is open.
-  - `jeUnresolvedFees(doc) → boolean` — true when the basket panel shows a fee **range** (unresolved address) rather than a single value.
-  - Both exported from the module for unit testing.
+  - `jeLocationPanel(doc) → boolean` — true when the Just Eat address/location dialog is open (element-level check `isJeLocationDialog(el)` shared with `findOpenDialog`).
+  - `jeUnresolvedFees(doc) → boolean` — true when the **cart** panel (`[data-qa="cart-modal"]`) shows a fee **range** rather than a single value.
+  - `findOpenDialog` gains an explicit skip of the location panel (unifying the "this is the location panel" knowledge) and is exported for its regression test.
+  - `jeLocationPanel`, `jeUnresolvedFees`, `findOpenDialog` all exported for unit testing.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -43,16 +44,22 @@ Create `tests/basket-builder-gate.test.js`:
  * @jest-environment jsdom
  */
 const {
-  jeLocationPanel, jeUnresolvedFees,
+  jeLocationPanel, jeUnresolvedFees, findOpenDialog,
 } = require('../src/content/basket-builder');
 
 // Just Eat's address dialog when no delivery address is resolved (live 2026-08-09,
-// Popeyes Whitechapel): a role=dialog asking for the street / "Finding your location".
+// Popeyes Whitechapel): a role=dialog asking for the street / "Finding your
+// location". A separate [data-qa="cart-modal"] with a decrement control is present
+// too, so Task 3 can prove clearBasket is SKIPPED, not merely empty.
 function mountJeLocationGate() {
   document.body.innerHTML = `
     <main>
       <div class="menu"><button class="item" data-item-id="x">Chicken Sandwich Box Meal</button></div>
-      <div role="dialog" aria-modal="true">
+      <div data-qa="cart-modal">
+        <div>1x Chicken Sandwich Box Meal</div>
+        <span role="button" data-qa="cart-item-amount-action-decrement"></span>
+      </div>
+      <div role="dialog" aria-modal="true" data-qa="address-panel">
         <h2>Where should we deliver?</h2>
         <p>Please enter your street and house number</p>
         <p>Finding your location…</p>
@@ -60,15 +67,15 @@ function mountJeLocationGate() {
     </main>`;
 }
 
-// Address dismissed but never set: the basket panel still shows fee RANGES.
+// Address dismissed but never set: the CART panel still shows fee RANGES.
 function mountJeFeeRangeGate() {
   document.body.innerHTML = `
     <main>
       <div class="menu"><button class="item" data-item-id="x">Chicken Sandwich Box Meal</button></div>
-      <aside class="basket">
+      <div data-qa="cart-modal">
         <div class="fee-row"><span>Service</span><span>£0.99 - £2.99</span></div>
         <div class="fee-row"><span>Small order</span><span>£0.00 - £2.00</span></div>
-      </aside>
+      </div>
     </main>`;
 }
 
@@ -77,10 +84,22 @@ function mountJeResolved() {
   document.body.innerHTML = `
     <main>
       <div class="menu"><button class="item" data-item-id="x">Chicken Sandwich Box Meal</button></div>
-      <aside class="basket">
+      <div data-qa="cart-modal">
         <div class="fee-row"><span>Service</span><span>£1.49</span></div>
         <div class="fee-row"><span>Delivery</span><span>£2.49</span></div>
-      </aside>
+      </div>
+    </main>`;
+}
+
+// A menu whose PRICES carry a range, but the cart has no fee range and no address
+// dialog — proves jeUnresolvedFees is scoped to the cart, not the whole page.
+function mountJeMenuWithPriceRange() {
+  document.body.innerHTML = `
+    <main>
+      <div class="menu">
+        <button class="item" data-item-id="b">Bundle for Two <span>£20.00 - £30.00</span></button>
+      </div>
+      <div data-qa="cart-modal"><div class="fee-row"><span>Service</span><span>£1.49</span></div></div>
     </main>`;
 }
 
@@ -90,19 +109,34 @@ describe('Just Eat gate predicates (#110)', () => {
     expect(jeLocationPanel(document)).toBe(true);
   });
 
-  test('jeLocationPanel: false on a resolved menu', () => {
+  test('jeLocationPanel: false on a resolved menu (cart present, no address dialog)', () => {
     mountJeResolved();
     expect(jeLocationPanel(document)).toBe(false);
   });
 
-  test('jeUnresolvedFees: true when fee ranges are shown', () => {
+  test('jeUnresolvedFees: true when the cart shows fee ranges', () => {
     mountJeFeeRangeGate();
     expect(jeUnresolvedFees(document)).toBe(true);
   });
 
-  test('jeUnresolvedFees: false when fees are single values', () => {
+  test('jeUnresolvedFees: false when cart fees are single values', () => {
     mountJeResolved();
     expect(jeUnresolvedFees(document)).toBe(false);
+  });
+
+  test('jeUnresolvedFees: false for a menu price range OUTSIDE the cart', () => {
+    mountJeMenuWithPriceRange();
+    expect(jeUnresolvedFees(document)).toBe(false);
+  });
+
+  test('findOpenDialog: skips the location panel even if it names the item', () => {
+    document.body.innerHTML = `
+      <div role="dialog" data-qa="address-panel">
+        <h2>Where should we deliver?</h2>
+        <p>Please enter your street and house number for your Chicken Sandwich Box Meal</p>
+      </div>`;
+    // Without the explicit skip, the name match would wrongly return this panel.
+    expect(findOpenDialog(document, { name: 'Chicken Sandwich Box Meal' })).toBeNull();
   });
 });
 ```
@@ -121,37 +155,61 @@ In `src/content/basket-builder.js`, just above `findOpenDialog` (~`:884`), add:
 // A "gate" is a blocking page state that stops EVERY line from being added, as
 // opposed to a single item being absent. Just Eat will not open a customise
 // dialog until it can resolve deliverability, so an unresolved address gates the
-// whole run (#110). These signals are deterministic, not heuristic.
+// whole run (#110). These signals are deterministic — pinned to live-verified
+// text and the same [data-qa="cart-modal"] container clearBasket already targets.
 
 // The Just Eat address/location dialog, shown when no delivery address is set.
+// Element-level so findOpenDialog can share it (never mistake this for the
+// customise dialog). Excludes the cart modal, which is a different JE dialog.
 const JE_LOCATION_RE = /finding your location|enter your (street|address|postcode)|street and house number|where should we deliver/i;
+function isJeLocationDialog(el) {
+  return !!el
+    && !(el.matches && el.matches('[data-qa="cart-modal"]'))
+    && JE_LOCATION_RE.test(norm(el.textContent));
+}
 function jeLocationPanel(doc) {
-  return [...doc.querySelectorAll(DIALOG_SELECTOR)]
-    .some((d) => JE_LOCATION_RE.test(norm(d.textContent)));
+  return [...doc.querySelectorAll(DIALOG_SELECTOR)].some(isJeLocationDialog);
 }
 
-// Just Eat renders fee RANGES ("£0.99 - £2.99") in the basket panel until an
+// Just Eat renders fee RANGES ("£0.99 - £2.99") in the CART panel until an
 // address is resolved, and single values once one is. A fee-labelled row that
-// still shows a range means deliverability is unresolved. Scoped to a leaf-ish
-// row (label and range within one small element) so a menu price range elsewhere
-// on the page never trips it.
+// still shows a range means deliverability is unresolved. Scoped to the cart
+// container (never the whole document) so a menu/marketing price range elsewhere
+// can't trip it; a fee row is a leaf-ish element (label + range in one node).
 const FEE_ROW_RE = /\b(service|small order|delivery)\b.*£\s*\d+(?:\.\d{2})?\s*[-–—]\s*£?\s*\d+/i;
 function jeUnresolvedFees(doc) {
-  return [...doc.querySelectorAll('div,span,li,p,dd,dt,td')]
+  const cart = safeQuery(doc, '[data-qa="cart-modal"]');
+  if (!cart) return false;
+  return [...cart.querySelectorAll('div,span,li,p,dd,dt,td')]
     .some((el) => el.children.length <= 3 && FEE_ROW_RE.test(norm(el.textContent)));
 }
 ```
 
-Then extend the module exports (`:1161`) to add `jeLocationPanel, jeUnresolvedFees`:
+Then make `findOpenDialog` (`:884`) skip the location panel explicitly, so the
+"this is the location panel" knowledge lives only in `isJeLocationDialog`. Add
+one filter line to its existing `.filter(...)` chain:
 
 ```js
-module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket, jeLocationPanel, jeUnresolvedFees };
+  const all = [...doc.querySelectorAll(DIALOG_SELECTOR)]
+    .filter((d) => !(d.matches && d.matches('[data-qa="cart-modal"]')))
+    // The JE location/address panel can carry the item name in its delivery copy
+    // — never mistake it for the customise dialog (#110).
+    .filter((d) => !isJeLocationDialog(d));
+```
+
+Then extend the module exports (`:1161`) to add `jeLocationPanel, jeUnresolvedFees, findOpenDialog`:
+
+```js
+module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket, jeLocationPanel, jeUnresolvedFees, findOpenDialog };
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx jest tests/basket-builder-gate.test.js`
-Expected: PASS (4 tests).
+Expected: PASS (6 tests). Then confirm no regression in the dialog-scoping suite:
+
+Run: `npx jest tests/basket-builder.test.js -t "dialog"`
+Expected: PASS (the added `findOpenDialog` skip doesn't disturb existing dialog matching).
 
 - [ ] **Step 5: Commit**
 
@@ -263,12 +321,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 Probe once before clearing/adding. When gated: skip everything, attach `results.gate`, return. When not gated: unchanged behaviour, so "item not found" still reports per line.
 
 **Files:**
-- Modify: `src/content/basket-builder.js:1037-1075` (`buildBasket`)
+- Modify: `src/content/basket-builder.js` — add `pageSettled`; add the settle-wait + gate branch in `buildBasket` (~`:1044`, after Task 1/2 shift the line down ~40); update `buildBasket`'s docstring (~`:1036`). Absolute line numbers are approximate once Tasks 1–2 land — use the textual anchors.
 - Test: `tests/basket-builder-gate.test.js` (extend)
 
 **Interfaces:**
-- Consumes: `detectPageGate` (Task 2), existing `clearBasket`, `createOverlay`.
-- Produces: `buildBasket` still returns the `results` array; when gated the array is empty and carries `results.gate === { reason, action }`, with no clear and no adds performed.
+- Consumes: `detectPageGate` (Task 2), `safeQuery`, the injectable `wait`, existing `clearBasket`, `createOverlay`.
+- Produces: `pageSettled(doc, platform) → boolean`. `buildBasket` still returns the `results` array; when gated the array is empty and carries `results.gate === { reason, action }`, with no clear and no adds performed.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -278,16 +336,22 @@ Append to `tests/basket-builder-gate.test.js` (add `buildBasket` to the require)
 const fastWait = (fn) => Promise.resolve(fn());
 
 describe('buildBasket gate path (#110)', () => {
-  test('gated Just Eat: returns empty results with a gate, adds nothing', async () => {
+  test('gated Just Eat: empty results + gate, adds nothing, skips the clear', async () => {
     mountJeLocationGate();
     let clicked = false;
     document.querySelector('[data-item-id="x"]').addEventListener('click', () => { clicked = true; });
+    // The gate fixture carries a real decrement control; if clearBasket ran it
+    // would click it. Spying proves the clear was SKIPPED, not merely empty.
+    let decremented = false;
+    document.querySelector('[data-qa="cart-item-amount-action-decrement"]')
+      .addEventListener('click', () => { decremented = true; });
     const plan = [{ id: 'x', name: 'Chicken Sandwich Box Meal', quantity: 1, modifiers: [] }];
     const results = await buildBasket(
       { platform: 'just-eat', basketPlan: plan }, { wait: fastWait, headless: true });
     expect(results).toHaveLength(0);
     expect(results.gate).toMatchObject({ reason: 'je-address' });
-    expect(clicked).toBe(false); // never attempted a click on a gated page
+    expect(clicked).toBe(false);     // never attempted an item click
+    expect(decremented).toBe(false); // clearBasket was skipped, not just empty
   });
 
   test('usable Just Eat with a genuinely-absent item: still reports it failed, no gate', async () => {
@@ -309,22 +373,52 @@ Expected: FAIL — the gated test gets a non-empty/attempted result (no probe ye
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `buildBasket`, immediately after the `overlay` is created (`:1044`) and BEFORE the `clearBasket` block (`:1049`), insert:
+First add a `pageSettled` helper next to `detectPageGate` (so the probe can wait
+for hydration rather than sampling at the injection instant):
+
+```js
+// True once the platform's basket UI has hydrated — the point at which a gate,
+// if any, is on the page. Non-JE platforms have no gate today, so they are
+// "settled" immediately (no wait). Just Eat's cart modal/toggle marks hydration
+// (the same [data-qa="cart-modal…"] clearBasket already keys off).
+function pageSettled(doc, platform) {
+  if (platform !== 'just-eat') return true;
+  return !!safeQuery(doc, '[data-qa="cart-modal"], [data-qa="cart-modal-toggle-element"]');
+}
+```
+
+Add `detectPageGate` and (optionally) `pageSettled` to `module.exports` if you
+want them unit-testable directly.
+
+Then in `buildBasket`, immediately after the `overlay` is created (`:1044`) and
+BEFORE the `clearBasket` block (`:1049`), insert:
 
 ```js
   // A blocking page state (e.g. Just Eat's unresolved-address dialog) fails every
   // line identically — detect it once, report it, and touch nothing. Acting would
   // mean clicking into a page that refuses adds; leaving the basket untouched is
   // correct when we cannot act (spec #24, #110).
+  //
+  // The builder is injected at page-complete, BEFORE the basket UI hydrates — a
+  // single instant sample would race the modal's render and miss the gate,
+  // falling back into the #110 bug. Wait until the page has settled OR a gate is
+  // already visible (bounded), then sample once. A non-gated page settles the
+  // instant its cart UI hydrates, so a good run pays no fixed penalty.
+  await wait(() => pageSettled(doc, platform) || detectPageGate(doc, platform),
+    { timeout: 4000 });
   const gate = detectPageGate(doc, platform);
   if (gate) {
     dlog('page is gated:', gate.reason, '—', gate.action);
-    if (overlay) overlay.setGate(gate);
+    try { if (overlay) overlay.setGate(gate); } catch (_) {}
     const gated = [];
     gated.gate = gate;
     return gated;
   }
 ```
+
+Also correct `buildBasket`'s docstring (`:1036`, "Resolves to a results array —
+one per plan line") to note the gate path resolves to an empty array carrying a
+`.gate` property regardless of plan length.
 
 (The `overlay.setGate` method is added in Task 4; under `headless: true` — used by these tests — `overlay` is `null`, so this task's tests pass without it. Do not reorder Tasks 3 and 4 relative to each other beyond this.)
 
@@ -380,7 +474,9 @@ describe('overlay reports the gate (#110)', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx jest tests/basket-builder-gate.test.js -t "reports the gate"`
-Expected: FAIL — `overlay.setGate is not a function` (thrown inside buildBasket's gate branch when `overlay` is non-null).
+Expected: FAIL — the overlay renders but carries no gate text. (`overlay.setGate`
+doesn't exist yet; the call is swallowed by the `try/catch` guard added in Task 3,
+so buildBasket doesn't throw — the assertion on the overlay text is what fails.)
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -388,16 +484,20 @@ In the object returned by `createOverlay` (alongside `setClear`, `update`, `fini
 
 ```js
     setGate(gate) {
-      title.textContent = 'FeedMe — can’t fill yet';
+      title.textContent = "FeedMe — can't fill yet";
       status.textContent = '';
       const notice = doc.createElement('div');
       notice.style.cssText = 'margin-top:4px;font-size:12px;font-weight:700;color:var(--fm-warn);';
       notice.textContent = gate.action;
       box.appendChild(notice);
+      // No auto-dismiss timeout (unlike finish()): the notice names an action the
+      // user must take, so it persists until they set the address and re-switch.
     },
 ```
 
-(`title`, `status`, `box`, `doc` are all in scope in `createOverlay`.)
+(`title`, `status`, `box`, `doc` are all in scope in `createOverlay`. The straight
+apostrophe matches the file's existing UI-string convention, e.g. "Couldn't clear
+pre-existing items…".)
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -521,14 +621,18 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 **Spec coverage:**
 - Gate detection (deterministic predicates + `detectPageGate`) → Tasks 1–2. ✓
-- Up-front probe, skip run, surface once, no clear/adds → Task 3. ✓
+- Up-front probe **after settle** (no hydration race), skip run, surface once, no clear/adds → Task 3. ✓
+- `jeUnresolvedFees` scoped to `[data-qa="cart-modal"]`; false-positive guard tested (menu price range outside cart) → Task 1. ✓
+- `findOpenDialog` unifies the location-panel knowledge (Fable #3); regression test that it skips the panel → Task 1. ✓
+- `overlay.setGate` guarded against throwing; persists (no auto-dismiss, deliberate) → Tasks 3–4. ✓
 - Overlay reporting naming the action → Task 4. ✓
 - "Item not found" still distinct on a usable page → Task 3, second test. ✓
+- "No clear" proven by a decrement spy, not just an empty basket → Task 3, first test. ✓
 - Unit coverage over both paths with gated JE DOM pinned as fixture → Tasks 1–3 fixtures. ✓
 - Cookie-banner audit across all three platforms + detectors for gating ones → Task 6. ✓
 - No new sidebar channel; overlay is the surface → Task 4. ✓
 - Rebuild/repackage before live verification → Task 5. ✓
 
-**Placeholder scan:** No TBD/TODO. Task 6 carries live-derived values (selectors, banner DOM) by necessity — it is an audit whose inputs are the live pages; the procedure, gate shape, action copy, and test/impl templates are all concrete.
+**Placeholder scan:** No TBD/TODO. Two deliberately live-derived items, both gated behind a live-capture step, not shipped on invented markup: (a) Task 6's cookie-banner selectors; (b) Task 1's `jeUnresolvedFees` fee-row markup — the predicate scopes to the verified `[data-qa="cart-modal"]` container, and the exact fee-row shape is confirmed against live JE during the audit before it ships (the location panel is the primary, already-live-verified signal in the meantime).
 
-**Type consistency:** `jeLocationPanel`/`jeUnresolvedFees` (Task 1) → consumed by `detectPageGate` (Task 2) → consumed by `buildBasket` (Task 3). Gate descriptor `{ reason, action }` identical across Tasks 2–4. `overlay.setGate(gate)` defined in Task 4, called in Task 3's inserted branch. `results.gate` property used consistently in Task 3. Names match throughout.
+**Type consistency:** `isJeLocationDialog`/`jeLocationPanel`/`jeUnresolvedFees` (Task 1) → consumed by `detectPageGate` (Task 2) and `pageSettled` (Task 3) → consumed by `buildBasket` (Task 3). Gate descriptor `{ reason, action }` identical across Tasks 2–4. `overlay.setGate(gate)` defined in Task 4, called (guarded) in Task 3's inserted branch. `results.gate` property used consistently in Task 3. `findOpenDialog` exported in Task 1 and consumed by its own test. Names match throughout.

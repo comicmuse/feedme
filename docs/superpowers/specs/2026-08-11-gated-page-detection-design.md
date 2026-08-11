@@ -81,18 +81,23 @@ function detectPageGate(doc, platform) { … }
   mistaken for it. `findOpenDialog` today excludes the location panel only
   *implicitly* — it matches the customise dialog by item name, which the panel
   lacks. This change makes it explicit: `findOpenDialog` also skips anything
-  `jeLocationPanel` matches, so the "this is the location panel" knowledge lives
-  in one predicate rather than drifting between two.
+  `isJeLocationDialog` matches, so the "this is the location panel" knowledge
+  lives in one predicate rather than drifting between two. Because this now sits
+  on the **core add path**, the skip is guarded — a dialog whose *heading* is the
+  item name is never dropped (it is the real customise dialog even if its body
+  mentions delivery), so a stray regex match can't silently starve a line.
 - `jeUnresolvedFees(doc)` — the basket/cart panel (`[data-qa="cart-modal"]`, the
   same container `clearBasket` and `findOpenDialog` already target, live-verified
   2026-07-11) shows a fee **range** (e.g. `Service £0.99 - £2.99`) rather than a
   single value, which Just Eat renders only when no address is resolved. The scan
   is scoped to the cart container — **never** the whole document — so a menu or
   marketing price range elsewhere on the page ("Free delivery over £20 – £30", a
-  bundle's "from £X – £Y") can never false-positive. The exact fee-row markup is
-  pinned from a live capture during the audit (see §3) before this predicate
-  ships; the location panel is the primary, already-live-verified signal, and the
-  fee range corroborates a dismissed-panel / no-address state.
+  bundle's "from £X – £Y") can never false-positive. This predicate ships scoped
+  to the already-live-verified `[data-qa="cart-modal"]` container; its exact
+  fee-row shape is *confirmed and refined* against live JE during the audit (§3) —
+  it lands before that audit, which is safe because `jeLocationPanel` is the
+  primary signal and this only corroborates, and a miss under-reports a gate
+  rather than breaking a usable page.
 
 `detectPageGate` for `just-eat` returns a gate when **either** signal holds. The
 panel is the primary/direct signal; the fee-range check is the fallback.
@@ -136,12 +141,16 @@ if (gate) {
 ```
 
 - **Wait for settle, then sample.** `pageSettled(doc, platform)` is true once the
-  platform's basket UI has hydrated (Just Eat: the `[data-qa="cart-modal…"]`
-  toggle/panel is present; other platforms reuse their existing hydration
-  signals). A non-gated page satisfies `pageSettled` as soon as it hydrates, so a
-  good run does **not** pay the full timeout — the wait resolves the instant
-  either condition holds. The 4 s ceiling is a fail-safe: if neither fires we
-  proceed into the normal flow rather than hanging.
+  Just Eat **menu** is interactable — keyed on the live-verified menu search box
+  (or an item card), **not** a basket marker. This matters: Just Eat renders no
+  cart container when the basket is empty (documented at `basket-builder.js:674`),
+  and the primary #110 case — switching an *empty* basket to JE — is exactly that,
+  so a cart-based signal would never fire and every good run would burn the full
+  timeout. A menu signal is present on any usable page regardless of basket
+  contents, so a good run resolves the instant the menu renders and pays no fixed
+  penalty. Non-JE platforms have no gate and settle immediately. The 4 s ceiling
+  is a fail-safe; because `detectPageGate` is polled *within* the same wait, a
+  gate that mounts late is still caught even if the menu rendered first.
 - **`overlay.setGate` is guarded** in `try/catch` like every DOM call in this
   file — the builder must never throw (the real bootstrap has no `.catch`).
 - **No clear, no adds** when gated. The user's basket is left untouched, since we
@@ -164,23 +173,30 @@ still burn three wasted click-loops per line. The cross-restaurant confirm, whic
 *does* appear mid-run, is a separate modal already handled by
 `acceptNewBasketPrompt` and is unaffected by this change.
 
-### 3. Cookie-banner audit (in scope)
+### 3. Live audit (in scope)
 
-An empirical phase whose findings determine which detectors get written:
+An empirical phase using the `verify` skill / Playwright-chromium, in two parts:
 
-1. Using the `verify` skill / Playwright-chromium, load a menu on each of Uber
-   Eats, Just Eat, and Deliveroo with the cookie banner **undismissed**, and
-   attempt to open an item dialog.
-2. Record, per platform: does the banner **block** the dialog (a real gate) or is
-   it merely a cosmetic overlay that `el.click()` sails through?
-3. For every banner that genuinely gates:
-   - add a `cookieBanner(doc)` predicate + pinned fixture,
-   - wire it into `detectPageGate` with an action message
-     (e.g. *"Accept or dismiss the cookie banner to continue."*).
-4. Cosmetic banners get no code — recorded here as checked, nothing to do.
+**3a. Confirm the Just Eat gate DOM.** The Task-1 predicates are modelled from the
+2026-08-09 observation, not a captured DOM. Load a JE menu with no address
+resolved and confirm: the address-modal's **heading** matches `JE_LOCATION_RE`
+(the exclusion reads the heading, so this is load-bearing), and a fee-row inside
+`[data-qa="cart-modal"]` has its label+range in one leaf-ish element as
+`FEE_ROW_RE` assumes. Re-pin the two gate fixtures and tighten the regexes if the
+live shape differs.
+
+**3b. Cookie-banner audit.** For each of Uber Eats, Just Eat, Deliveroo, load a
+menu with the cookie banner **undismissed** and attempt to open an item dialog:
+
+1. Record: does the banner **block** the dialog (a real gate) or merely sit as a
+   cosmetic overlay that `el.click()` sails through?
+2. For every banner that genuinely gates: add a `cookieBanner(doc)` predicate +
+   pinned fixture, wired into `detectPageGate` with an action message
+   (e.g. *"Accept or dismiss the cookie banner to continue."*).
+3. Cosmetic banners get no code — recorded as checked, nothing to do.
 
 Fixtures are pinned from the live DOM so the tests never depend on live sessions.
-Findings are written back into this doc (a "Cookie audit results" section) so the
+Findings are written back into this doc (a "Live audit results" section) so the
 record of what was checked survives.
 
 ### 4. Testing

@@ -138,6 +138,20 @@ describe('Just Eat gate predicates (#110)', () => {
     // Without the explicit skip, the name match would wrongly return this panel.
     expect(findOpenDialog(document, { name: 'Chicken Sandwich Box Meal' })).toBeNull();
   });
+
+  test('findOpenDialog: KEEPS a customise dialog headed by the item, delivery-ish body notwithstanding', () => {
+    // The guard on the core add path: a real dialog whose heading is the item must
+    // never be dropped just because its body matches the location regex (#110).
+    document.body.innerHTML = `
+      <div role="dialog">
+        <h2>Chicken Sandwich Box Meal</h2>
+        <p>Where should we deliver this order?</p>
+        <button class="add">Add to basket</button>
+      </div>`;
+    const dialog = findOpenDialog(document, { name: 'Chicken Sandwich Box Meal' });
+    expect(dialog).not.toBeNull();
+    expect(dialog.querySelector('h2').textContent).toBe('Chicken Sandwich Box Meal');
+  });
 });
 ```
 
@@ -186,15 +200,23 @@ function jeUnresolvedFees(doc) {
 ```
 
 Then make `findOpenDialog` (`:884`) skip the location panel explicitly, so the
-"this is the location panel" knowledge lives only in `isJeLocationDialog`. Add
-one filter line to its existing `.filter(...)` chain:
+"this is the location panel" knowledge lives only in `isJeLocationDialog`. This
+predicate now sits on the **core add path**, so the skip is guarded: never drop a
+dialog whose heading is the item name — that is unambiguously the customise
+dialog even if its body mentions delivery, and dropping it would silently fail
+the line (the very #110 bug class). Replace the `.filter(...)` chain with:
 
 ```js
   const all = [...doc.querySelectorAll(DIALOG_SELECTOR)]
     .filter((d) => !(d.matches && d.matches('[data-qa="cart-modal"]')))
-    // The JE location/address panel can carry the item name in its delivery copy
-    // — never mistake it for the customise dialog (#110).
-    .filter((d) => !isJeLocationDialog(d));
+    // Skip the JE location/address panel (its delivery copy can carry the item
+    // name), but NEVER skip a dialog HEADED by the item name — that is the real
+    // customise dialog, so the add path is never starved (#110).
+    .filter((d) => {
+      if (!isJeLocationDialog(d)) return true;
+      const h = d.querySelector && d.querySelector('h1,h2,h3,h4');
+      return h ? norm(h.textContent).includes(norm(line.name)) : false;
+    });
 ```
 
 Then extend the module exports (`:1161`) to add `jeLocationPanel, jeUnresolvedFees, findOpenDialog`:
@@ -206,7 +228,7 @@ module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, cle
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx jest tests/basket-builder-gate.test.js`
-Expected: PASS (6 tests). Then confirm no regression in the dialog-scoping suite:
+Expected: PASS (7 tests). Then confirm no regression in the dialog-scoping suite:
 
 Run: `npx jest tests/basket-builder.test.js -t "dialog"`
 Expected: PASS (the added `findOpenDialog` skip doesn't disturb existing dialog matching).
@@ -325,7 +347,7 @@ Probe once before clearing/adding. When gated: skip everything, attach `results.
 - Test: `tests/basket-builder-gate.test.js` (extend)
 
 **Interfaces:**
-- Consumes: `detectPageGate` (Task 2), `safeQuery`, the injectable `wait`, existing `clearBasket`, `createOverlay`.
+- Consumes: `detectPageGate` (Task 2), `menuSearchBox` (~`:835`), `safeQuery`, the injectable `wait`, existing `clearBasket`, `createOverlay`.
 - Produces: `pageSettled(doc, platform) → boolean`. `buildBasket` still returns the `results` array; when gated the array is empty and carries `results.gate === { reason, action }`, with no clear and no adds performed.
 
 - [ ] **Step 1: Write the failing test**
@@ -377,15 +399,21 @@ First add a `pageSettled` helper next to `detectPageGate` (so the probe can wait
 for hydration rather than sampling at the injection instant):
 
 ```js
-// True once the platform's basket UI has hydrated — the point at which a gate,
-// if any, is on the page. Non-JE platforms have no gate today, so they are
-// "settled" immediately (no wait). Just Eat's cart modal/toggle marks hydration
-// (the same [data-qa="cart-modal…"] clearBasket already keys off).
+// True once the JE MENU is interactable — the point by which the address gate,
+// if any, has rendered. Deliberately independent of basket contents: Just Eat
+// renders NO cart container when the basket is empty (see clearBasket, ~:674),
+// and the primary #110 case (switching an empty basket to JE) is exactly that —
+// so a cart marker would never fire and every good run would burn the full
+// timeout. The menu search box is live-verified (menuSearchBox, KFC 2026-07-14);
+// item cards are the fallback. Non-JE platforms have no gate, so settle at once.
 function pageSettled(doc, platform) {
   if (platform !== 'just-eat') return true;
-  return !!safeQuery(doc, '[data-qa="cart-modal"], [data-qa="cart-modal-toggle-element"]');
+  return !!menuSearchBox(doc, platform)
+    || !!safeQuery(doc, '[data-qa="item"], button.item, [data-item-id]');
 }
 ```
+
+(`menuSearchBox` is defined earlier in the file, ~`:835`, and is in scope here.)
 
 Add `detectPageGate` and (optionally) `pageSettled` to `module.exports` if you
 want them unit-testable directly.
@@ -403,7 +431,7 @@ BEFORE the `clearBasket` block (`:1049`), insert:
   // single instant sample would race the modal's render and miss the gate,
   // falling back into the #110 bug. Wait until the page has settled OR a gate is
   // already visible (bounded), then sample once. A non-gated page settles the
-  // instant its cart UI hydrates, so a good run pays no fixed penalty.
+  // instant its menu renders, so a good run pays no fixed penalty.
   await wait(() => pageSettled(doc, platform) || detectPageGate(doc, platform),
     { timeout: 4000 });
   const gate = detectPageGate(doc, platform);
@@ -548,27 +576,34 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>" || echo "nothing to com
 
 ---
 
-### Task 6: Live cookie-banner audit + conditional detectors
+### Task 6: Live audit — cookie banners + confirm the JE gate DOM
 
-Empirical: determine whether an undismissed cookie banner gates item-adding on Uber Eats, Just Eat, or Deliveroo, and add a detector only for those that genuinely gate. Findings are recorded either way.
+Empirical: (a) determine whether an undismissed cookie banner gates item-adding on Uber Eats, Just Eat, or Deliveroo, adding a detector only for those that genuinely gate; and (b) confirm the JE address-modal and fee-row DOM the Task 1 predicates were modelled on, tightening the regexes if the live shape differs. Findings are recorded either way.
 
 **Files:**
-- Modify (findings): `docs/superpowers/specs/2026-08-11-gated-page-detection-design.md` (add a "Cookie audit results" section)
-- Modify (only if a banner gates): `src/content/basket-builder.js`, `tests/basket-builder-gate.test.js`
+- Modify (findings): `docs/superpowers/specs/2026-08-11-gated-page-detection-design.md` (add a "Live audit results" section)
+- Modify (if a banner gates, or if the JE DOM differs): `src/content/basket-builder.js`, `tests/basket-builder-gate.test.js`
 
 **Interfaces:**
-- Consumes: `detectPageGate` (Task 2). If a gating banner is found, add a `cookieBanner(doc) → boolean` predicate and OR it into `detectPageGate` for the affected platform(s).
+- Consumes: `detectPageGate` (Task 2), `isJeLocationDialog`, `jeUnresolvedFees` (Task 1). If a gating banner is found, add a `cookieBanner(doc) → boolean` predicate and OR it into `detectPageGate` for the affected platform(s).
 
-- [ ] **Step 1: Audit each platform live**
+- [ ] **Step 1a: Confirm the Just Eat gate DOM live**
 
-Using the `verify` skill / Playwright-chromium (memory: user-scoped chromium MCP server), for each of Uber Eats, Just Eat, Deliveroo:
+Using the `verify` skill / Playwright-chromium (memory: user-scoped chromium MCP server), open a Just Eat menu with **no delivery address resolved** (fresh profile, as in the 2026-08-09 repro):
+1. Capture the address-modal's DOM — confirm its **heading** text matches `JE_LOCATION_RE` (my `isJeLocationDialog` reads the heading, so this is load-bearing) and note its `role`/`data-qa`. If the trigger phrase lives in body text rather than a heading, widen `isJeLocationDialog` to check a labelled marker too, keeping the core-path guard (never drop an item-headed dialog).
+2. Capture a fee-row inside `[data-qa="cart-modal"]` with fees unresolved — confirm the label+range sit in one leaf-ish element as `FEE_ROW_RE`/the `children.length <= 3` scope assume; adjust if not.
+3. Re-pin the two gate fixtures in `tests/basket-builder-gate.test.js` from the captured DOM if it differs from the modelled shape.
+
+- [ ] **Step 1b: Audit each platform's cookie banner live**
+
+For each of Uber Eats, Just Eat, Deliveroo:
 1. Open a restaurant menu page in a context where the cookie banner is present and **undismissed**.
 2. Attempt to open an item's customise dialog (click an item card).
 3. Record: did the dialog open (banner is cosmetic) or not (banner gates)? Capture the banner's DOM (a stable `data-*`/`id`/role marker + heading text) for any that gate.
 
 - [ ] **Step 2: Record findings**
 
-Add a "Cookie audit results" section to the design doc: per platform, `gates: yes/no`, the DOM marker if yes, date and restaurant used. Commit:
+Add a "Live audit results" section to the design doc: the confirmed JE gate DOM (Step 1a), and per platform `gates: yes/no` for the cookie banner (Step 1b) with the DOM marker if yes, date and restaurant used. Commit:
 
 ```bash
 git add docs/superpowers/specs/2026-08-11-gated-page-detection-design.md
@@ -592,7 +627,7 @@ test('<platform> + undismissed gating cookie banner → cookie-consent gate', ()
 
 ```js
 // A consent banner that BLOCKS adds (found gating in the Task 6 audit — see the
-// design doc's Cookie audit results). Matched by <stable marker from the audit>.
+// design doc's Live audit results). Matched by <stable marker from the audit>.
 function cookieBanner(doc) {
   return !!safeQuery(doc, '<selector from the audit>');
 }
@@ -633,6 +668,6 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - No new sidebar channel; overlay is the surface → Task 4. ✓
 - Rebuild/repackage before live verification → Task 5. ✓
 
-**Placeholder scan:** No TBD/TODO. Two deliberately live-derived items, both gated behind a live-capture step, not shipped on invented markup: (a) Task 6's cookie-banner selectors; (b) Task 1's `jeUnresolvedFees` fee-row markup — the predicate scopes to the verified `[data-qa="cart-modal"]` container, and the exact fee-row shape is confirmed against live JE during the audit before it ships (the location panel is the primary, already-live-verified signal in the meantime).
+**Placeholder scan:** No TBD/TODO. Being precise about what is and isn't live-verified at ship time (Fable re-review): Task 1 lands `jeUnresolvedFees` and `isJeLocationDialog` **now**, on fixtures modelled from the 2026-08-09 observation, scoped to the already-live-verified `[data-qa="cart-modal"]` container / `DIALOG_SELECTOR`. Tasks 1–5 therefore ship the predicates before Task 6's live audit runs — this is deliberate, and safe because: (a) `jeLocationPanel` is the primary signal and `jeUnresolvedFees` only corroborates; (b) both are scoped to verified containers, and a miss degrades gracefully (a usable page is never *broken*, at worst a gate is under-reported). Task 6 then **confirms the JE address-modal heading text and the fee-row shape against live JE** and tightens `JE_LOCATION_RE` / `FEE_ROW_RE` if the live DOM differs — same live-capture rigour applied to the cookie banners. Task 6's cookie-banner selectors are the only values that literally cannot be written before the audit.
 
-**Type consistency:** `isJeLocationDialog`/`jeLocationPanel`/`jeUnresolvedFees` (Task 1) → consumed by `detectPageGate` (Task 2) and `pageSettled` (Task 3) → consumed by `buildBasket` (Task 3). Gate descriptor `{ reason, action }` identical across Tasks 2–4. `overlay.setGate(gate)` defined in Task 4, called (guarded) in Task 3's inserted branch. `results.gate` property used consistently in Task 3. `findOpenDialog` exported in Task 1 and consumed by its own test. Names match throughout.
+**Type consistency:** `isJeLocationDialog`/`jeLocationPanel`/`jeUnresolvedFees` (Task 1) → consumed by `detectPageGate` (Task 2) → consumed by `buildBasket` (Task 3). `pageSettled` (Task 3) consumes `menuSearchBox` (existing) and `safeQuery`, not the gate predicates. Gate descriptor `{ reason, action }` identical across Tasks 2–4. `overlay.setGate(gate)` defined in Task 4, called (guarded) in Task 3's inserted branch. `results.gate` property used consistently in Task 3. `findOpenDialog` exported in Task 1 and consumed by its own test. Names match throughout.

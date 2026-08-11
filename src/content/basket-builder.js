@@ -1164,10 +1164,26 @@ async function buildBasket(build, opts = {}) {
       // selection (missedSelection), so no blanket prefillable flag here (#52).
       if (r.ok && (line.uncarried || 0) > 0) r.review = true;
       results.push(r);
+      // The JE address gate can be CLICK-TRIGGERED (confirmed live 2026-08-11):
+      // absent at load, it mounts only once an item is clicked — so the up-front
+      // probe above (which samples before any click) misses it, and it is this
+      // failed line's own click that actually surfaces it. Re-check once a line
+      // comes back empty-handed: a gate blocks every remaining line identically,
+      // so catching it here — rather than letting each subsequent line fail the
+      // same way silently — is what closes #110 for the click-triggered case.
+      if (r.added === 0 && !r.ok && !results.gate) {
+        const lateGate = detectPageGate(doc, platform);
+        if (lateGate) {
+          dlog('page gated after failed add:', lateGate.reason, '—', lateGate.action);
+          results.gate = lateGate;
+          try { if (overlay) overlay.setGate(lateGate); } catch (_) {}
+          break;
+        }
+      }
     }
     if (overlay) overlay.update(results);
   }
-  if (overlay) overlay.finish(results);
+  if (overlay) { if (!results.gate) overlay.finish(results); }
   dlog('finished:', JSON.stringify(results));
   return results;
 }

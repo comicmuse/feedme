@@ -212,3 +212,53 @@ describe('overlay reports the gate (#110)', () => {
     expect(host.shadowRoot.textContent).toContain('needs a delivery address');
   });
 });
+
+// Live 2026-08-11 finding: the JE address gate is CLICK-TRIGGERED — absent at
+// load, mounted only once an item is clicked. The up-front probe in buildBasket
+// (pageSettled resolves on the rendered MENU, before any click) samples null on
+// this page, so only a post-failure re-check can catch it.
+function mountJeClickTriggeredGate() {
+  document.body.innerHTML = `
+    <main>
+      <input type="search" data-qa="menu-category-nav-search-element">
+      <div class="menu"><span role="button" data-qa="item" data-item-id="x">Chicken Sandwich Box Meal</span></div>
+      <div id="dialog-root"></div>
+    </main>`;
+  // Clicking the item opens the JE location panel (no address resolved), NOT a
+  // customise dialog — exactly the live 2026-08-11 behaviour.
+  document.querySelector('[data-qa="item"]').addEventListener('click', () => {
+    document.getElementById('dialog-root').innerHTML =
+      '<div role="dialog" aria-modal="true" data-qa="location-panel"><h2>Enter your location</h2><p>There was a problem working out where you are</p></div>';
+  });
+}
+
+describe('buildBasket re-checks the gate after a failed add (#110 click-triggered)', () => {
+  test('click-triggered JE gate: caught by the post-failure re-check', async () => {
+    mountJeClickTriggeredGate();
+    const plan = [{ id: 'x', name: 'Chicken Sandwich Box Meal', quantity: 1, modifiers: [] }];
+    const results = await buildBasket(
+      { platform: 'just-eat', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results.gate).toMatchObject({ reason: 'je-address' });
+  });
+
+  test('usable Just Eat with a genuinely-absent item: line fails, no false-fire gate', async () => {
+    mountJeResolved(); // no location dialog, single fee values → not gated
+    const plan = [{ id: 'nope', name: 'Item Not On This Menu', quantity: 1, modifiers: [] }];
+    const results = await buildBasket(
+      { platform: 'just-eat', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results.gate).toBeUndefined();
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ name: 'Item Not On This Menu', added: 0, ok: false });
+  });
+
+  test('overlay end-to-end: click-triggered gate renders the persistent notice', async () => {
+    mountJeClickTriggeredGate();
+    const plan = [{ id: 'x', name: 'Chicken Sandwich Box Meal', quantity: 1, modifiers: [] }];
+    const results = await buildBasket(
+      { platform: 'just-eat', basketPlan: plan }, { wait: fastWait }); // headless:false → overlay renders
+    expect(results.gate).toMatchObject({ reason: 'je-address' });
+    const host = document.getElementById('feedme-builder');
+    expect(host).not.toBeNull();
+    expect(host.shadowRoot.textContent).toContain('needs a delivery address');
+  });
+});

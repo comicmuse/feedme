@@ -14,6 +14,7 @@ Browser extension comparing a takeaway order across Uber Eats / Deliveroo / Just
 - **TDD**: failing test first, watch it fail, then implement. Bug fixes start with a test reproducing the bug.
 - **Deterministic over heuristic**: prices, fees, ids, and offer eligibility come from platform data, never fuzzy guesses; label anything estimated. When in doubt, prefer an honest "add manually"/"approx." over false completeness.
 - **Verify live**: platform DOM and data shapes drift — don't trust comments or memory, re-probe the real site. Recipe: `.claude/skills/verify/SKILL.md`. Pin newly observed shapes as test fixtures.
+- **Probe live *before* you design a gate/scrape/match, not after.** The deterministic signal (a stable `data-qa`/marker, the exact trigger, the timing) is a *design input* — derive it from the real DOM up front. #110 shipped two wrong assumptions (the gate's wording, and that it's open at page-load vs. actually click-triggered) because the live check was the last step instead of the first, costing two rework cycles.
 - The `[FeedMe …]` console logging is deliberate (the builder acts on real baskets with no other visibility) — keep it.
 - The basket builder must never throw and must not count an item as added unless the platform's own dialog confirmed it.
 

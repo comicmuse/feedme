@@ -905,6 +905,23 @@ function jeUnresolvedFees(doc) {
     .some((el) => el.children.length <= 3 && FEE_ROW_RE.test(norm(el.textContent)));
 }
 
+const JE_ADDRESS_GATE = {
+  reason: 'je-address',
+  action: 'Just Eat needs a delivery address before items can be added — set it, then switch again.',
+};
+
+// Returns a gate descriptor { reason, action } when the page is in a blocking
+// state that would fail every line identically, or null when the page is usable.
+// Platform-scoped: only Just Eat has a known gate today (cookie-banner detectors
+// are added in Task 6 for any platform whose banner actually gates).
+function detectPageGate(doc, platform) {
+  if (!doc) return null;
+  if (platform === 'just-eat' && (jeLocationPanel(doc) || jeUnresolvedFees(doc))) {
+    return { ...JE_ADDRESS_GATE };
+  }
+  return null;
+}
+
 // Click the item's card and wait for its customise dialog to open. The Just Eat
 // search results are a transient list that re-renders (the matched element can be
 // swapped out from under a single click), so re-find the card and retry a few
@@ -1199,7 +1216,7 @@ function createOverlay(doc, total) {
   };
 }
 
-module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket, jeLocationPanel, jeUnresolvedFees, findOpenDialog };
+module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket, jeLocationPanel, jeUnresolvedFees, findOpenDialog, detectPageGate };
 
 // Bootstrap when injected into a real page (guarded so require() in tests is inert).
 if (typeof window !== 'undefined' && window.__feedmeBuild) {

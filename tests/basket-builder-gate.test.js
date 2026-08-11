@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 const {
-  jeLocationPanel, jeUnresolvedFees, findOpenDialog,
+  jeLocationPanel, jeUnresolvedFees, findOpenDialog, detectPageGate,
 } = require('../src/content/basket-builder');
 
 // Just Eat's address dialog when no delivery address is resolved (live 2026-08-09,
@@ -109,5 +109,35 @@ describe('Just Eat gate predicates (#110)', () => {
     const dialog = findOpenDialog(document, { name: 'Chicken Sandwich Box Meal' });
     expect(dialog).not.toBeNull();
     expect(dialog.querySelector('h2').textContent).toBe('Chicken Sandwich Box Meal');
+  });
+});
+
+describe('detectPageGate (#110)', () => {
+  test('just-eat + location dialog → je-address gate', () => {
+    mountJeLocationGate();
+    expect(detectPageGate(document, 'just-eat')).toEqual({
+      reason: 'je-address',
+      action: 'Just Eat needs a delivery address before items can be added — set it, then switch again.',
+    });
+  });
+
+  test('just-eat + fee ranges → je-address gate', () => {
+    mountJeFeeRangeGate();
+    expect(detectPageGate(document, 'just-eat')).toMatchObject({ reason: 'je-address' });
+  });
+
+  test('just-eat + resolved menu → null', () => {
+    mountJeResolved();
+    expect(detectPageGate(document, 'just-eat')).toBeNull();
+  });
+
+  test('the same gated DOM on another platform → null (JE-only for now)', () => {
+    mountJeLocationGate();
+    expect(detectPageGate(document, 'uber-eats')).toBeNull();
+    expect(detectPageGate(document, 'deliveroo')).toBeNull();
+  });
+
+  test('null doc → null', () => {
+    expect(detectPageGate(null, 'just-eat')).toBeNull();
   });
 });

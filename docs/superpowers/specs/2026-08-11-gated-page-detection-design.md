@@ -215,6 +215,48 @@ record of what was checked survives.
   outcomes stay distinct.
 - Fixtures + tests for any gating cookie banner the audit finds.
 
+## Live audit results (2026-08-11)
+
+Audited with Playwright-chromium, fresh context, postcode E1 6AN, McDonald's
+Commercial Road (JE), storage cleared to force the no-address state.
+
+**JE gate DOM (§3a) — a real gap found and fixed.** The gate does not appear on
+menu load; it appears when an item is clicked with no address resolved. Live shape:
+
+```
+div[role="dialog"][aria-modal="true"][data-qa="location-panel"]
+  <h1/2>Enter your location</h1/2>
+  "Current location" / "…681 Lowell Street…" /
+  "There was a problem working out where you are…"
+```
+
+- It **is** a `role="dialog"`/`aria-modal`, so `DIALOG_SELECTOR` catches it. ✅
+- But the shipped `JE_LOCATION_RE` (modelled on the 2026-08-09 wording "enter your
+  street and house number" / "Finding your location") does **not** match "Enter
+  your location", so `jeLocationPanel` would have **missed** the live gate. ✗
+- **Fix:** `isJeLocationDialog` now matches the deterministic marker
+  `[data-qa="location-panel"]` (also seen on the homepage address component)
+  **or** the text regex, and `JE_LOCATION_RE` gains `location`. The marker is the
+  primary signal; text is the fallback.
+- Confirmed incidental: JE menu opens on a category grid (no items); the search
+  box `[data-qa="menu-category-nav-search-element"]` surfaces items as
+  `span[role="button"][data-qa="item"][aria-haspopup="dialog"]` — matches the
+  shipped `menuSearchBox`/`surfaceItem`. An empty basket renders **no**
+  `[data-qa="cart-modal"]` (confirms `basket-builder.js:674`), so `jeUnresolvedFees`
+  could not be exercised in this flow; it stays as the scoped corroborating signal.
+
+**Cookie banners (§3b).** No platform showed a *definitively gating* banner, so no
+cookie detector was added (matching the plan: code only for banners that gate).
+
+- **Just Eat:** no blocking consent banner through the whole flow (footer
+  "cookie preferences" link only). Non-gating.
+- **Uber Eats:** a consent **`role="dialog"`** (`#privacy-cookie-banners-root`,
+  "We use cookies…"). Harmless to `findOpenDialog` (no item name / Go-back
+  control), and the builder's synthetic `el.click()` bypasses modal
+  pointer-blocking — so it is very likely cosmetic for the builder, but a
+  menu-level click test to confirm gating was **not** run. Deferred as a note.
+- **Deliveroo:** no cookie banner on the homepage. Non-gating.
+
 ## Acceptance (from #110)
 
 - [ ] A gated page reports the gate, naming the action the user has to take.

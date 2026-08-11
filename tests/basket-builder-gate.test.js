@@ -5,10 +5,12 @@ const {
   jeLocationPanel, jeUnresolvedFees, findOpenDialog, detectPageGate, buildBasket,
 } = require('../src/content/basket-builder');
 
-// Just Eat's address dialog when no delivery address is resolved (live 2026-08-09,
-// Popeyes Whitechapel): a role=dialog asking for the street / "Finding your
-// location". A separate [data-qa="cart-modal"] with a decrement control is present
-// too, so Task 3 can prove clearBasket is SKIPPED, not merely empty.
+// Just Eat's address dialog when no delivery address is resolved (live
+// 2026-08-11, reproduced end-to-end): a role=dialog[data-qa="location-panel"]
+// headed "Enter your location", body offering "Current location" / a partial
+// address / "There was a problem working out where you are…". A separate
+// [data-qa="cart-modal"] with a decrement control is present too, so Task 3
+// can prove clearBasket is SKIPPED, not merely empty.
 function mountJeLocationGate() {
   document.body.innerHTML = `
     <main>
@@ -17,10 +19,11 @@ function mountJeLocationGate() {
         <div>1x Chicken Sandwich Box Meal</div>
         <span role="button" data-qa="cart-item-amount-action-decrement"></span>
       </div>
-      <div role="dialog" aria-modal="true" data-qa="address-panel">
-        <h2>Where should we deliver?</h2>
-        <p>Please enter your street and house number</p>
-        <p>Finding your location…</p>
+      <div role="dialog" aria-modal="true" data-qa="location-panel">
+        <h2>Enter your location</h2>
+        <p>Current location</p>
+        <p>681 Lowell Street</p>
+        <p>There was a problem working out where you are…</p>
       </div>
     </main>`;
 }
@@ -72,6 +75,30 @@ describe('Just Eat gate predicates (#110)', () => {
     expect(jeLocationPanel(document)).toBe(false);
   });
 
+  // Live 2026-08-11 finding: the shipped text regex was modelled on older wording
+  // and MISSES the live "Enter your location" dialog — the deterministic
+  // [data-qa="location-panel"] marker is the primary signal now. Proven here with
+  // body text carrying NO location words at all, so only the marker can pass it.
+  test('jeLocationPanel: true via the [data-qa="location-panel"] marker alone, text notwithstanding', () => {
+    document.body.innerHTML = `
+      <div role="dialog" aria-modal="true" data-qa="location-panel">
+        <h2>Almost there</h2>
+        <p>Current location</p>
+      </div>`;
+    expect(jeLocationPanel(document)).toBe(true);
+    expect(detectPageGate(document, 'just-eat')).toMatchObject({ reason: 'je-address' });
+  });
+
+  // The text regex remains a fallback for wording the marker misses (or pages
+  // where the marker itself drifts) — proven independent of the marker.
+  test('jeLocationPanel: true via the text regex alone, even without the marker', () => {
+    document.body.innerHTML = `
+      <div role="dialog" aria-modal="true">
+        <p>Please enter your street and house number</p>
+      </div>`;
+    expect(jeLocationPanel(document)).toBe(true);
+  });
+
   test('jeUnresolvedFees: true when the cart shows fee ranges', () => {
     mountJeFeeRangeGate();
     expect(jeUnresolvedFees(document)).toBe(true);
@@ -89,8 +116,8 @@ describe('Just Eat gate predicates (#110)', () => {
 
   test('findOpenDialog: skips the location panel even if it names the item', () => {
     document.body.innerHTML = `
-      <div role="dialog" data-qa="address-panel">
-        <h2>Where should we deliver?</h2>
+      <div role="dialog" data-qa="location-panel">
+        <h2>Enter your location</h2>
         <p>Please enter your street and house number for your Chicken Sandwich Box Meal</p>
       </div>`;
     // Without the explicit skip, the name match would wrongly return this panel.

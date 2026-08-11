@@ -882,11 +882,15 @@ async function surfaceItem(doc, line, wait, platform) {
 // The Just Eat address/location dialog, shown when no delivery address is set.
 // Element-level so findOpenDialog can share it (never mistake this for the
 // customise dialog). Excludes the cart modal, which is a different JE dialog.
-const JE_LOCATION_RE = /finding your location|enter your (street|address|postcode)|street and house number|where should we deliver/i;
+const JE_LOCATION_RE = /finding your location|enter your (street|address|postcode|location)|street and house number|where should we deliver/i;
 function isJeLocationDialog(el) {
-  return !!el
-    && !(el.matches && el.matches('[data-qa="cart-modal"]'))
-    && JE_LOCATION_RE.test(norm(el.textContent));
+  if (!el || (el.matches && el.matches('[data-qa="cart-modal"]'))) return false;
+  // Deterministic marker: JE's location/address dialog (confirmed live 2026-08-11 —
+  // div[role=dialog][aria-modal][data-qa="location-panel"], heading "Enter your
+  // location"). The marker is the primary signal; the text regex is a fallback for
+  // wording the marker misses.
+  if (el.matches && el.matches('[data-qa="location-panel"]')) return true;
+  return JE_LOCATION_RE.test(norm(el.textContent));
 }
 function jeLocationPanel(doc) {
   return [...doc.querySelectorAll(DIALOG_SELECTOR)].some(isJeLocationDialog);

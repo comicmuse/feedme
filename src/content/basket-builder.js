@@ -872,6 +872,39 @@ async function surfaceItem(doc, line, wait, platform) {
   return found;
 }
 
+// ── Page gates ───────────────────────────────────────────────────────────────
+// A "gate" is a blocking page state that stops EVERY line from being added, as
+// opposed to a single item being absent. Just Eat will not open a customise
+// dialog until it can resolve deliverability, so an unresolved address gates the
+// whole run (#110). These signals are deterministic — pinned to live-verified
+// text and the same [data-qa="cart-modal"] container clearBasket already targets.
+
+// The Just Eat address/location dialog, shown when no delivery address is set.
+// Element-level so findOpenDialog can share it (never mistake this for the
+// customise dialog). Excludes the cart modal, which is a different JE dialog.
+const JE_LOCATION_RE = /finding your location|enter your (street|address|postcode)|street and house number|where should we deliver/i;
+function isJeLocationDialog(el) {
+  return !!el
+    && !(el.matches && el.matches('[data-qa="cart-modal"]'))
+    && JE_LOCATION_RE.test(norm(el.textContent));
+}
+function jeLocationPanel(doc) {
+  return [...doc.querySelectorAll(DIALOG_SELECTOR)].some(isJeLocationDialog);
+}
+
+// Just Eat renders fee RANGES ("£0.99 - £2.99") in the CART panel until an
+// address is resolved, and single values once one is. A fee-labelled row that
+// still shows a range means deliverability is unresolved. Scoped to the cart
+// container (never the whole document) so a menu/marketing price range elsewhere
+// can't trip it; a fee row is a leaf-ish element (label + range in one node).
+const FEE_ROW_RE = /\b(service|small order|delivery)\b.*£\s*\d+(?:\.\d{2})?\s*[-–—]\s*£?\s*\d+/i;
+function jeUnresolvedFees(doc) {
+  const cart = safeQuery(doc, '[data-qa="cart-modal"]');
+  if (!cart) return false;
+  return [...cart.querySelectorAll('div,span,li,p,dd,dt,td')]
+    .some((el) => el.children.length <= 3 && FEE_ROW_RE.test(norm(el.textContent)));
+}
+
 // Click the item's card and wait for its customise dialog to open. The Just Eat
 // search results are a transient list that re-renders (the matched element can be
 // swapped out from under a single click), so re-find the card and retry a few
@@ -883,7 +916,15 @@ async function surfaceItem(doc, line, wait, platform) {
 // so it is excluded explicitly.
 function findOpenDialog(doc, line) {
   const all = [...doc.querySelectorAll(DIALOG_SELECTOR)]
-    .filter((d) => !(d.matches && d.matches('[data-qa="cart-modal"]')));
+    .filter((d) => !(d.matches && d.matches('[data-qa="cart-modal"]')))
+    // Skip the JE location/address panel (its delivery copy can carry the item
+    // name), but NEVER skip a dialog HEADED by the item name — that is the real
+    // customise dialog, so the add path is never starved (#110).
+    .filter((d) => {
+      if (!isJeLocationDialog(d)) return true;
+      const h = d.querySelector && d.querySelector('h1,h2,h3,h4');
+      return h ? norm(h.textContent).includes(norm(line.name)) : false;
+    });
   return all.find((d) => norm(d.textContent).includes(norm(line.name)))
     // An Uber wizard sub-screen (#47) titles itself after the CATEGORY ("Cold
     // Drink"), not the item — recognise it by its Go back control so
@@ -1158,7 +1199,7 @@ function createOverlay(doc, total) {
   };
 }
 
-module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket };
+module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket, jeLocationPanel, jeUnresolvedFees, findOpenDialog };
 
 // Bootstrap when injected into a real page (guarded so require() in tests is inert).
 if (typeof window !== 'undefined' && window.__feedmeBuild) {

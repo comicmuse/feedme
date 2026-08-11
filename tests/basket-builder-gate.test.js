@@ -173,3 +173,15 @@ describe('buildBasket gate path (#110)', () => {
     expect(results[0]).toMatchObject({ name: 'Item Not On This Menu', added: 0, ok: false });
   });
 });
+
+describe('overlay reports the gate (#110)', () => {
+  test('setGate renders the action text in the overlay', async () => {
+    mountJeLocationGate();
+    const plan = [{ id: 'x', name: 'Chicken Sandwich Box Meal', quantity: 1, modifiers: [] }];
+    await buildBasket(
+      { platform: 'just-eat', basketPlan: plan }, { wait: fastWait }); // headless:false → overlay renders
+    const host = document.getElementById('feedme-builder');
+    expect(host).not.toBeNull();
+    expect(host.shadowRoot.textContent).toContain('needs a delivery address');
+  });
+});

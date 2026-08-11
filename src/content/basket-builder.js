@@ -1223,6 +1223,16 @@ function createOverlay(doc, total) {
         clearLine.textContent = "Couldn't clear pre-existing items — check your basket.";
       }
     },
+    setGate(gate) {
+      title.textContent = "FeedMe — can't fill yet";
+      status.textContent = '';
+      const notice = doc.createElement('div');
+      notice.style.cssText = 'margin-top:4px;font-size:12px;font-weight:700;color:var(--fm-warn);';
+      notice.textContent = gate.action;
+      box.appendChild(notice);
+      // No auto-dismiss timeout (unlike finish()): the notice names an action the
+      // user must take, so it persists until they set the address and re-switch.
+    },
     update(results) {
       const done = results.filter((r) => r.ok).length;
       status.textContent = `Added ${done} of ${total}`;

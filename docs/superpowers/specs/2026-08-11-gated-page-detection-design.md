@@ -149,8 +149,19 @@ if (gate) {
   timeout. A menu signal is present on any usable page regardless of basket
   contents, so a good run resolves the instant the menu renders and pays no fixed
   penalty. Non-JE platforms have no gate and settle immediately. The 4 s ceiling
-  is a fail-safe; because `detectPageGate` is polled *within* the same wait, a
-  gate that mounts late is still caught even if the menu rendered first.
+  is a fail-safe. The up-front probe catches a gate that is **already open at
+  page load** (the 2026-08-09 observation); a gate that only mounts on item click
+  is caught by the post-failure re-check below — the two together cover both
+  timings.
+- **Post-failure re-check (the click-triggered gate).** The live audit
+  (§3, 2026-08-11) found the JE gate is *not* present at menu load — it appears
+  only when an item is clicked. The up-front probe resolves the settle-wait as
+  soon as the menu renders, so it samples *before* the gate mounts and returns
+  null. So `buildBasket`'s line loop re-checks `detectPageGate` whenever a line
+  fails to add anything (`added === 0 && !ok`): if the page is now gated, it
+  records `results.gate`, surfaces it via `overlay.setGate`, and stops — the gate
+  blocks every remaining line identically. This closes the loop regardless of
+  whether the modal is open at load or triggered by the click.
 - **`overlay.setGate` is guarded** in `try/catch` like every DOM call in this
   file — the builder must never throw (the real bootstrap has no `.catch`).
 - **No clear, no adds** when gated. The user's basket is left untouched, since we
@@ -166,11 +177,15 @@ if (gate) {
   timeout: the notice names an action the user must take, so it persists until
   they set the address and switch again. This is deliberate, not an oversight.
 
-Probing up front (rather than per line, after a failure) is correct here because
-the Just Eat address gate is present from page load and blocks every line
-identically — re-checking it per line would re-run the same detection N times and
-still burn three wasted click-loops per line. The cross-restaurant confirm, which
-*does* appear mid-run, is a separate modal already handled by
+The design uses **both** an up-front probe and a post-failure re-check because the
+gate's timing is environment-dependent: the 2026-08-09 observation saw the modal
+already open on the menu, while the 2026-08-11 audit saw it appear only on item
+click. The up-front probe is the cheap path (skips the whole run, no wasted
+clicks) when the gate is open at load; the re-check is the safety net for the
+click-triggered case, and fires only on a line that already failed — so a usable
+page never pays for it, and a genuinely-missing item on a usable page re-checks,
+finds no gate, and is still reported as "item not found". The cross-restaurant
+confirm, which *does* appear mid-run, is a separate modal already handled by
 `acceptNewBasketPrompt` and is unaffected by this change.
 
 ### 3. Live audit (in scope)

@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 const {
-  jeLocationPanel, jeUnresolvedFees, findOpenDialog, detectPageGate,
+  jeLocationPanel, jeUnresolvedFees, findOpenDialog, detectPageGate, buildBasket,
 } = require('../src/content/basket-builder');
 
 // Just Eat's address dialog when no delivery address is resolved (live 2026-08-09,
@@ -139,5 +139,37 @@ describe('detectPageGate (#110)', () => {
 
   test('null doc → null', () => {
     expect(detectPageGate(null, 'just-eat')).toBeNull();
+  });
+});
+
+const fastWait = (fn) => Promise.resolve(fn());
+
+describe('buildBasket gate path (#110)', () => {
+  test('gated Just Eat: empty results + gate, adds nothing, skips the clear', async () => {
+    mountJeLocationGate();
+    let clicked = false;
+    document.querySelector('[data-item-id="x"]').addEventListener('click', () => { clicked = true; });
+    // The gate fixture carries a real decrement control; if clearBasket ran it
+    // would click it. Spying proves the clear was SKIPPED, not merely empty.
+    let decremented = false;
+    document.querySelector('[data-qa="cart-item-amount-action-decrement"]')
+      .addEventListener('click', () => { decremented = true; });
+    const plan = [{ id: 'x', name: 'Chicken Sandwich Box Meal', quantity: 1, modifiers: [] }];
+    const results = await buildBasket(
+      { platform: 'just-eat', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results).toHaveLength(0);
+    expect(results.gate).toMatchObject({ reason: 'je-address' });
+    expect(clicked).toBe(false);     // never attempted an item click
+    expect(decremented).toBe(false); // clearBasket was skipped, not just empty
+  });
+
+  test('usable Just Eat with a genuinely-absent item: still reports it failed, no gate', async () => {
+    mountJeResolved(); // no location dialog, single fee values → not gated
+    const plan = [{ id: 'nope', name: 'Item Not On This Menu', quantity: 1, modifiers: [] }];
+    const results = await buildBasket(
+      { platform: 'just-eat', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results.gate).toBeUndefined();
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ name: 'Item Not On This Menu', added: 0, ok: false });
   });
 });

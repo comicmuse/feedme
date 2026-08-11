@@ -922,6 +922,19 @@ function detectPageGate(doc, platform) {
   return null;
 }
 
+// True once the JE MENU is interactable — the point by which the address gate,
+// if any, has rendered. Deliberately independent of basket contents: Just Eat
+// renders NO cart container when the basket is empty (see clearBasket, ~:674),
+// and the primary #110 case (switching an empty basket to JE) is exactly that —
+// so a cart marker would never fire and every good run would burn the full
+// timeout. The menu search box is live-verified (menuSearchBox, KFC 2026-07-14);
+// item cards are the fallback. Non-JE platforms have no gate, so settle at once.
+function pageSettled(doc, platform) {
+  if (platform !== 'just-eat') return true;
+  return !!menuSearchBox(doc, platform)
+    || !!safeQuery(doc, '[data-qa="item"], button.item, [data-item-id]');
+}
+
 // Click the item's card and wait for its customise dialog to open. The Just Eat
 // search results are a transient list that re-renders (the matched element can be
 // swapped out from under a single click), so re-find the card and retry a few
@@ -1091,7 +1104,9 @@ async function addLine(line, ctx) {
   return result;
 }
 
-// Drive the whole basket plan. Resolves to a results array (one per plan line).
+// Drive the whole basket plan. Resolves to a results array (one per plan line) —
+// except when the page is gated, in which case it resolves to an EMPTY array
+// carrying a `.gate` property, regardless of plan length.
 async function buildBasket(build, opts = {}) {
   const doc = opts.doc || (typeof document !== 'undefined' ? document : null);
   const wait = opts.wait || defaultWait;
@@ -1100,6 +1115,27 @@ async function buildBasket(build, opts = {}) {
   dlog('starting on', doc && doc.location ? String(doc.location.href) : '(no doc)',
     'platform=', platform, 'readyState=', doc && doc.readyState, 'plan=', JSON.stringify(plan));
   const overlay = opts.headless || !doc ? null : createOverlay(doc, plan.length);
+
+  // A blocking page state (e.g. Just Eat's unresolved-address dialog) fails every
+  // line identically — detect it once, report it, and touch nothing. Acting would
+  // mean clicking into a page that refuses adds; leaving the basket untouched is
+  // correct when we cannot act (spec #24, #110).
+  //
+  // The builder is injected at page-complete, BEFORE the basket UI hydrates — a
+  // single instant sample would race the modal's render and miss the gate,
+  // falling back into the #110 bug. Wait until the page has settled OR a gate is
+  // already visible (bounded), then sample once. A non-gated page settles the
+  // instant its menu renders, so a good run pays no fixed penalty.
+  await wait(() => pageSettled(doc, platform) || detectPageGate(doc, platform),
+    { timeout: 4000 });
+  const gate = detectPageGate(doc, platform);
+  if (gate) {
+    dlog('page is gated:', gate.reason, '—', gate.action);
+    try { if (overlay) overlay.setGate(gate); } catch (_) {}
+    const gated = [];
+    gated.gate = gate;
+    return gated;
+  }
 
   // Pre-existing basket items would sit under the plan and skew the total away
   // from the sidebar's comparison — empty the basket first (issue #24). A failed
@@ -1216,7 +1252,7 @@ function createOverlay(doc, total) {
   };
 }
 
-module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket, jeLocationPanel, jeUnresolvedFees, findOpenDialog, detectPageGate };
+module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket, jeLocationPanel, jeUnresolvedFees, findOpenDialog, detectPageGate, pageSettled };
 
 // Bootstrap when injected into a real page (guarded so require() in tests is inert).
 if (typeof window !== 'undefined' && window.__feedmeBuild) {

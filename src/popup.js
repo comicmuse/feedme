@@ -1,5 +1,31 @@
-const { MSG, browser } = require('./shared/constants');
+const { MSG, browser, PLATFORM } = require('./shared/constants');
 const { PLATFORM_ORIGINS, missingOrigins, originLabel } = require('./shared/permissions');
+const { idleStateFor } = require('./popup-help');
+
+// Only Deliveroo / Just Eat reach the 'destination' state; a two-entry local map
+// keeps the popup bundle from depending on the sidebar module for label strings.
+const DESTINATION_LABEL = {
+  [PLATFORM.DELIVEROO]: 'Deliveroo',
+  [PLATFORM.JUST_EAT]: 'Just Eat',
+};
+
+// Picks the idle-popup help message from the active tab's URL. #help-elsewhere is
+// visible by default so a slow/failed tabs.query still shows the full instructions;
+// this only swaps to a more specific message when the tab warrants one.
+async function showIdleHelp() {
+  const tabs = await browser.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+  const url = tabs && tabs[0] && tabs[0].url;
+  const { key, platform } = idleStateFor(url);
+  if (key === 'elsewhere') return; // default div already visible
+
+  document.querySelectorAll('#state-idle .help').forEach((el) => el.classList.add('hidden'));
+  const help = document.getElementById(`help-${key}`);
+  if (!help) return;
+  if (key === 'destination') {
+    help.querySelector('.platform-name').textContent = DESTINATION_LABEL[platform] ?? '';
+  }
+  help.classList.remove('hidden');
+}
 
 // Firefox lets host access be revoked at any time (#77). The popup is the only
 // surface that can ask for it back: permissions.request() needs a user gesture
@@ -44,6 +70,8 @@ async function init() {
       await browser.runtime.sendMessage({ type: MSG.START_COMPARISON, tabId: tabs[0].id });
       window.close();
     });
+  } else {
+    await showIdleHelp();
   }
 }
 

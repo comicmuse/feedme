@@ -130,8 +130,8 @@ Pure function. Input: the parsed `text_search` GraphQL response. Output:
 `Array<{ id, name, distance, menuUrl }>` — one entry per distinct restaurant.
 
 - Collect card blocks via the response's aliased path
-  `json.results.layoutGroups[].data[].blocks[]` (the aliases both Deliveroo's
-  verbatim query and our minimal query emit).
+  `json.data.results.layoutGroups[].data[].blocks[]` (GraphQL's `data` envelope,
+  then the aliases both Deliveroo's verbatim query and our minimal query emit).
 - Per block: deep-find the `UITargetRestaurant` (`typeName` === `UITargetRestaurant`,
   `restaurant.id`, `restaurant.name`, `restaurant.links.self.href`) and the card's
   distance from any text span matching `/([\d.]+)\s*mi\b/i` → float; null if absent.

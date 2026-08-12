@@ -116,7 +116,7 @@ describe('parseDeliverooSearch', () => {
 
   test('never throws on an empty / shapeless response', () => {
     expect(parseDeliverooSearch({})).toEqual([]);
-    expect(parseDeliverooSearch({ results: { layoutGroups: [] } })).toEqual([]);
+    expect(parseDeliverooSearch({ data: { results: { layoutGroups: [] } } })).toEqual([]);
   });
 });
 ```
@@ -140,7 +140,7 @@ In `src/shared/parsers.js`, add:
 // minor structural drift degrades to fewer candidates, never a throw.
 function deliverooSearchBlocks(json) {
   const blocks = [];
-  for (const g of (json?.results?.layoutGroups ?? [])) {
+  for (const g of (json?.data?.results?.layoutGroups ?? [])) {
     for (const layout of (g?.data ?? [])) {
       for (const b of (layout?.blocks ?? [])) blocks.push(b);
     }

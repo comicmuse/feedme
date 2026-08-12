@@ -4,6 +4,7 @@ const { buildSnapshot } = require('../shared/snapshot');
 const { missingOrigins } = require('../shared/permissions');
 const { createScheduler } = require('../shared/pool');
 const { THEME } = require('../shared/theme');
+const { DELIVEROO_SEARCH_QUERY, DELIVEROO_SEARCH_VARS } = require('./deliveroo-search-query');
 const { switchTableKey, buildSwitchTable, switchEntry } = require('../shared/switch-table');
 
 // Keyed by source tabId.
@@ -420,27 +421,17 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
 // hands us the brand + location and we replay the search here (#131).
 const DELIVEROO_SEARCH_ENDPOINT = 'https://api.uk.deliveroo.com/consumer/graphql/';
 
-// Minimal getTextSearchResults selection — only the fields parseDeliverooSearch
-// reads, aliased to the names Deliveroo's own query emits. ~577 bytes vs the
-// ~10 KB verbatim query; swap in the verbatim string if the server rejects this.
-const DELIVEROO_SEARCH_QUERY = `query getTextSearchResults($location: LocationInput!, $options: SearchOptionsInput, $uuid: String!) {
-  results: text_search(location: $location, options: $options, uuid: $uuid) {
-    layoutGroups: ui_layout_groups { data: ui_layouts { ... on UILayoutList { blocks: ui_blocks { ... on UICard {
-      target { typeName: __typename ... on UITargetRestaurant { restaurant { id name links { self { href } } } } }
-      uiContent: properties { default { uiLines: ui_lines { ... on UITextLine { spans: ui_spans { ... on UISpanText { text } } } } } }
-    } } } } }
-  }
-}`;
-
 // The result is PUSHED back to the enum tab via tabs.sendMessage rather than
 // returned as the onMessage reply: the SW has several async onMessage listeners,
 // and the polyfill lets an earlier one resolve `undefined` first, clobbering a
 // slow reply (the search awaits a network fetch, so it always loses that race).
 // A dedicated DELIVEROO_SEARCH_RESULT message to the specific tab sidesteps it.
-async function fetchDeliverooSearch(brand, location) {
+async function fetchDeliverooSearch(brand, location, url) {
   const variables = {
+    ...DELIVEROO_SEARCH_VARS,
     location,
     options: { query: brand, recent_searches: [], web_column_count: 1 },
+    url: url || '',
     uuid: crypto.randomUUID(),
   };
   try {
@@ -459,7 +450,12 @@ async function fetchDeliverooSearch(brand, location) {
       body: JSON.stringify({ query: DELIVEROO_SEARCH_QUERY, variables }),
     });
     if (!res.ok) return { error: `search HTTP ${res.status}` };
-    return { json: await res.json() };
+    const json = await res.json();
+    // Diagnostic (kept during bring-up, #131): distinguishes "server returned no
+    // cards" from a parse/plumbing miss when the sidebar shows no Deliveroo branch.
+    const groups = json?.data?.results?.layoutGroups?.length ?? 0;
+    console.info('[FeedMe deliveroo-search] HTTP', res.status, '— layoutGroups:', groups, 'gqlErrors:', json?.errors?.length ?? 0);
+    return { json };
   } catch (err) {
     return { error: String((err && err.message) || err) };
   }
@@ -468,7 +464,7 @@ async function fetchDeliverooSearch(brand, location) {
 browser.runtime.onMessage.addListener((msg, sender) => {
   if (msg.type !== MSG.DELIVEROO_SEARCH) return;
   const tabId = sender.tab?.id;
-  fetchDeliverooSearch(msg.brand, msg.location).then((result) => {
+  fetchDeliverooSearch(msg.brand, msg.location, msg.url).then((result) => {
     if (tabId != null) {
       browser.tabs.sendMessage(tabId, { type: MSG.DELIVEROO_SEARCH_RESULT, ...result }).catch(() => {});
     }

@@ -37,7 +37,7 @@ function deliverooSearch(brand) {
     }
     browser.runtime.onMessage.addListener(onResult);
     // Fire-and-forget: the reply comes back as DELIVEROO_SEARCH_RESULT, not here.
-    browser.runtime.sendMessage({ type: MSG.DELIVEROO_SEARCH, brand, location }).catch(() => {});
+    browser.runtime.sendMessage({ type: MSG.DELIVEROO_SEARCH, brand, location, url: window.location.href }).catch(() => {});
     setTimeout(() => finish({ error: 'search timed out (no result from service worker)' }), 15000);
   });
 }

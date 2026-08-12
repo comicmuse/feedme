@@ -16,12 +16,24 @@
     <button id="grant-btn">Grant access</button>
   </div>
   <div id="state-idle">
-    <p>Go to the checkout page on a supported platform, then click here to compare prices.</p>
-    <ul>
-      <li>Uber Eats checkout</li>
-      <li>Deliveroo checkout</li>
-      <li>Just Eat order page</li>
-    </ul>
+    <div id="help-elsewhere" class="help">
+      <p class="help-title">How to compare prices</p>
+      <ol>
+        <li>Open your basket on Uber Eats</li>
+        <li>Go to the Uber Eats checkout</li>
+        <li>Click FeedMe here</li>
+      </ol>
+      <p class="help-note">Deliveroo &amp; Just Eat are compared automatically — you don't start there.</p>
+    </div>
+    <div id="help-uber-other" class="help hidden">
+      <p>You're on Uber Eats. Open your basket and go to the checkout, then click FeedMe here.</p>
+    </div>
+    <div id="help-uber-checkout" class="help hidden">
+      <p>You're on the Uber Eats checkout — if nothing shows here, add items to your basket, then reopen FeedMe.</p>
+    </div>
+    <div id="help-destination" class="help hidden">
+      <p>You're on <span class="platform-name"></span>. FeedMe compares these for you automatically — but you start from an Uber Eats basket.</p>
+    </div>
   </div>
   <script src="../dist/popup.js"></script>
 </body>

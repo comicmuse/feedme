@@ -18,14 +18,28 @@ function deliverooSearchLocation() {
 
 // The API host is cross-origin and PerimeterX-guarded, so the actual fetch runs
 // in the service worker (host_permissions exempts it from CORS; a content-script
-// POST does not get that bypass in Firefox MV3). We hand it the brand + location
-// and get back { json } or { error }.
-async function deliverooSearch(brand) {
+// POST does not get that bypass in Firefox MV3). The SW pushes the outcome back
+// as a DELIVEROO_SEARCH_RESULT message rather than an onMessage reply (that reply
+// races against the SW's other async listeners), so we await that message here.
+function deliverooSearch(brand) {
   const location = deliverooSearchLocation();
-  if (!location.geohash) return { json: null, error: 'no geohash on listing URL' };
-  const reply = await browser.runtime.sendMessage({ type: MSG.DELIVEROO_SEARCH, brand, location })
-    .catch((err) => ({ error: String((err && err.message) || err) }));
-  return { json: reply?.json ?? null, error: reply?.error ?? null };
+  if (!location.geohash) return Promise.resolve({ json: null, error: 'no geohash on listing URL' });
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      browser.runtime.onMessage.removeListener(onResult);
+      resolve({ json: result.json ?? null, error: result.error ?? null });
+    };
+    function onResult(msg) {
+      if (msg?.type === MSG.DELIVEROO_SEARCH_RESULT) finish(msg);
+    }
+    browser.runtime.onMessage.addListener(onResult);
+    // Fire-and-forget: the reply comes back as DELIVEROO_SEARCH_RESULT, not here.
+    browser.runtime.sendMessage({ type: MSG.DELIVEROO_SEARCH, brand, location }).catch(() => {});
+    setTimeout(() => finish({ error: 'search timed out (no result from service worker)' }), 15000);
+  });
 }
 
 // Deliveroo can't be reached with a single URL: there is no menu page derivable

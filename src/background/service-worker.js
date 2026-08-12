@@ -432,13 +432,15 @@ const DELIVEROO_SEARCH_QUERY = `query getTextSearchResults($location: LocationIn
   }
 }`;
 
-// async so the returned reply is a Promise the polyfill sends over the channel
-// (see RETRY_BRANCH above). Replies { json } or { error } — never throws.
-browser.runtime.onMessage.addListener(async (msg) => {
-  if (msg.type !== MSG.DELIVEROO_SEARCH) return;
+// The result is PUSHED back to the enum tab via tabs.sendMessage rather than
+// returned as the onMessage reply: the SW has several async onMessage listeners,
+// and the polyfill lets an earlier one resolve `undefined` first, clobbering a
+// slow reply (the search awaits a network fetch, so it always loses that race).
+// A dedicated DELIVEROO_SEARCH_RESULT message to the specific tab sidesteps it.
+async function fetchDeliverooSearch(brand, location) {
   const variables = {
-    location: msg.location,
-    options: { query: msg.brand, recent_searches: [], web_column_count: 1 },
+    location,
+    options: { query: brand, recent_searches: [], web_column_count: 1 },
     uuid: crypto.randomUUID(),
   };
   try {
@@ -461,6 +463,16 @@ browser.runtime.onMessage.addListener(async (msg) => {
   } catch (err) {
     return { error: String((err && err.message) || err) };
   }
+}
+
+browser.runtime.onMessage.addListener((msg, sender) => {
+  if (msg.type !== MSG.DELIVEROO_SEARCH) return;
+  const tabId = sender.tab?.id;
+  fetchDeliverooSearch(msg.brand, msg.location).then((result) => {
+    if (tabId != null) {
+      browser.tabs.sendMessage(tabId, { type: MSG.DELIVEROO_SEARCH_RESULT, ...result }).catch(() => {});
+    }
+  });
 });
 
 // ── Seed + snapshot helpers ──────────────────────────────────────────────────

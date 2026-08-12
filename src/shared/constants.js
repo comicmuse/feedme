@@ -48,6 +48,7 @@ const MSG = {
   RETRY_BRANCH: 'RETRY_BRANCH',           // sidebar -> service-worker (retry a failed branch)
   RETRY_PLATFORM: 'RETRY_PLATFORM',       // sidebar -> service-worker (retry a timed-out enumeration)
   DELIVEROO_SEARCH: 'DELIVEROO_SEARCH',   // deliveroo-scraper -> service-worker (cross-origin search fetch)
+  DELIVEROO_SEARCH_RESULT: 'DELIVEROO_SEARCH_RESULT', // service-worker -> deliveroo-scraper (search fetch result)
 };
 
 const SCRAPER_TIMEOUT_MS = 15000;

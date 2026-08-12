@@ -1,7 +1,70 @@
-const { selectNearestBranches, sameBrand } = require('../shared/branches');
+const { selectNearestBranches } = require('../shared/branches');
 const { MSG, PLATFORM } = require('../shared/constants');
-const { parseMenuResponse } = require('../shared/parsers');
+const { parseMenuResponse, parseDeliverooSearch } = require('../shared/parsers');
 const { enumLog } = require('../shared/enum-log');
+
+const DELIVEROO_SEARCH_ENDPOINT = 'https://api.uk.deliveroo.com/consumer/graphql/';
+
+// Minimal getTextSearchResults selection — only the fields parseDeliverooSearch
+// reads, aliased to the same names Deliveroo's own query emits so one parser (and
+// one fixture) covers both. ~577 bytes vs Deliveroo's ~10 KB verbatim query. If
+// the server ever rejects the trimmed query, swap in the verbatim query string —
+// the parser and fixture stay unchanged.
+const DELIVEROO_SEARCH_QUERY = `query getTextSearchResults($location: LocationInput!, $options: SearchOptionsInput, $uuid: String!) {
+  results: text_search(location: $location, options: $options, uuid: $uuid) {
+    layoutGroups: ui_layout_groups { data: ui_layouts { ... on UILayoutList { blocks: ui_blocks { ... on UICard {
+      target { typeName: __typename ... on UITargetRestaurant { restaurant { id name links { self { href } } } } }
+      uiContent: properties { default { uiLines: ui_lines { ... on UITextLine { spans: ui_spans { ... on UISpanText { text } } } } } }
+    } } } } }
+  }
+}`;
+
+// Location comes from the listing URL phase 1 navigated to
+// (/restaurants/{city}/{neighborhood}?...&geohash=...).
+function deliverooSearchLocation() {
+  const u = new URL(window.location.href);
+  const seg = u.pathname.split('/'); // ['', 'restaurants', city, neighborhood]
+  return {
+    geohash: u.searchParams.get('geohash') || '',
+    city_uname: seg[2] || '',
+    neighborhood_uname: seg[3] || '',
+    postcode: '',
+  };
+}
+
+// Replay Deliveroo's search from the content script. The API host is a separate,
+// PerimeterX-guarded origin; a content-script fetch to a host in host_permissions
+// gets a CORS bypass and runs in the ISOLATED world (not the page's PX-patched
+// fetch), carrying the api.uk.deliveroo.com cookies via credentials:'include'.
+async function deliverooSearch(brand) {
+  const location = deliverooSearchLocation();
+  if (!location.geohash) return { json: null, error: 'no geohash on listing URL' };
+  const variables = {
+    location,
+    options: { query: brand, recent_searches: [], web_column_count: 1 },
+    uuid: crypto.randomUUID(),
+  };
+  try {
+    const res = await fetch(DELIVEROO_SEARCH_ENDPOINT, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+        'x-roo-country': 'uk',
+        'x-roo-platform': 'web',
+        'x-roo-client': 'consumer-web-app',
+        'x-roo-guid': crypto.randomUUID(),
+        'x-roo-session-guid': crypto.randomUUID(),
+      },
+      body: JSON.stringify({ query: DELIVEROO_SEARCH_QUERY, variables }),
+    });
+    if (!res.ok) return { json: null, error: `search HTTP ${res.status}` };
+    return { json: await res.json(), error: null };
+  } catch (err) {
+    return { json: null, error: String((err && err.message) || err) };
+  }
+}
 
 // Deliveroo can't be reached with a single URL: there is no menu page derivable
 // from a restaurant name + postcode. Instead this scraper drives the site like a
@@ -76,69 +139,35 @@ const { enumLog } = require('../shared/enum-log');
     return;
   }
 
-  // PHASE 2 — listing: the /restaurants landing page is only a curated subset
-  // (~20 restaurants, no full chain coverage), so search by brand to find the
-  // chain's branches in the autocomplete results.
+  // PHASE 2 — listing: replay Deliveroo's own text_search GraphQL query and parse
+  // the JSON, rather than typing into the search box and scraping rendered links.
+  // A cross-origin fetch to the API host (granted in host_permissions) is immune
+  // to the first-order promo modal and the background-tab render throttling that
+  // hid search results from the old DOM-scrape path — which silently dropped every
+  // chain not already in the ~18 curated landing cards (#131). selectNearestBranches
+  // still filters to the target brand exactly as before.
   if (path.startsWith('/restaurants/')) {
     const ctx = window.__feedmeCompare ?? {};
     const brand = (ctx.restaurantName ?? '').trim().split(/\s+/)[0] || '';
 
-    const search = await waitFor(() =>
-      document.querySelector('input[type="search"], input[placeholder*="estaurant" i], input[placeholder*="earch" i]')
-    );
-    if (!search) {
-      enumLog(PLATFORM.DELIVEROO, 'phase 2: no restaurant search box on the listing page after 8s', { brand });
-      chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.DELIVEROO, branches: [] });
-      return;
-    }
-    setInputValue(search, brand);
-    search.focus();
-
-    // Wait for autocomplete results for the brand to render. Matched on the
-    // leading token rather than a raw string prefix, and stemmed, so a brand
-    // written with a trailing "s" on one platform only still resolves (#89);
-    // selectNearestBranches below still prefers exact matches over stemmed ones.
-    const links = await waitFor(() => {
-      const found = [...document.querySelectorAll('a[href*="/menu/"]')]
-        .filter((a) => sameBrand((a.getAttribute('aria-label') || '').trim(), brand, { stemmed: true }));
-      return found.length ? found : null;
-    });
-    if (!links) {
-      // Split the "loaded but brand absent" case from "nothing rendered": count
-      // every /menu/ link on the page regardless of brand. Many links but no
-      // match means this chain isn't in reach; zero means the listing itself
-      // never rendered its cards (a background-tab render stall is the suspect,
-      // #112).
-      const anyMenuLinks = document.querySelectorAll('a[href*="/menu/"]').length;
-      enumLog(PLATFORM.DELIVEROO, anyMenuLinks
-        ? `phase 2: ${anyMenuLinks} restaurant link(s) on the page but none matched brand "${brand}"`
-        : `phase 2: no restaurant links rendered on the listing for "${brand}" before timeout`,
-      { brand, menuLinksOnPage: anyMenuLinks });
+    const { json, error } = await deliverooSearch(brand);
+    if (!json) {
+      enumLog(PLATFORM.DELIVEROO, `phase 2: search request did not return data (${error})`, { brand });
       chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.DELIVEROO, branches: [] });
       return;
     }
 
-    // Search-result anchors: aria-label is the clean name; the text carries the
-    // distance ("· 0.8 mi"); the href is /menu/{city}/{area}/{slug}(?query).
-    const candidates = links.map((a) => {
-      const name = (a.getAttribute('aria-label') || '').trim();
-      const distMatch = (a.textContent || '').match(/([\d.]+)\s*mi\b/i);
-      const href = a.getAttribute('href') || '';
+    const candidates = parseDeliverooSearch(json).map((r) => {
+      const href = r.menuUrl;
       const areaSeg = href.split('?')[0].split('/')[3] || '';
-      const areaLabel = areaSeg.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-      return {
-        id: href.split('?')[0],
-        name,
-        label: areaLabel,
-        distance: distMatch ? parseFloat(distMatch[1]) : null,
-        menuUrl: href,
-      };
+      const label = areaSeg.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+      return { id: href.split('?')[0], name: r.name, label, distance: r.distance, menuUrl: href };
     }).filter((c) => c.name && c.menuUrl);
 
     const branches = selectNearestBranches(candidates, ctx.restaurantName ?? '', ctx.branchCount ?? 3)
       .map(({ id, label, distance, menuUrl }) => ({ id, label, distance, menuUrl }));
 
-    enumLog(PLATFORM.DELIVEROO, `phase 2: reporting ${branches.length} branch(es) from ${candidates.length} brand candidate(s)`, { branchCount: branches.length, candidateCount: candidates.length });
+    enumLog(PLATFORM.DELIVEROO, `phase 2: reporting ${branches.length} branch(es) from ${candidates.length} search result(s)`, { brand, branchCount: branches.length, candidateCount: candidates.length });
     chrome.runtime.sendMessage({ type: MSG.BRANCHES_FOUND, platform: PLATFORM.DELIVEROO, branches });
     return;
   }

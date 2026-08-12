@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 const {
-  jeLocationPanel, jeUnresolvedFees, findOpenDialog, detectPageGate, buildBasket,
+  jeLocationPanel, findOpenDialog, detectPageGate, buildBasket,
 } = require('../src/content/basket-builder');
 
 // Just Eat's address dialog when no delivery address is resolved (live
@@ -28,19 +28,7 @@ function mountJeLocationGate() {
     </main>`;
 }
 
-// Address dismissed but never set: the CART panel still shows fee RANGES.
-function mountJeFeeRangeGate() {
-  document.body.innerHTML = `
-    <main>
-      <div class="menu"><button class="item" data-item-id="x">Chicken Sandwich Box Meal</button></div>
-      <div data-qa="cart-modal">
-        <div class="fee-row"><span>Service</span><span>£0.99 - £2.99</span></div>
-        <div class="fee-row"><span>Small order</span><span>£0.00 - £2.00</span></div>
-      </div>
-    </main>`;
-}
-
-// A resolved, usable Just Eat menu: single fee values, no location dialog.
+// A resolved, usable Just Eat menu: no location dialog, an item and a cart panel.
 function mountJeResolved() {
   document.body.innerHTML = `
     <main>
@@ -49,18 +37,6 @@ function mountJeResolved() {
         <div class="fee-row"><span>Service</span><span>£1.49</span></div>
         <div class="fee-row"><span>Delivery</span><span>£2.49</span></div>
       </div>
-    </main>`;
-}
-
-// A menu whose PRICES carry a range, but the cart has no fee range and no address
-// dialog — proves jeUnresolvedFees is scoped to the cart, not the whole page.
-function mountJeMenuWithPriceRange() {
-  document.body.innerHTML = `
-    <main>
-      <div class="menu">
-        <button class="item" data-item-id="b">Bundle for Two <span>£20.00 - £30.00</span></button>
-      </div>
-      <div data-qa="cart-modal"><div class="fee-row"><span>Service</span><span>£1.49</span></div></div>
     </main>`;
 }
 
@@ -99,21 +75,6 @@ describe('Just Eat gate predicates (#110)', () => {
     expect(jeLocationPanel(document)).toBe(true);
   });
 
-  test('jeUnresolvedFees: true when the cart shows fee ranges', () => {
-    mountJeFeeRangeGate();
-    expect(jeUnresolvedFees(document)).toBe(true);
-  });
-
-  test('jeUnresolvedFees: false when cart fees are single values', () => {
-    mountJeResolved();
-    expect(jeUnresolvedFees(document)).toBe(false);
-  });
-
-  test('jeUnresolvedFees: false for a menu price range OUTSIDE the cart', () => {
-    mountJeMenuWithPriceRange();
-    expect(jeUnresolvedFees(document)).toBe(false);
-  });
-
   test('findOpenDialog: skips the location panel even if it names the item', () => {
     document.body.innerHTML = `
       <div role="dialog" data-qa="location-panel">
@@ -146,11 +107,6 @@ describe('detectPageGate (#110)', () => {
       reason: 'je-address',
       action: 'Just Eat needs a delivery address before items can be added — set it, then switch again.',
     });
-  });
-
-  test('just-eat + fee ranges → je-address gate', () => {
-    mountJeFeeRangeGate();
-    expect(detectPageGate(document, 'just-eat')).toMatchObject({ reason: 'je-address' });
   });
 
   test('just-eat + resolved menu → null', () => {

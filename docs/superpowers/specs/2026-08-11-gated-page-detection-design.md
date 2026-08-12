@@ -86,21 +86,15 @@ function detectPageGate(doc, platform) { … }
   on the **core add path**, the skip is guarded — a dialog whose *heading* is the
   item name is never dropped (it is the real customise dialog even if its body
   mentions delivery), so a stray regex match can't silently starve a line.
-- `jeUnresolvedFees(doc)` — the basket/cart panel (`[data-qa="cart-modal"]`, the
-  same container `clearBasket` and `findOpenDialog` already target, live-verified
-  2026-07-11) shows a fee **range** (e.g. `Service £0.99 - £2.99`) rather than a
-  single value, which Just Eat renders only when no address is resolved. The scan
-  is scoped to the cart container — **never** the whole document — so a menu or
-  marketing price range elsewhere on the page ("Free delivery over £20 – £30", a
-  bundle's "from £X – £Y") can never false-positive. This predicate ships scoped
-  to the already-live-verified `[data-qa="cart-modal"]` container; its exact
-  fee-row shape is *confirmed and refined* against live JE during the audit (§3) —
-  it lands before that audit, which is safe because `jeLocationPanel` is the
-  primary signal and this only corroborates, and a miss under-reports a gate
-  rather than breaking a usable page.
+A second signal — a fee **range** in the cart panel (`Service £0.99 - £2.99`,
+which JE renders only when the address is unresolved) — was designed as a
+corroborating fallback but **dropped after the #128 live audit** (see §3): adding
+any item requires a fully-resolved address, so the cart never coexists with
+unresolved (range) fees, and the location panel fires first on the very first add
+attempt. It was an unverified heuristic with no reproducible state to pin, so it
+is not shipped — leaving `jeLocationPanel` as the single, live-verified signal.
 
-`detectPageGate` for `just-eat` returns a gate when **either** signal holds. The
-panel is the primary/direct signal; the fee-range check is the fallback.
+`detectPageGate` for `just-eat` returns a gate when `jeLocationPanel` holds.
 
 Uber Eats and Deliveroo start with no detector — only whatever the cookie audit
 (section 3) finds gates.
@@ -217,10 +211,10 @@ record of what was checked survives.
 ### 4. Testing
 
 - `detectPageGate` / predicate unit tests over pinned fixtures:
-  - gated Just Eat DOM, location-panel variant → gate descriptor `je-address`.
-  - gated Just Eat DOM, fee-range variant (panel dismissed, fees unresolved) →
-    gate descriptor `je-address`.
+  - gated Just Eat DOM via the `[data-qa="location-panel"]` marker → `je-address`.
+  - gated Just Eat DOM via the text-regex fallback alone → `je-address`.
   - a clean Just Eat / Uber / Deliveroo menu → `null`.
+  - (the fee-range signal was dropped after the #128 audit — see below.)
 - `buildBasket` over a gated doc → `results` empty, `results.gate` set,
   **no clear attempted, no adds**. The fixture carries an observable clear
   affordance (a decrement control with a click spy) so the test proves the clear
@@ -256,20 +250,29 @@ div[role="dialog"][aria-modal="true"][data-qa="location-panel"]
 - Confirmed incidental: JE menu opens on a category grid (no items); the search
   box `[data-qa="menu-category-nav-search-element"]` surfaces items as
   `span[role="button"][data-qa="item"][aria-haspopup="dialog"]` — matches the
-  shipped `menuSearchBox`/`surfaceItem`. An empty basket renders **no**
-  `[data-qa="cart-modal"]` (confirms `basket-builder.js:674`), so `jeUnresolvedFees`
-  could not be exercised in this flow; it stays as the scoped corroborating signal.
+  shipped `menuSearchBox`/`surfaceItem`.
 
-**Cookie banners (§3b).** No platform showed a *definitively gating* banner, so no
-cookie detector was added (matching the plan: code only for banners that gate).
+**`jeUnresolvedFees` follow-up (#128, 2026-08-12) — dropped.** An empty basket
+renders **no** `[data-qa="cart-modal"]` (confirms `basket-builder.js:674`), and a
+retest with a *postcode-level* address showed the location gate **still** fires on
+the first item click — JE requires a full address before any item enters the
+basket. So the cart never coexists with unresolved (range) fees, the state the
+predicate targets is not reproducible, and the location-panel marker fires first
+anyway (in the one 2026-08-09 observation both were present). The unverified
+heuristic was removed; `jeLocationPanel` is the sole JE signal.
+
+**Cookie banners (§3b).** No platform gates item-adding, so no cookie detector was
+added (matching the plan: code only for banners that gate).
 
 - **Just Eat:** no blocking consent banner through the whole flow (footer
   "cookie preferences" link only). Non-gating.
-- **Uber Eats:** a consent **`role="dialog"`** (`#privacy-cookie-banners-root`,
-  "We use cookies…"). Harmless to `findOpenDialog` (no item name / Go-back
-  control), and the builder's synthetic `el.click()` bypasses modal
-  pointer-blocking — so it is very likely cosmetic for the builder, but a
-  menu-level click test to confirm gating was **not** run. Deferred as a note.
+- **Uber Eats (#127, confirmed 2026-08-12):** the consent
+  `role="dialog"` (`#privacy-cookie-banners-root`, "We use cookies…") is
+  **non-modal** (`aria-modal` absent, a ~260px bottom banner) and **does not gate
+  item-adding** — verified live: with the banner present, a synthetic `el.click()`
+  on a store-menu item opened the customise dialog (two `role=dialog`s coexisted:
+  the item view + the banner). `findOpenDialog` correctly picks the item-named one.
+  Cosmetic; no detector.
 - **Deliveroo:** no cookie banner on the homepage. Non-gating.
 
 ## Acceptance (from #110)

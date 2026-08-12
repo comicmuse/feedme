@@ -896,18 +896,11 @@ function jeLocationPanel(doc) {
   return [...doc.querySelectorAll(DIALOG_SELECTOR)].some(isJeLocationDialog);
 }
 
-// Just Eat renders fee RANGES ("£0.99 - £2.99") in the CART panel until an
-// address is resolved, and single values once one is. A fee-labelled row that
-// still shows a range means deliverability is unresolved. Scoped to the cart
-// container (never the whole document) so a menu/marketing price range elsewhere
-// can't trip it; a fee row is a leaf-ish element (label + range in one node).
-const FEE_ROW_RE = /\b(service|small order|delivery)\b.*£\s*\d+(?:\.\d{2})?\s*[-–—]\s*£?\s*\d+/i;
-function jeUnresolvedFees(doc) {
-  const cart = safeQuery(doc, '[data-qa="cart-modal"]');
-  if (!cart) return false;
-  return [...cart.querySelectorAll('div,span,li,p,dd,dt,td')]
-    .some((el) => el.children.length <= 3 && FEE_ROW_RE.test(norm(el.textContent)));
-}
+// (A second signal — a fee RANGE in the cart panel — was considered and dropped
+// after the #128 live audit: adding any item requires a fully-resolved address,
+// so the cart never coexists with unresolved (range) fees, and the location panel
+// above fires first on the very first add attempt. It was an unverified heuristic
+// with no reproducible state to pin, so it isn't shipped.)
 
 const JE_ADDRESS_GATE = {
   reason: 'je-address',
@@ -916,11 +909,13 @@ const JE_ADDRESS_GATE = {
 
 // Returns a gate descriptor { reason, action } when the page is in a blocking
 // state that would fail every line identically, or null when the page is usable.
-// Platform-scoped: only Just Eat has a known gate today (cookie-banner detectors
-// are added in Task 6 for any platform whose banner actually gates).
+// Platform-scoped: only Just Eat has a known gate. The #127 live audit confirmed
+// Uber's cookie banner is a non-modal dialog that does NOT gate item-adding
+// (synthetic el.click() opens the customise dialog through it), so no cookie
+// detector is warranted; Deliveroo shows no consent banner.
 function detectPageGate(doc, platform) {
   if (!doc) return null;
-  if (platform === 'just-eat' && (jeLocationPanel(doc) || jeUnresolvedFees(doc))) {
+  if (platform === 'just-eat' && jeLocationPanel(doc)) {
     return { ...JE_ADDRESS_GATE };
   }
   return null;
@@ -1282,7 +1277,7 @@ function createOverlay(doc, total) {
   };
 }
 
-module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket, jeLocationPanel, jeUnresolvedFees, findOpenDialog, detectPageGate, pageSettled };
+module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket, jeLocationPanel, findOpenDialog, detectPageGate, pageSettled };
 
 // Bootstrap when injected into a real page (guarded so require() in tests is inert).
 if (typeof window !== 'undefined' && window.__feedmeBuild) {

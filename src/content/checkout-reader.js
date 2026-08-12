@@ -433,6 +433,14 @@ async function extractUberEats(doc) {
   };
 }
 
+// STUB — NOT IMPLEMENTED. Deliveroo as an order SOURCE is out of v1 scope (v1
+// captures only from Uber Eats; tracked by #23). The selectors below are
+// fabricated scaffold, NEVER verified against live Deliveroo DOM — real Deliveroo
+// uses hashed CSS classes, not `.basket-item`/`.item-name`, so this returns
+// `items: []` and the browser entry point (which only fires ORDER_DETECTED when
+// items.length > 0) silently does nothing. Do not treat as working: rebuild with
+// live-pinned selectors, verifying against a real checkout first (AGENTS.md,
+// "Probe live before you design a scrape"), when #23 is picked up.
 function extractDeliveroo(doc) {
   const items = [...doc.querySelectorAll('.basket-item')].map((el) => ({
     name: el.querySelector('.item-name')?.textContent?.trim() ?? '',
@@ -450,6 +458,14 @@ function extractDeliveroo(doc) {
   };
 }
 
+// STUB — NOT IMPLEMENTED. Just Eat as an order SOURCE is out of v1 scope (v1
+// captures only from Uber Eats; tracked by #22). The selectors below are
+// fabricated scaffold, NEVER verified against live Just Eat DOM — real Just Eat is
+// `data-qa`-based, not `.order-item`/`.name`, so this returns `items: []` and the
+// browser entry point (which only fires ORDER_DETECTED when items.length > 0)
+// silently does nothing. Do not treat as working: rebuild with live-pinned
+// `data-qa` selectors, verifying against a real checkout first (AGENTS.md,
+// "Probe live before you design a scrape"), when #22 is picked up.
 function extractJustEat(doc) {
   const items = [...doc.querySelectorAll('.order-item')].map((el) => ({
     name: el.querySelector('.name')?.textContent?.trim() ?? '',
@@ -468,6 +484,9 @@ function extractJustEat(doc) {
 }
 
 async function extractOrder(platform, doc) {
+  // v1 supports only Uber Eats as an order source. The Deliveroo (#23) and Just
+  // Eat (#22) branches are unimplemented stubs that return no items (see above);
+  // they are wired here only so the flow is ready when those issues are built.
   if (platform === PLATFORM.UBER_EATS) return extractUberEats(doc);
   if (platform === PLATFORM.DELIVEROO) return extractDeliveroo(doc);
   if (platform === PLATFORM.JUST_EAT) return extractJustEat(doc);

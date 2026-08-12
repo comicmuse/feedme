@@ -1,23 +1,7 @@
 const { selectNearestBranches } = require('../shared/branches');
-const { MSG, PLATFORM } = require('../shared/constants');
+const { MSG, PLATFORM, browser } = require('../shared/constants');
 const { parseMenuResponse, parseDeliverooSearch } = require('../shared/parsers');
 const { enumLog } = require('../shared/enum-log');
-
-const DELIVEROO_SEARCH_ENDPOINT = 'https://api.uk.deliveroo.com/consumer/graphql/';
-
-// Minimal getTextSearchResults selection — only the fields parseDeliverooSearch
-// reads, aliased to the same names Deliveroo's own query emits so one parser (and
-// one fixture) covers both. ~577 bytes vs Deliveroo's ~10 KB verbatim query. If
-// the server ever rejects the trimmed query, swap in the verbatim query string —
-// the parser and fixture stay unchanged.
-const DELIVEROO_SEARCH_QUERY = `query getTextSearchResults($location: LocationInput!, $options: SearchOptionsInput, $uuid: String!) {
-  results: text_search(location: $location, options: $options, uuid: $uuid) {
-    layoutGroups: ui_layout_groups { data: ui_layouts { ... on UILayoutList { blocks: ui_blocks { ... on UICard {
-      target { typeName: __typename ... on UITargetRestaurant { restaurant { id name links { self { href } } } } }
-      uiContent: properties { default { uiLines: ui_lines { ... on UITextLine { spans: ui_spans { ... on UISpanText { text } } } } } }
-    } } } } }
-  }
-}`;
 
 // Location comes from the listing URL phase 1 navigated to
 // (/restaurants/{city}/{neighborhood}?...&geohash=...).
@@ -32,38 +16,16 @@ function deliverooSearchLocation() {
   };
 }
 
-// Replay Deliveroo's search from the content script. The API host is a separate,
-// PerimeterX-guarded origin; a content-script fetch to a host in host_permissions
-// gets a CORS bypass and runs in the ISOLATED world (not the page's PX-patched
-// fetch), carrying the api.uk.deliveroo.com cookies via credentials:'include'.
+// The API host is cross-origin and PerimeterX-guarded, so the actual fetch runs
+// in the service worker (host_permissions exempts it from CORS; a content-script
+// POST does not get that bypass in Firefox MV3). We hand it the brand + location
+// and get back { json } or { error }.
 async function deliverooSearch(brand) {
   const location = deliverooSearchLocation();
   if (!location.geohash) return { json: null, error: 'no geohash on listing URL' };
-  const variables = {
-    location,
-    options: { query: brand, recent_searches: [], web_column_count: 1 },
-    uuid: crypto.randomUUID(),
-  };
-  try {
-    const res = await fetch(DELIVEROO_SEARCH_ENDPOINT, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json',
-        'x-roo-country': 'uk',
-        'x-roo-platform': 'web',
-        'x-roo-client': 'consumer-web-app',
-        'x-roo-guid': crypto.randomUUID(),
-        'x-roo-session-guid': crypto.randomUUID(),
-      },
-      body: JSON.stringify({ query: DELIVEROO_SEARCH_QUERY, variables }),
-    });
-    if (!res.ok) return { json: null, error: `search HTTP ${res.status}` };
-    return { json: await res.json(), error: null };
-  } catch (err) {
-    return { json: null, error: String((err && err.message) || err) };
-  }
+  const reply = await browser.runtime.sendMessage({ type: MSG.DELIVEROO_SEARCH, brand, location })
+    .catch((err) => ({ error: String((err && err.message) || err) }));
+  return { json: reply?.json ?? null, error: reply?.error ?? null };
 }
 
 // Deliveroo can't be reached with a single URL: there is no menu page derivable

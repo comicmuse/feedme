@@ -411,6 +411,58 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   return { ok: true };
 });
 
+// ── Deliveroo search replay (cross-origin, from the SW) ──────────────────────
+// The Deliveroo enumeration scraper can't fetch api.uk.deliveroo.com itself: a
+// content-script POST to that cross-origin, PerimeterX-guarded host needs a CORS
+// preflight, which Firefox MV3 content scripts don't get a bypass for (unlike a
+// simple GET, as Just Eat uses). The service worker is the MV3-sanctioned place
+// for cross-origin calls — host_permissions exempts it from CORS — so the scraper
+// hands us the brand + location and we replay the search here (#131).
+const DELIVEROO_SEARCH_ENDPOINT = 'https://api.uk.deliveroo.com/consumer/graphql/';
+
+// Minimal getTextSearchResults selection — only the fields parseDeliverooSearch
+// reads, aliased to the names Deliveroo's own query emits. ~577 bytes vs the
+// ~10 KB verbatim query; swap in the verbatim string if the server rejects this.
+const DELIVEROO_SEARCH_QUERY = `query getTextSearchResults($location: LocationInput!, $options: SearchOptionsInput, $uuid: String!) {
+  results: text_search(location: $location, options: $options, uuid: $uuid) {
+    layoutGroups: ui_layout_groups { data: ui_layouts { ... on UILayoutList { blocks: ui_blocks { ... on UICard {
+      target { typeName: __typename ... on UITargetRestaurant { restaurant { id name links { self { href } } } } }
+      uiContent: properties { default { uiLines: ui_lines { ... on UITextLine { spans: ui_spans { ... on UISpanText { text } } } } } }
+    } } } } }
+  }
+}`;
+
+// async so the returned reply is a Promise the polyfill sends over the channel
+// (see RETRY_BRANCH above). Replies { json } or { error } — never throws.
+browser.runtime.onMessage.addListener(async (msg) => {
+  if (msg.type !== MSG.DELIVEROO_SEARCH) return;
+  const variables = {
+    location: msg.location,
+    options: { query: msg.brand, recent_searches: [], web_column_count: 1 },
+    uuid: crypto.randomUUID(),
+  };
+  try {
+    const res = await fetch(DELIVEROO_SEARCH_ENDPOINT, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+        'x-roo-country': 'uk',
+        'x-roo-platform': 'web',
+        'x-roo-client': 'consumer-web-app',
+        'x-roo-guid': crypto.randomUUID(),
+        'x-roo-session-guid': crypto.randomUUID(),
+      },
+      body: JSON.stringify({ query: DELIVEROO_SEARCH_QUERY, variables }),
+    });
+    if (!res.ok) return { error: `search HTTP ${res.status}` };
+    return { json: await res.json() };
+  } catch (err) {
+    return { error: String((err && err.message) || err) };
+  }
+});
+
 // ── Seed + snapshot helpers ──────────────────────────────────────────────────
 
 // Build the "YOUR CART" branch from the live checkout order.

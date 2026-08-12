@@ -47,7 +47,7 @@ one message:
 |---|---|---|
 | Not on a supported platform, or URL unknown/undefined | `elsewhere` | **Full instructions:** "How to compare prices — 1. Open your basket on Uber Eats. 2. Go to the Uber Eats checkout. 3. Click FeedMe here." plus "Deliveroo & Just Eat are compared automatically — you don't start there." |
 | Uber Eats, but not the checkout URL | `uber-other` | "You're on Uber Eats. Open your basket and go to the checkout, then click FeedMe here." |
-| Uber Eats checkout URL (no order read yet) | `uber-checkout` | "Reading your basket… If nothing appears, make sure your basket has items, then reopen FeedMe." |
+| Uber Eats checkout URL (no order read yet) | `uber-checkout` | "You're on the Uber Eats checkout — if nothing shows here, add items to your basket, then reopen FeedMe." |
 | Deliveroo or Just Eat (any page) | `destination` | "You're on {Deliveroo / Just Eat}. FeedMe compares these for you automatically — but you start from an Uber Eats basket." |
 
 The `destination` case is where the "you don't start here" point matters most: it
@@ -55,9 +55,11 @@ is exactly where a user on Deliveroo/Just Eat would otherwise expect to start an
 be confused. The platform label ("Deliveroo" / "Just Eat") is filled from the
 detected platform.
 
-The `uber-checkout` case covers the small window where the popup is opened on the
-checkout before `checkout-reader.js` has reported an order, or when the basket is
-empty. Once an order is captured, `#state-ready` takes over as today.
+The `uber-checkout` copy is deliberately plain and static — it makes no claim of
+live activity, since the popup does not re-read the basket. It covers the small
+window where the popup is opened on the checkout before `checkout-reader.js` has
+reported an order, or when the basket is empty. Once an order is captured,
+`#state-ready` takes over as today.
 
 ## Architecture
 
@@ -90,8 +92,10 @@ sets the platform label via `textContent`.
 
 The four messages are static hidden `<div>`s in `popup/popup.html`, following the
 existing `#state-idle / #state-ready / #state-blocked` toggle-by-`hidden`-class
-pattern. `#state-idle` is replaced by these four (or a single container holding
-four toggleable children — implementer's choice, whichever keeps the CSS simple).
+pattern; `init()` unhides exactly one. The memory difference between four static
+divs and one text-swapped container is negligible (a few hundred bytes of markup
+that lives in the tiny popup document, torn down when the popup closes), so this
+follows the existing static-div pattern for consistency rather than to save bytes.
 
 ### Data flow
 

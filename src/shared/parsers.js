@@ -611,4 +611,61 @@ function justEatItemDeal(offer, minSpend, itemNameById) {
   };
 }
 
-module.exports = { classifyResponse, parseMenuResponse, parseUberStore, justEatItemModifiers };
+// A Deliveroo text_search GraphQL response (`{ data: { results: { … } } }`) is a
+// nested UI-block layout. Each result card carries a UITargetRestaurant
+// (restaurant id/name and the menu href) and a distance text span ("1.2 mi"); the
+// default+expanded card variants duplicate a restaurant, so de-dupe by id. The
+// block list uses the response's aliased path (results/layoutGroups/data/blocks —
+// emitted by both Deliveroo's verbatim query and our minimal one); restaurant +
+// distance are found generically within a block, so minor structural drift
+// degrades to fewer candidates, never a throw.
+function deliverooSearchBlocks(json) {
+  const blocks = [];
+  for (const g of (json?.data?.results?.layoutGroups ?? [])) {
+    for (const layout of (g?.data ?? [])) {
+      for (const b of (layout?.blocks ?? [])) blocks.push(b);
+    }
+  }
+  return blocks;
+}
+
+function deliverooRestaurantTarget(node) {
+  if (!node || typeof node !== 'object') return null;
+  if (node.typeName === 'UITargetRestaurant' && node.restaurant) {
+    const r = node.restaurant;
+    const href = r.links?.self?.href;
+    if (r.name && href) return { id: String(r.id ?? href), name: r.name, href };
+  }
+  for (const v of Object.values(node)) {
+    const found = deliverooRestaurantTarget(v);
+    if (found) return found;
+  }
+  return null;
+}
+
+function deliverooFirstMiles(node) {
+  let miles = null;
+  (function walk(o) {
+    if (miles !== null || !o || typeof o !== 'object') return;
+    if (typeof o.text === 'string') {
+      const m = o.text.match(/([\d.]+)\s*mi\b/i);
+      if (m) { miles = parseFloat(m[1]); return; }
+    }
+    for (const v of Object.values(o)) walk(v);
+  })(node);
+  return miles;
+}
+
+function parseDeliverooSearch(json) {
+  const out = [];
+  const seen = new Set();
+  for (const block of deliverooSearchBlocks(json)) {
+    const r = deliverooRestaurantTarget(block);
+    if (!r || seen.has(r.id)) continue;
+    seen.add(r.id);
+    out.push({ id: r.id, name: r.name, distance: deliverooFirstMiles(block), menuUrl: r.href });
+  }
+  return out;
+}
+
+module.exports = { classifyResponse, parseMenuResponse, parseUberStore, justEatItemModifiers, parseDeliverooSearch };

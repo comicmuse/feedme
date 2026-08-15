@@ -1,5 +1,12 @@
 # Handoff — Deliveroo search-replay fix (#131)
 
+> **RESOLVED 2026-08-15.** Live-verified end-to-end in Firefox (Tayyabs + Popeyes).
+> The re-verification surfaced two further live-only requirements beyond this note —
+> the `x-roo-sticky-guid` header and a `query=<brand>` param in the request `url`
+> variable — both now fixed and covered by `tests/deliveroo-search-request.test.js`.
+> See the "Final request shape" section of the design spec. This doc is kept as a
+> record of the parked state; the notes below predate those two fixes.
+
 **Branch:** `feat/deliveroo-search-replay` (off `main`)
 **Date parked:** 2026-08-12, end of day
 **Spec:** `docs/superpowers/specs/2026-08-12-deliveroo-search-replay-design.md`

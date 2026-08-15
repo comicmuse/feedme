@@ -77,6 +77,27 @@ application/json`, `x-roo-country: uk`, `x-roo-platform: web`, `x-roo-client:
 consumer-web-app`, and `x-roo-guid` / `x-roo-session-guid` (freshly generated
 UUIDs). `credentials: 'include'`.
 
+### Final request shape — corrections proven live (2026-08-15)
+
+The bring-up above was under-specified in two ways that each independently make
+`text_search` return `layoutGroups: 1` with **zero restaurant cards** (a generic
+locationless layout). Both are required for cards to come back:
+
+1. **`x-roo-sticky-guid` header.** Without it, the resolver soft-blocks the request
+   — HTTP 200 with a single GraphQL error `"Try again in a moment"`, `data.results:
+   null`. The value need not match any cookie; the web app sends it equal to
+   `x-roo-guid`, so we do the same. (An **empty** `options.query` returns a cached
+   empty-state layout without this header, which masked the requirement.)
+2. **`query=<brand>` in the `url` variable.** `text_search` reads the search term
+   from the request `url`'s `query` param, not only from `options.query`. The bare
+   listing href (`?fulfillment_method=DELIVERY&geohash=…`, no `query=`) yields 0
+   restaurant cards; adding `?query=<brand>` yields 22–25. The SW sets this param on
+   the url the scraper passes.
+
+Verified with a controlled single-variable live matrix (Tayyab, Popeyes) and
+end-to-end in Firefox. See memory `deliveroo-search-sticky-guid` and
+`tests/deliveroo-search-request.test.js`.
+
 ### Response shape (from the captured fixture)
 
 `results.text_search.ui_layout_groups[].ui_layouts[]` are `UILayoutList`s whose

@@ -427,13 +427,31 @@ const DELIVEROO_SEARCH_ENDPOINT = 'https://api.uk.deliveroo.com/consumer/graphql
 // slow reply (the search awaits a network fetch, so it always loses that race).
 // A dedicated DELIVEROO_SEARCH_RESULT message to the specific tab sidesteps it.
 async function fetchDeliverooSearch(brand, location, url) {
+  // text_search derives the search term from the request url's `query` param, not
+  // only from options.query: the bare listing url (fulfillment_method + geohash,
+  // no query=) returns a generic, restaurant-less layout — layoutGroups:1 but zero
+  // UITargetRestaurant cards. The real web app's search url carries ?query=<brand>,
+  // so mirror that here (verified live: bare url → 0 cards, ?query=<brand> → 22). #131.
+  let searchUrl = url || 'https://deliveroo.co.uk/';
+  try {
+    const u = new URL(searchUrl);
+    u.searchParams.set('query', brand);
+    searchUrl = u.toString();
+  } catch { /* leave searchUrl as-is if url is unparseable */ }
   const variables = {
     ...DELIVEROO_SEARCH_VARS,
     location,
     options: { query: brand, recent_searches: [], web_column_count: 1 },
-    url: url || '',
+    url: searchUrl,
     uuid: crypto.randomUUID(),
   };
+  // Deliveroo's text_search resolver soft-blocks any request missing the
+  // `x-roo-sticky-guid` header — it replies HTTP 200 with a lone GraphQL error
+  // "Try again in a moment" and no cards (the empty-query empty-state path skips
+  // the check, which is why an empty search looked like it worked). The real web
+  // app sends x-roo-sticky-guid equal to x-roo-guid; the value need not match any
+  // cookie, only be present, so a fresh guid is fine (verified live, #131).
+  const guid = crypto.randomUUID();
   try {
     const res = await fetch(DELIVEROO_SEARCH_ENDPOINT, {
       method: 'POST',
@@ -444,7 +462,8 @@ async function fetchDeliverooSearch(brand, location, url) {
         'x-roo-country': 'uk',
         'x-roo-platform': 'web',
         'x-roo-client': 'consumer-web-app',
-        'x-roo-guid': crypto.randomUUID(),
+        'x-roo-guid': guid,
+        'x-roo-sticky-guid': guid,
         'x-roo-session-guid': crypto.randomUUID(),
       },
       body: JSON.stringify({ query: DELIVEROO_SEARCH_QUERY, variables }),
@@ -454,7 +473,9 @@ async function fetchDeliverooSearch(brand, location, url) {
     // Diagnostic (kept during bring-up, #131): distinguishes "server returned no
     // cards" from a parse/plumbing miss when the sidebar shows no Deliveroo branch.
     const groups = json?.data?.results?.layoutGroups?.length ?? 0;
-    console.info('[FeedMe deliveroo-search] HTTP', res.status, '— layoutGroups:', groups, 'gqlErrors:', json?.errors?.length ?? 0);
+    const errs = json?.errors ?? [];
+    console.info('[FeedMe deliveroo-search] HTTP', res.status, '— layoutGroups:', groups, 'gqlErrors:', errs.length,
+      errs.length ? '— ' + JSON.stringify(errs.map((e) => ({ message: e.message, path: e.path, code: e?.extensions?.code }))) : '');
     return { json };
   } catch (err) {
     return { error: String((err && err.message) || err) };

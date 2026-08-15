@@ -51,28 +51,31 @@ describe('Just Eat gate predicates (#110)', () => {
     expect(jeLocationPanel(document)).toBe(false);
   });
 
-  // Live 2026-08-11 finding: the shipped text regex was modelled on older wording
-  // and MISSES the live "Enter your location" dialog — the deterministic
-  // [data-qa="location-panel"] marker is the primary signal now. Proven here with
-  // body text carrying NO location words at all, so only the marker can pass it.
+  // The [data-qa="location-panel"] marker is the ONLY signal (the older text-regex
+  // fallback was dropped after the live 2026-08-15 audit: the modal copy drifted
+  // from "Enter your location" to "Help us find you" within days, so matching on
+  // copy was stale on arrival while the marker held across both variants). Proven
+  // here with body text carrying no location words at all — only the marker passes.
   test('jeLocationPanel: true via the [data-qa="location-panel"] marker alone, text notwithstanding', () => {
     document.body.innerHTML = `
       <div role="dialog" aria-modal="true" data-qa="location-panel">
-        <h2>Almost there</h2>
-        <p>Current location</p>
+        <h2>Help us find you</h2>
+        <p>Enter building number or name</p>
       </div>`;
     expect(jeLocationPanel(document)).toBe(true);
     expect(detectPageGate(document, 'just-eat')).toMatchObject({ reason: 'je-address' });
   });
 
-  // The text regex remains a fallback for wording the marker misses (or pages
-  // where the marker itself drifts) — proven independent of the marker.
-  test('jeLocationPanel: true via the text regex alone, even without the marker', () => {
+  // Location-ish copy WITHOUT the marker is no longer a gate — the dropped regex
+  // used to catch this, and it is exactly the false-skip surface we shed: a real
+  // customise dialog whose body mentions delivery must never be mistaken for the
+  // location panel on the add path.
+  test('jeLocationPanel: false on a marker-less dialog, whatever its copy says', () => {
     document.body.innerHTML = `
       <div role="dialog" aria-modal="true">
         <p>Please enter your street and house number</p>
       </div>`;
-    expect(jeLocationPanel(document)).toBe(true);
+    expect(jeLocationPanel(document)).toBe(false);
   });
 
   test('findOpenDialog: skips the location panel even if it names the item', () => {
@@ -85,11 +88,12 @@ describe('Just Eat gate predicates (#110)', () => {
     expect(findOpenDialog(document, { name: 'Chicken Sandwich Box Meal' })).toBeNull();
   });
 
-  test('findOpenDialog: KEEPS a customise dialog headed by the item, delivery-ish body notwithstanding', () => {
-    // The guard on the core add path: a real dialog whose heading is the item must
-    // never be dropped just because its body matches the location regex (#110).
+  test('findOpenDialog: KEEPS a location-panel-marked dialog HEADED by the item name', () => {
+    // The guard on the core add path: a dialog carrying the location-panel marker
+    // is normally skipped, but never when its HEADING is the item name — that is
+    // the real customise dialog, so the add path is never starved (#110).
     document.body.innerHTML = `
-      <div role="dialog">
+      <div role="dialog" data-qa="location-panel">
         <h2>Chicken Sandwich Box Meal</h2>
         <p>Where should we deliver this order?</p>
         <button class="add">Add to basket</button>

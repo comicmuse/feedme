@@ -876,21 +876,24 @@ async function surfaceItem(doc, line, wait, platform) {
 // A "gate" is a blocking page state that stops EVERY line from being added, as
 // opposed to a single item being absent. Just Eat will not open a customise
 // dialog until it can resolve deliverability, so an unresolved address gates the
-// whole run (#110). These signals are deterministic — pinned to live-verified
-// text and the same [data-qa="cart-modal"] container clearBasket already targets.
+// whole run (#110). These signals are deterministic — pinned to the live-verified
+// [data-qa="location-panel"] marker and the same [data-qa="cart-modal"] container
+// clearBasket already targets.
 
 // The Just Eat address/location dialog, shown when no delivery address is set.
 // Element-level so findOpenDialog can share it (never mistake this for the
 // customise dialog). Excludes the cart modal, which is a different JE dialog.
-const JE_LOCATION_RE = /finding your location|enter your (street|address|postcode|location)|street and house number|where should we deliver/i;
 function isJeLocationDialog(el) {
   if (!el || (el.matches && el.matches('[data-qa="cart-modal"]'))) return false;
-  // Deterministic marker: JE's location/address dialog (confirmed live 2026-08-11 —
-  // div[role=dialog][aria-modal][data-qa="location-panel"], heading "Enter your
-  // location"). The marker is the primary signal; the text regex is a fallback for
-  // wording the marker misses.
-  if (el.matches && el.matches('[data-qa="location-panel"]')) return true;
-  return JE_LOCATION_RE.test(norm(el.textContent));
+  // Deterministic marker: JE's location/address dialog is div[role=dialog]
+  // [aria-modal][data-qa="location-panel"]. Verified live 2026-08-15 across BOTH
+  // dialog variants — the no-address "Enter your location" panel and the
+  // address-refinement "Help us find you" panel — so the marker alone suffices.
+  // An earlier text-regex fallback was dropped: the modal copy drifted ("Enter
+  // your location" → "Help us find you") within days, making a copy match stale
+  // on arrival AND a false-skip risk on the findOpenDialog add path, while the
+  // marker held across every variant seen live (dealer's-choice call, #110).
+  return !!(el.matches && el.matches('[data-qa="location-panel"]'));
 }
 function jeLocationPanel(doc) {
   return [...doc.querySelectorAll(DIALOG_SELECTOR)].some(isJeLocationDialog);

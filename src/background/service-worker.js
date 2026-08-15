@@ -4,6 +4,7 @@ const { buildSnapshot } = require('../shared/snapshot');
 const { missingOrigins } = require('../shared/permissions');
 const { createScheduler } = require('../shared/pool');
 const { THEME } = require('../shared/theme');
+const { DELIVEROO_SEARCH_QUERY, DELIVEROO_SEARCH_VARS } = require('./deliveroo-search-query');
 const { switchTableKey, buildSwitchTable, switchEntry } = require('../shared/switch-table');
 
 // Keyed by source tabId.
@@ -409,6 +410,86 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   pushUpdate(comparison);
   pump(comparison);
   return { ok: true };
+});
+
+// ── Deliveroo search replay (cross-origin, from the SW) ──────────────────────
+// The Deliveroo enumeration scraper can't fetch api.uk.deliveroo.com itself: a
+// content-script POST to that cross-origin, PerimeterX-guarded host needs a CORS
+// preflight, which Firefox MV3 content scripts don't get a bypass for (unlike a
+// simple GET, as Just Eat uses). The service worker is the MV3-sanctioned place
+// for cross-origin calls — host_permissions exempts it from CORS — so the scraper
+// hands us the brand + location and we replay the search here (#131).
+const DELIVEROO_SEARCH_ENDPOINT = 'https://api.uk.deliveroo.com/consumer/graphql/';
+
+// The result is PUSHED back to the enum tab via tabs.sendMessage rather than
+// returned as the onMessage reply: the SW has several async onMessage listeners,
+// and the polyfill lets an earlier one resolve `undefined` first, clobbering a
+// slow reply (the search awaits a network fetch, so it always loses that race).
+// A dedicated DELIVEROO_SEARCH_RESULT message to the specific tab sidesteps it.
+async function fetchDeliverooSearch(brand, location, url) {
+  // text_search derives the search term from the request url's `query` param, not
+  // only from options.query: the bare listing url (fulfillment_method + geohash,
+  // no query=) returns a generic, restaurant-less layout — layoutGroups:1 but zero
+  // UITargetRestaurant cards. The real web app's search url carries ?query=<brand>,
+  // so mirror that here (verified live: bare url → 0 cards, ?query=<brand> → 22). #131.
+  let searchUrl = url || 'https://deliveroo.co.uk/';
+  try {
+    const u = new URL(searchUrl);
+    u.searchParams.set('query', brand);
+    searchUrl = u.toString();
+  } catch { /* leave searchUrl as-is if url is unparseable */ }
+  const variables = {
+    ...DELIVEROO_SEARCH_VARS,
+    location,
+    options: { query: brand, recent_searches: [], web_column_count: 1 },
+    url: searchUrl,
+    uuid: crypto.randomUUID(),
+  };
+  // Deliveroo's text_search resolver soft-blocks any request missing the
+  // `x-roo-sticky-guid` header — it replies HTTP 200 with a lone GraphQL error
+  // "Try again in a moment" and no cards (the empty-query empty-state path skips
+  // the check, which is why an empty search looked like it worked). The real web
+  // app sends x-roo-sticky-guid equal to x-roo-guid; the value need not match any
+  // cookie, only be present, so a fresh guid is fine (verified live, #131).
+  const guid = crypto.randomUUID();
+  try {
+    const res = await fetch(DELIVEROO_SEARCH_ENDPOINT, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+        'x-roo-country': 'uk',
+        'x-roo-platform': 'web',
+        'x-roo-client': 'consumer-web-app',
+        'x-roo-guid': guid,
+        'x-roo-sticky-guid': guid,
+        'x-roo-session-guid': crypto.randomUUID(),
+      },
+      body: JSON.stringify({ query: DELIVEROO_SEARCH_QUERY, variables }),
+    });
+    if (!res.ok) return { error: `search HTTP ${res.status}` };
+    const json = await res.json();
+    // Diagnostic (kept during bring-up, #131): distinguishes "server returned no
+    // cards" from a parse/plumbing miss when the sidebar shows no Deliveroo branch.
+    const groups = json?.data?.results?.layoutGroups?.length ?? 0;
+    const errs = json?.errors ?? [];
+    console.info('[FeedMe deliveroo-search] HTTP', res.status, '— layoutGroups:', groups, 'gqlErrors:', errs.length,
+      errs.length ? '— ' + JSON.stringify(errs.map((e) => ({ message: e.message, path: e.path, code: e?.extensions?.code }))) : '');
+    return { json };
+  } catch (err) {
+    return { error: String((err && err.message) || err) };
+  }
+}
+
+browser.runtime.onMessage.addListener((msg, sender) => {
+  if (msg.type !== MSG.DELIVEROO_SEARCH) return;
+  const tabId = sender.tab?.id;
+  fetchDeliverooSearch(msg.brand, msg.location, msg.url).then((result) => {
+    if (tabId != null) {
+      browser.tabs.sendMessage(tabId, { type: MSG.DELIVEROO_SEARCH_RESULT, ...result }).catch(() => {});
+    }
+  });
 });
 
 // ── Seed + snapshot helpers ──────────────────────────────────────────────────

@@ -18,6 +18,7 @@
     "*://www.ubereats.com/*",
     "*://www.deliveroo.co.uk/*",
     "*://deliveroo.co.uk/*",
+    "*://api.uk.deliveroo.com/*",
     "*://www.just-eat.co.uk/*",
     "*://uk.api.just-eat.io/*",
     "*://menu-globalmenucdn.je-apis.com/*"

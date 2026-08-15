@@ -17,7 +17,14 @@ const { PLATFORM, browser } = require('./constants');
 // manifest cannot quietly go unchecked here.
 const PLATFORM_ORIGINS = {
   [PLATFORM.UBER_EATS]: ['*://www.ubereats.com/*'],
-  [PLATFORM.DELIVEROO]: ['*://www.deliveroo.co.uk/*', '*://deliveroo.co.uk/*'],
+  [PLATFORM.DELIVEROO]: [
+    '*://www.deliveroo.co.uk/*',
+    '*://deliveroo.co.uk/*',
+    // Search enumeration replays Deliveroo's own text_search GraphQL from the
+    // content script; the API host is a separate, separately-revocable origin
+    // (as with Just Eat below).
+    '*://api.uk.deliveroo.com/*',
+  ],
   // The two API hosts are separate origins from the site and are revocable on
   // their own, so Just Eat can be half-granted: the menu page loads and the
   // fee/offer fetches in just-eat-scraper.js fail.

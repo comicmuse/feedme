@@ -1,4 +1,4 @@
-const { classifyResponse, parseMenuResponse, parseUberStore, justEatItemModifiers } = require('../src/shared/parsers');
+const { classifyResponse, parseMenuResponse, parseUberStore, justEatItemModifiers, parseDeliverooSearch } = require('../src/shared/parsers');
 const { matchItems, computeTotal, uberOneWaiverOffer } = require('../src/shared/matcher');
 const { PLATFORM } = require('../src/shared/constants');
 
@@ -7,6 +7,7 @@ const deliveroo = require('./fixtures/deliveroo-menu.json');
 const justeat = require('./fixtures/just-eat-menu.json');
 const uberStoreLd = require('./fixtures/ubereats-store-ld.json');
 const uberStoreCatalog = require('./fixtures/ubereats-store-catalog.json');
+const deliverooSearch = require('./fixtures/deliveroo-search.json');
 
 describe('parseUberStore (Uber store-page JSON-LD)', () => {
   test('flattens JSON-LD menu sections into priced items', () => {
@@ -646,5 +647,31 @@ describe('justEatItemModifiers', () => {
       { name: 'No Thanks', price: 0, id: 'm1', setId: 's1', groupId: 'g1', group: 'Add a Side?' },
       { name: 'Fries', price: 1.5, id: 'm2', setId: 's2', groupId: 'g1', group: 'Add a Side?' },
     ]);
+  });
+});
+
+describe('parseDeliverooSearch', () => {
+  const branches = parseDeliverooSearch(deliverooSearch);
+
+  test('extracts Tayyabs with id, name, menu href and distance', () => {
+    const tayyabs = branches.find((b) => b.name === 'Tayyabs');
+    expect(tayyabs).toBeDefined();
+    expect(tayyabs.id).toBe('28041');
+    expect(tayyabs.menuUrl).toMatch(/^\/menu\/London\/whitechapel\/tayyabs/);
+    expect(tayyabs.distance).toBeCloseTo(1.2, 5);
+  });
+
+  test('de-dupes the default/expanded card duplication by id', () => {
+    const ids = branches.map((b) => b.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  test('returns multiple distinct restaurants', () => {
+    expect(branches.length).toBeGreaterThan(1);
+  });
+
+  test('never throws on an empty / shapeless response', () => {
+    expect(parseDeliverooSearch({})).toEqual([]);
+    expect(parseDeliverooSearch({ data: { results: { layoutGroups: [] } } })).toEqual([]);
   });
 });

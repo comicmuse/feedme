@@ -872,6 +872,71 @@ async function surfaceItem(doc, line, wait, platform) {
   return found;
 }
 
+// ── Page gates ───────────────────────────────────────────────────────────────
+// A "gate" is a blocking page state that stops EVERY line from being added, as
+// opposed to a single item being absent. Just Eat will not open a customise
+// dialog until it can resolve deliverability, so an unresolved address gates the
+// whole run (#110). These signals are deterministic — pinned to the live-verified
+// [data-qa="location-panel"] marker and the same [data-qa="cart-modal"] container
+// clearBasket already targets.
+
+// The Just Eat address/location dialog, shown when no delivery address is set.
+// Element-level so findOpenDialog can share it (never mistake this for the
+// customise dialog). Excludes the cart modal, which is a different JE dialog.
+function isJeLocationDialog(el) {
+  if (!el || (el.matches && el.matches('[data-qa="cart-modal"]'))) return false;
+  // Deterministic marker: JE's location/address dialog is div[role=dialog]
+  // [aria-modal][data-qa="location-panel"]. Verified live 2026-08-15 across BOTH
+  // dialog variants — the no-address "Enter your location" panel and the
+  // address-refinement "Help us find you" panel — so the marker alone suffices.
+  // An earlier text-regex fallback was dropped: the modal copy drifted ("Enter
+  // your location" → "Help us find you") within days, making a copy match stale
+  // on arrival AND a false-skip risk on the findOpenDialog add path, while the
+  // marker held across every variant seen live (dealer's-choice call, #110).
+  return !!(el.matches && el.matches('[data-qa="location-panel"]'));
+}
+function jeLocationPanel(doc) {
+  return [...doc.querySelectorAll(DIALOG_SELECTOR)].some(isJeLocationDialog);
+}
+
+// (A second signal — a fee RANGE in the cart panel — was considered and dropped
+// after the #128 live audit: adding any item requires a fully-resolved address,
+// so the cart never coexists with unresolved (range) fees, and the location panel
+// above fires first on the very first add attempt. It was an unverified heuristic
+// with no reproducible state to pin, so it isn't shipped.)
+
+const JE_ADDRESS_GATE = {
+  reason: 'je-address',
+  action: 'Just Eat needs a delivery address before items can be added — set it, then switch again.',
+};
+
+// Returns a gate descriptor { reason, action } when the page is in a blocking
+// state that would fail every line identically, or null when the page is usable.
+// Platform-scoped: only Just Eat has a known gate. The #127 live audit confirmed
+// Uber's cookie banner is a non-modal dialog that does NOT gate item-adding
+// (synthetic el.click() opens the customise dialog through it), so no cookie
+// detector is warranted; Deliveroo shows no consent banner.
+function detectPageGate(doc, platform) {
+  if (!doc) return null;
+  if (platform === 'just-eat' && jeLocationPanel(doc)) {
+    return { ...JE_ADDRESS_GATE };
+  }
+  return null;
+}
+
+// True once the JE MENU is interactable — the point by which the address gate,
+// if any, has rendered. Deliberately independent of basket contents: Just Eat
+// renders NO cart container when the basket is empty (see clearBasket, ~:674),
+// and the primary #110 case (switching an empty basket to JE) is exactly that —
+// so a cart marker would never fire and every good run would burn the full
+// timeout. The menu search box is live-verified (menuSearchBox, KFC 2026-07-14);
+// item cards are the fallback. Non-JE platforms have no gate, so settle at once.
+function pageSettled(doc, platform) {
+  if (platform !== 'just-eat') return true;
+  return !!menuSearchBox(doc, platform)
+    || !!safeQuery(doc, '[data-qa="item"], button.item, [data-item-id]');
+}
+
 // Click the item's card and wait for its customise dialog to open. The Just Eat
 // search results are a transient list that re-renders (the matched element can be
 // swapped out from under a single click), so re-find the card and retry a few
@@ -883,7 +948,15 @@ async function surfaceItem(doc, line, wait, platform) {
 // so it is excluded explicitly.
 function findOpenDialog(doc, line) {
   const all = [...doc.querySelectorAll(DIALOG_SELECTOR)]
-    .filter((d) => !(d.matches && d.matches('[data-qa="cart-modal"]')));
+    .filter((d) => !(d.matches && d.matches('[data-qa="cart-modal"]')))
+    // Skip the JE location/address panel (its delivery copy can carry the item
+    // name), but NEVER skip a dialog HEADED by the item name — that is the real
+    // customise dialog, so the add path is never starved (#110).
+    .filter((d) => {
+      if (!isJeLocationDialog(d)) return true;
+      const h = d.querySelector && d.querySelector('h1,h2,h3,h4');
+      return h ? norm(h.textContent).includes(norm(line.name)) : false;
+    });
   return all.find((d) => norm(d.textContent).includes(norm(line.name)))
     // An Uber wizard sub-screen (#47) titles itself after the CATEGORY ("Cold
     // Drink"), not the item — recognise it by its Go back control so
@@ -1033,7 +1106,9 @@ async function addLine(line, ctx) {
   return result;
 }
 
-// Drive the whole basket plan. Resolves to a results array (one per plan line).
+// Drive the whole basket plan. Resolves to a results array (one per plan line) —
+// except when the page is gated, in which case it resolves to an EMPTY array
+// carrying a `.gate` property, regardless of plan length.
 async function buildBasket(build, opts = {}) {
   const doc = opts.doc || (typeof document !== 'undefined' ? document : null);
   const wait = opts.wait || defaultWait;
@@ -1042,6 +1117,27 @@ async function buildBasket(build, opts = {}) {
   dlog('starting on', doc && doc.location ? String(doc.location.href) : '(no doc)',
     'platform=', platform, 'readyState=', doc && doc.readyState, 'plan=', JSON.stringify(plan));
   const overlay = opts.headless || !doc ? null : createOverlay(doc, plan.length);
+
+  // A blocking page state (e.g. Just Eat's unresolved-address dialog) fails every
+  // line identically — detect it once, report it, and touch nothing. Acting would
+  // mean clicking into a page that refuses adds; leaving the basket untouched is
+  // correct when we cannot act (spec #24, #110).
+  //
+  // The builder is injected at page-complete, BEFORE the basket UI hydrates — a
+  // single instant sample would race the modal's render and miss the gate,
+  // falling back into the #110 bug. Wait until the page has settled OR a gate is
+  // already visible (bounded), then sample once. A non-gated page settles the
+  // instant its menu renders, so a good run pays no fixed penalty.
+  await wait(() => pageSettled(doc, platform) || detectPageGate(doc, platform),
+    { timeout: 4000 });
+  const gate = detectPageGate(doc, platform);
+  if (gate) {
+    dlog('page is gated:', gate.reason, '—', gate.action);
+    try { if (overlay) overlay.setGate(gate); } catch (_) {}
+    const gated = [];
+    gated.gate = gate;
+    return gated;
+  }
 
   // Pre-existing basket items would sit under the plan and skew the total away
   // from the sidebar's comparison — empty the basket first (issue #24). A failed
@@ -1066,10 +1162,26 @@ async function buildBasket(build, opts = {}) {
       // selection (missedSelection), so no blanket prefillable flag here (#52).
       if (r.ok && (line.uncarried || 0) > 0) r.review = true;
       results.push(r);
+      // The JE address gate can be CLICK-TRIGGERED (confirmed live 2026-08-11):
+      // absent at load, it mounts only once an item is clicked — so the up-front
+      // probe above (which samples before any click) misses it, and it is this
+      // failed line's own click that actually surfaces it. Re-check once a line
+      // comes back empty-handed: a gate blocks every remaining line identically,
+      // so catching it here — rather than letting each subsequent line fail the
+      // same way silently — is what closes #110 for the click-triggered case.
+      if (r.added === 0 && !r.ok && !results.gate) {
+        const lateGate = detectPageGate(doc, platform);
+        if (lateGate) {
+          dlog('page gated after failed add:', lateGate.reason, '—', lateGate.action);
+          results.gate = lateGate;
+          try { if (overlay) overlay.setGate(lateGate); } catch (_) {}
+          break;
+        }
+      }
     }
     if (overlay) overlay.update(results);
   }
-  if (overlay) overlay.finish(results);
+  if (overlay) { if (!results.gate) overlay.finish(results); }
   dlog('finished:', JSON.stringify(results));
   return results;
 }
@@ -1129,6 +1241,16 @@ function createOverlay(doc, total) {
         clearLine.textContent = "Couldn't clear pre-existing items — check your basket.";
       }
     },
+    setGate(gate) {
+      title.textContent = "FeedMe — can't fill yet";
+      status.textContent = '';
+      const notice = doc.createElement('div');
+      notice.style.cssText = 'margin-top:4px;font-size:12px;font-weight:700;color:var(--fm-warn);';
+      notice.textContent = gate.action;
+      box.appendChild(notice);
+      // No auto-dismiss timeout (unlike finish()): the notice names an action the
+      // user must take, so it persists until they set the address and re-switch.
+    },
     update(results) {
       const done = results.filter((r) => r.ok).length;
       status.textContent = `Added ${done} of ${total}`;
@@ -1158,7 +1280,7 @@ function createOverlay(doc, total) {
   };
 }
 
-module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket };
+module.exports = { buildBasket, findItemCard, selectModifier, findAddButton, clearBasket, jeLocationPanel, findOpenDialog, detectPageGate, pageSettled };
 
 // Bootstrap when injected into a real page (guarded so require() in tests is inert).
 if (typeof window !== 'undefined' && window.__feedmeBuild) {

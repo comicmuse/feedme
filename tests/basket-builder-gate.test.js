@@ -1,0 +1,224 @@
+/**
+ * @jest-environment jsdom
+ */
+const {
+  jeLocationPanel, findOpenDialog, detectPageGate, buildBasket,
+} = require('../src/content/basket-builder');
+
+// Just Eat's address dialog when no delivery address is resolved (live
+// 2026-08-11, reproduced end-to-end): a role=dialog[data-qa="location-panel"]
+// headed "Enter your location", body offering "Current location" / a partial
+// address / "There was a problem working out where you are…". A separate
+// [data-qa="cart-modal"] with a decrement control is present too, so Task 3
+// can prove clearBasket is SKIPPED, not merely empty.
+function mountJeLocationGate() {
+  document.body.innerHTML = `
+    <main>
+      <div class="menu"><button class="item" data-item-id="x">Chicken Sandwich Box Meal</button></div>
+      <div data-qa="cart-modal">
+        <div>1x Chicken Sandwich Box Meal</div>
+        <span role="button" data-qa="cart-item-amount-action-decrement"></span>
+      </div>
+      <div role="dialog" aria-modal="true" data-qa="location-panel">
+        <h2>Enter your location</h2>
+        <p>Current location</p>
+        <p>681 Lowell Street</p>
+        <p>There was a problem working out where you are…</p>
+      </div>
+    </main>`;
+}
+
+// A resolved, usable Just Eat menu: no location dialog, an item and a cart panel.
+function mountJeResolved() {
+  document.body.innerHTML = `
+    <main>
+      <div class="menu"><button class="item" data-item-id="x">Chicken Sandwich Box Meal</button></div>
+      <div data-qa="cart-modal">
+        <div class="fee-row"><span>Service</span><span>£1.49</span></div>
+        <div class="fee-row"><span>Delivery</span><span>£2.49</span></div>
+      </div>
+    </main>`;
+}
+
+describe('Just Eat gate predicates (#110)', () => {
+  test('jeLocationPanel: true on the open address dialog', () => {
+    mountJeLocationGate();
+    expect(jeLocationPanel(document)).toBe(true);
+  });
+
+  test('jeLocationPanel: false on a resolved menu (cart present, no address dialog)', () => {
+    mountJeResolved();
+    expect(jeLocationPanel(document)).toBe(false);
+  });
+
+  // The [data-qa="location-panel"] marker is the ONLY signal (the older text-regex
+  // fallback was dropped after the live 2026-08-15 audit: the modal copy drifted
+  // from "Enter your location" to "Help us find you" within days, so matching on
+  // copy was stale on arrival while the marker held across both variants). Proven
+  // here with body text carrying no location words at all — only the marker passes.
+  test('jeLocationPanel: true via the [data-qa="location-panel"] marker alone, text notwithstanding', () => {
+    document.body.innerHTML = `
+      <div role="dialog" aria-modal="true" data-qa="location-panel">
+        <h2>Help us find you</h2>
+        <p>Enter building number or name</p>
+      </div>`;
+    expect(jeLocationPanel(document)).toBe(true);
+    expect(detectPageGate(document, 'just-eat')).toMatchObject({ reason: 'je-address' });
+  });
+
+  // Location-ish copy WITHOUT the marker is no longer a gate — the dropped regex
+  // used to catch this, and it is exactly the false-skip surface we shed: a real
+  // customise dialog whose body mentions delivery must never be mistaken for the
+  // location panel on the add path.
+  test('jeLocationPanel: false on a marker-less dialog, whatever its copy says', () => {
+    document.body.innerHTML = `
+      <div role="dialog" aria-modal="true">
+        <p>Please enter your street and house number</p>
+      </div>`;
+    expect(jeLocationPanel(document)).toBe(false);
+  });
+
+  test('findOpenDialog: skips the location panel even if it names the item', () => {
+    document.body.innerHTML = `
+      <div role="dialog" data-qa="location-panel">
+        <h2>Enter your location</h2>
+        <p>Please enter your street and house number for your Chicken Sandwich Box Meal</p>
+      </div>`;
+    // Without the explicit skip, the name match would wrongly return this panel.
+    expect(findOpenDialog(document, { name: 'Chicken Sandwich Box Meal' })).toBeNull();
+  });
+
+  test('findOpenDialog: KEEPS a location-panel-marked dialog HEADED by the item name', () => {
+    // The guard on the core add path: a dialog carrying the location-panel marker
+    // is normally skipped, but never when its HEADING is the item name — that is
+    // the real customise dialog, so the add path is never starved (#110).
+    document.body.innerHTML = `
+      <div role="dialog" data-qa="location-panel">
+        <h2>Chicken Sandwich Box Meal</h2>
+        <p>Where should we deliver this order?</p>
+        <button class="add">Add to basket</button>
+      </div>`;
+    const dialog = findOpenDialog(document, { name: 'Chicken Sandwich Box Meal' });
+    expect(dialog).not.toBeNull();
+    expect(dialog.querySelector('h2').textContent).toBe('Chicken Sandwich Box Meal');
+  });
+});
+
+describe('detectPageGate (#110)', () => {
+  test('just-eat + location dialog → je-address gate', () => {
+    mountJeLocationGate();
+    expect(detectPageGate(document, 'just-eat')).toEqual({
+      reason: 'je-address',
+      action: 'Just Eat needs a delivery address before items can be added — set it, then switch again.',
+    });
+  });
+
+  test('just-eat + resolved menu → null', () => {
+    mountJeResolved();
+    expect(detectPageGate(document, 'just-eat')).toBeNull();
+  });
+
+  test('the same gated DOM on another platform → null (JE-only for now)', () => {
+    mountJeLocationGate();
+    expect(detectPageGate(document, 'uber-eats')).toBeNull();
+    expect(detectPageGate(document, 'deliveroo')).toBeNull();
+  });
+
+  test('null doc → null', () => {
+    expect(detectPageGate(null, 'just-eat')).toBeNull();
+  });
+});
+
+const fastWait = (fn) => Promise.resolve(fn());
+
+describe('buildBasket gate path (#110)', () => {
+  test('gated Just Eat: empty results + gate, adds nothing, skips the clear', async () => {
+    mountJeLocationGate();
+    let clicked = false;
+    document.querySelector('[data-item-id="x"]').addEventListener('click', () => { clicked = true; });
+    // The gate fixture carries a real decrement control; if clearBasket ran it
+    // would click it. Spying proves the clear was SKIPPED, not merely empty.
+    let decremented = false;
+    document.querySelector('[data-qa="cart-item-amount-action-decrement"]')
+      .addEventListener('click', () => { decremented = true; });
+    const plan = [{ id: 'x', name: 'Chicken Sandwich Box Meal', quantity: 1, modifiers: [] }];
+    const results = await buildBasket(
+      { platform: 'just-eat', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results).toHaveLength(0);
+    expect(results.gate).toMatchObject({ reason: 'je-address' });
+    expect(clicked).toBe(false);     // never attempted an item click
+    expect(decremented).toBe(false); // clearBasket was skipped, not just empty
+  });
+
+  test('usable Just Eat with a genuinely-absent item: still reports it failed, no gate', async () => {
+    mountJeResolved(); // no location dialog, single fee values → not gated
+    const plan = [{ id: 'nope', name: 'Item Not On This Menu', quantity: 1, modifiers: [] }];
+    const results = await buildBasket(
+      { platform: 'just-eat', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results.gate).toBeUndefined();
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ name: 'Item Not On This Menu', added: 0, ok: false });
+  });
+});
+
+describe('overlay reports the gate (#110)', () => {
+  test('setGate renders the action text in the overlay', async () => {
+    mountJeLocationGate();
+    const plan = [{ id: 'x', name: 'Chicken Sandwich Box Meal', quantity: 1, modifiers: [] }];
+    await buildBasket(
+      { platform: 'just-eat', basketPlan: plan }, { wait: fastWait }); // headless:false → overlay renders
+    const host = document.getElementById('feedme-builder');
+    expect(host).not.toBeNull();
+    expect(host.shadowRoot.textContent).toContain('needs a delivery address');
+  });
+});
+
+// Live 2026-08-11 finding: the JE address gate is CLICK-TRIGGERED — absent at
+// load, mounted only once an item is clicked. The up-front probe in buildBasket
+// (pageSettled resolves on the rendered MENU, before any click) samples null on
+// this page, so only a post-failure re-check can catch it.
+function mountJeClickTriggeredGate() {
+  document.body.innerHTML = `
+    <main>
+      <input type="search" data-qa="menu-category-nav-search-element">
+      <div class="menu"><span role="button" data-qa="item" data-item-id="x">Chicken Sandwich Box Meal</span></div>
+      <div id="dialog-root"></div>
+    </main>`;
+  // Clicking the item opens the JE location panel (no address resolved), NOT a
+  // customise dialog — exactly the live 2026-08-11 behaviour.
+  document.querySelector('[data-qa="item"]').addEventListener('click', () => {
+    document.getElementById('dialog-root').innerHTML =
+      '<div role="dialog" aria-modal="true" data-qa="location-panel"><h2>Enter your location</h2><p>There was a problem working out where you are</p></div>';
+  });
+}
+
+describe('buildBasket re-checks the gate after a failed add (#110 click-triggered)', () => {
+  test('click-triggered JE gate: caught by the post-failure re-check', async () => {
+    mountJeClickTriggeredGate();
+    const plan = [{ id: 'x', name: 'Chicken Sandwich Box Meal', quantity: 1, modifiers: [] }];
+    const results = await buildBasket(
+      { platform: 'just-eat', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results.gate).toMatchObject({ reason: 'je-address' });
+  });
+
+  test('usable Just Eat with a genuinely-absent item: line fails, no false-fire gate', async () => {
+    mountJeResolved(); // no location dialog, single fee values → not gated
+    const plan = [{ id: 'nope', name: 'Item Not On This Menu', quantity: 1, modifiers: [] }];
+    const results = await buildBasket(
+      { platform: 'just-eat', basketPlan: plan }, { wait: fastWait, headless: true });
+    expect(results.gate).toBeUndefined();
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ name: 'Item Not On This Menu', added: 0, ok: false });
+  });
+
+  test('overlay end-to-end: click-triggered gate renders the persistent notice', async () => {
+    mountJeClickTriggeredGate();
+    const plan = [{ id: 'x', name: 'Chicken Sandwich Box Meal', quantity: 1, modifiers: [] }];
+    const results = await buildBasket(
+      { platform: 'just-eat', basketPlan: plan }, { wait: fastWait }); // headless:false → overlay renders
+    expect(results.gate).toMatchObject({ reason: 'je-address' });
+    const host = document.getElementById('feedme-builder');
+    expect(host).not.toBeNull();
+    expect(host.shadowRoot.textContent).toContain('needs a delivery address');
+  });
+});

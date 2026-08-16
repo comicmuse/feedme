@@ -25,6 +25,7 @@ let bar = null;
 let bd = null;
 let metaEl = null;
 let mname = null;
+let disc = null;
 
 const expanded = new Set();
 let lastSnapshot = null;
@@ -148,6 +149,10 @@ ${themeCssVars()}
 .ft.sw.clk { cursor:pointer; }
 .ft.sw.clk:hover { background:var(--fm-accent-tint-hover); }
 .ft .arr { margin-left:4px; }
+/* Standing legal footer: FeedMe is unofficial. Muted and small so it reads as a
+   caveat, not a claim, and pinned as the bar's last row beneath any .ft state. */
+.disc { flex-shrink:0; padding:7px 14px; border-top:1px solid var(--fm-border);
+  font-size:9px; line-height:1.4; color:var(--fm-text-faint); }
 `;
 
   bar = document.createElement('div');
@@ -193,8 +198,17 @@ ${themeCssVars()}
   loadingDiv.appendChild(loadingText);
   bd.appendChild(loadingDiv);
 
+  // Standing disclaimer, drawn once and kept as the bar's last row. The dynamic
+  // .ft footer inserts itself before this, so the switch CTA never lands under
+  // the small print.
+  disc = document.createElement('div');
+  disc.className = 'disc';
+  disc.textContent = 'FeedMe is unofficial and not affiliated with Uber Eats, '
+    + 'Deliveroo or Just Eat. Their trademarks and content belong to them.';
+
   bar.appendChild(hd);
   bar.appendChild(bd);
+  bar.appendChild(disc);
   shadow.appendChild(styleEl);
   shadow.appendChild(bar);
 
@@ -231,7 +245,7 @@ function showClickFailure(reason) {
   const ft = document.createElement('div');
   ft.className = 'ft err';
   ft.textContent = `⚠️ ${clickFailureText(reason)}`;
-  bar.appendChild(ft);
+  bar.insertBefore(ft, disc);
 }
 
 // A cold retry rebuilt the comparison (#122): acknowledge it with a plain (not
@@ -243,7 +257,7 @@ function showResumeNotice() {
   const ft = document.createElement('div');
   ft.className = 'ft';
   ft.textContent = `↻ ${resumeNoticeText()}`;
-  bar.appendChild(ft);
+  bar.insertBefore(ft, disc);
 }
 
 // Ask the worker to retry a click, surfacing the same expired-message the switch
@@ -606,7 +620,7 @@ function renderFooter(snapshot) {
     note.textContent = view.undercut;
     ft.appendChild(note);
   }
-  bar.appendChild(ft);
+  bar.insertBefore(ft, disc);
 }
 
 // Bootstrap when injected into a real page. Guarded so require() in tests is

@@ -116,3 +116,25 @@ describe('expired click-failure footer (#103/#104)', () => {
     expect(err.textContent).toContain('This comparison has expired');
   });
 });
+
+describe('unaffiliated disclaimer', () => {
+  test('install() draws a standing disclaimer naming the platforms as unaffiliated', () => {
+    sidebar.install();
+    const disc = document.getElementById('feedme-root').shadowRoot.querySelector('.disc');
+    expect(disc).not.toBeNull();
+    expect(disc.textContent).toMatch(/not affiliated/i);
+    expect(disc.textContent).toContain('Uber Eats');
+    expect(disc.textContent).toContain('Deliveroo');
+    expect(disc.textContent).toContain('Just Eat');
+  });
+
+  // The dynamic .ft footer is removed and re-added every render, so the
+  // disclaimer must stay pinned to the very bottom rather than the switch CTA
+  // ending up beneath it.
+  test('the disclaimer stays the last row when a dynamic footer is present', () => {
+    sidebar.install();
+    sidebar.showClickFailure('expired');
+    const bar = document.getElementById('feedme-root').shadowRoot.getElementById('bar');
+    expect(bar.lastElementChild.className).toContain('disc');
+  });
+});

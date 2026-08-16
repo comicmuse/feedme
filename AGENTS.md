@@ -7,7 +7,21 @@ Browser extension comparing a takeaway order across Uber Eats / Deliveroo / Just
 - `npm test` — Jest; `npm run build` — esbuild to `dist/` (what the manifest loads; rebuild after every src change).
 - `npm run package` — builds, then assembles one loadable extension per target in `build/chrome/` and `build/firefox/` (generated manifest + `dist/`, `popup/`, `icons/` only). **Load `build/chrome/` as the unpacked extension in Chrome, never the repo root** — loading the root makes Chrome hash the whole tree (node_modules, .git, .playwright-mcp: thousands of files, ~40s per load). Firefox loads `build/firefox/` via `about:debugging`. `build/` is gitignored and is a manual snapshot — `npm run build`/`npm test` only refresh `dist/`, not `build/`. **Always run `npm run package` right before asking for live verification**, or the user will be testing stale code with no diff or error to reveal it.
 - **Never hand-edit a manifest.** `manifest.json` is generated per target by `scripts/manifest.js` from `manifest.base.json` + `package.json`'s version. Chrome and Firefox need different `background` keys (Firefox has no `service_worker`), so edit the base or the per-target overrides, and cover the change in `tests/manifest.test.js`. `npx web-ext lint --source-dir build/firefox` is what AMO runs — keep it at zero warnings.
+- `npm run release` — the store-submission build (see **Store submission** below).
 - `src/shared/` is plain CommonJS: it runs in Jest, Node scripts, and the bundles alike.
+
+## Store submission
+
+`npm run package` only makes loadable dev dirs; **never hand-zip `build/` for a store** — that captures whatever stale snapshot is on disk. Rebuild for submission with `npm run release` (`scripts/release.mjs`), which is the only supported path:
+
+1. **Bump `version` in `package.json`** and commit it. Everything — the manifest and all three artefact names — derives from it; there is nothing else to edit.
+2. **`npm run release`.** It rebuilds from source (never zips a stale `build/`), then emits into `build/`:
+   - `feedme-chrome-<version>.zip` → upload to the **Chrome Web Store**.
+   - `feedme-firefox-<version>.zip` → upload to **AMO** as the add-on.
+   - `feedme-source-<version>.zip` → upload to **AMO** as the source archive. It's `git archive HEAD`, so only tracked files ship (`node_modules/`, `build/`, `dist/`, `.playwright-mcp/` are excluded by construction); the reviewer build instructions in `docs/store/AMO_REVIEW.md` ride along because they're tracked.
+3. The run is **gated on `web-ext lint --warnings-as-errors`** and aborts on any error/warning rather than emitting a broken set — so if it fails, fix and re-run; never submit a partial `build/`.
+
+Full human checklist (dashboard steps, tagging, listing copy): `docs/RELEASE.md`. Naming/version logic is pure in `scripts/artefacts.js` (tested in `tests/release.test.js`).
 
 ## Rules
 

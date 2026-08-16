@@ -107,6 +107,15 @@ OPEN SOURCE
 
 MIT licensed. The complete source is public:
 https://github.com/comicmuse/feedme
+
+NOT AFFILIATED
+
+FeedMe is an independent, unofficial tool. Uber Eats, Deliveroo and Just
+Eat, and their logos, are trademarks of their respective owners. This
+extension is not created, endorsed by, affiliated with or connected to any
+of them. All restaurant names, menus, prices and offers belong to the
+platforms and merchants that publish them; FeedMe only reads and compares
+what those platforms already show you.
 ```
 
 The privacy policy URL is `https://comicmuse.net/feedme/privacy/`, settled in

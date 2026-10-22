@@ -7,7 +7,7 @@ rediscovered each time.
 ## 1. Prepare
 
 - [ ] Working tree clean and on the commit you intend to ship (`git status`).
-- [ ] Node matches the pin: `nvm use` (reads `.nvmrc`, currently 24.13.1).
+- [ ] Node matches the pin: `fnm use` (reads `.nvmrc`, currently 24.22.1).
 - [ ] Bump `version` in `package.json` (the manifest and every artefact name
       derive from it — nothing else to edit). Commit the bump.
 - [ ] `npm ci && npm test` — all green.

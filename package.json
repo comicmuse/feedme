@@ -12,7 +12,7 @@
     "test": "jest"
   },
   "engines": {
-    "node": ">=24.13.1 <25"
+    "node": ">=24.22.1 <25"
   },
   "dependencies": {
     "fuse.js": "^7.0.0",

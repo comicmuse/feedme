@@ -7,8 +7,8 @@ policy for generated or bundled code.
 
 ## Toolchain
 
-- **Node.js 24.13.1** (pinned in `.nvmrc`; `package.json` `engines` requires
-  `>=24.13.1 <25`). Use `nvm use` to match.
+- **Node.js 24.22.1** (pinned in `.nvmrc`; `package.json` `engines` requires
+  `>=24.22.1 <25`). Use `nvm use` or `fnm use` to match.
 - **npm** as bundled with that Node.
 - No other system tools are needed to reproduce `dist/`.
 
